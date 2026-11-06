@@ -81,8 +81,8 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 |---|---|---|---|
 | R1 undecorated field, mutated and rendered (V1/V2) | ✅ Facts + Q_R1; MDP runs in the bench | – | Intent verdict (judge/agent) |
 | R1 nested write, V1 (depth ≥ 2) | ✅ Across files (project index) | – | Aliasing (`const it = this.list[i]; it.x = …`): ArkAnalyzer |
-| R1 nested write, V2 (class not `@ObservedV2`) | ✅ Field's class across files (project index) | – | Owner class of each written property (tech-debt tracker) |
-| `@Trace` per property | ❌ Only the class is checked | ✅ Class (LSP) + property decorator (our parse) | Rule + eval |
+| R1 nested write, V2 (class not `@ObservedV2`) | ⚠️ Same file; cross-file through ace-server (follow-up) | ✅ Cross-file class lookup | – |
+| `@Trace` per property | ⚠️ Same file (mutated + rendered property, inherited `@Trace` included); cross-file through ace-server (follow-up) | ✅ Class (LSP) + property decorator (our parse) | Eval |
 | `@Observed` / `@ObjectLink` children | ✅ Across files: imported children the parent calls (project index) | – | – |
 | `@Track` | ❌ | Class lookup only | Rule design |
 | R2 facts: call-site edges | ❌ | ✅ `references` on struct → call sites; our parse of the object literal | Bench scale needs a one-pass index |
@@ -129,8 +129,8 @@ Each phase starts only after an explicit go.
 - [ ] String-key index: storage keys, `@Provide`/`@Consume` aliases, `@Watch`/`@Monitor` targets
 
 #### Phase 3: rules from facts alone
-- [x] V2 nested write with cross-file `@ObservedV2` classes
-- [ ] `@Trace` per property (mutated + rendered property without `@Trace`); evaluate on the bench's trace items
+- [ ] V2 nested write with cross-file `@ObservedV2` classes
+- [ ] `@Trace` per property (mutated + rendered property without `@Trace`); evaluate on the bench's trace items (same-file rule done, rendered properties only)
 - [x] `@Observed` / `@ObjectLink` recognition across files
 - [ ] R2-d event unwired
 - [ ] R2-f multiple parents

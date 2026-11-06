@@ -25,7 +25,7 @@ Rules today see one file. Give them facts from the files a component imports, an
    Parse resolved files with `NaiveExtractor` and cache them by path + mtime.
 2. **Cross-file R1 nested write** (phase 3):
    - V1: `@Observed` classes and `@ObjectLink` children declared in other files count for `seenByObjectLink` and the depth check;
-   - V2: `@ObservedV2` classes and their field types declared in other files.
+   - V2: owners declared in other files stay skipped (#12); they are to be resolved through ace-server `definition` (#14).
 3. **Call-site edges** (phase 2): for each struct, its call sites (`Child({ f: <expr> })`), with parent, child, field and the expression form (`this.x` / `$x` / `this.x.y` / literal / callback).
    - Index first: scan the project for the struct name, then our parse of the object literal.
    - LSP `references` on the struct when a server is running, to confirm or add sites.
@@ -53,7 +53,7 @@ Rules today see one file. Give them facts from the files a component imports, an
 - Package lookup: a `file:` dependency and a project module both resolve through `Index.ets`; with the map (PR 3), the same
   import resolves with a map and without one, and a stale map loses to the parser.
 - Rule tests: the cross-file `@ObjectLink` case is silent; the cross-file non-`@Observed` nested write is flagged; V2 with
-  an `@ObservedV2` class in another file is silent.
+  an owner in another file is skipped, as on `main`.
 - Plugin test with `test/fixtures/fake-ace-server.mjs`: `open` before query, fallback on a dead or slow server, stop on dispose.
 
 ## PRs

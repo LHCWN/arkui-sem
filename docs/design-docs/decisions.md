@@ -28,8 +28,6 @@
   HMS components, as the compiler registers them), else from a bundled copy. Parser only for now; the type checker is a
   separate step, since a module's program takes seconds to build. Judge features are structured slice fields, not regexes
   over slice text. Bench comparison: `bench/docs/plans/ts-extractor.md`.
-- **Later:** an ArkAnalyzer extractor behind the `FactExtractor` interface (aliasing, dataflow); then re-run on the union of
-  candidates.
 - **Repos: this repo is public, the bench is a private submodule** (2026-10-08).
   - GitHub's free organization plan gives branch protection (required reviews, rulesets) only to public repos, so the code lives in the public repo, where those gates work.
   - CI (2026-10-09): offline only (the `test` check: build and tests). No bench and no keys, so public CI never needs private access; live model calls and bench runs stay manual. The ruleset requires the check next to one approval.

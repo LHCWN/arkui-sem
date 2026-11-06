@@ -9,6 +9,13 @@
 - The direct-render check for `@ObjectLink` sees only `this.<field>.<path>` reads: not reads through a `ForEach` item variable or a local alias, and for an array call not `ForEach(this.<field>.<array>, …)` in the parent.
 - The judge fallback chain is decided but not implemented (`docs/design-docs/decisions.md`).
 - The fact extractor reads one file's syntax tree, with no type checker: types come from annotations and `new X(…)` initializers, and writes through an alias (`const self = this; self.x = …`) are missed. Typed values from the ohos-typescript checker are planned (`docs/exec-plans/active/cross-file-facts.md`, PR 2b); aliasing needs dataflow.
+- The project index caches facts by mtime only (an edit within the same mtime tick, or a tool that keeps mtimes, serves
+  stale facts), and cached `FileFacts` are mutable and shared across checks and `arkui_facts`; size + mtime keys and
+  `readonly` fact types would close both.
+- `analysis.ts` mixes the fact model, derived queries, file utilities and rules; splitting it would let `src/ets/` import
+  only the model.
+- The parser reads the SDK once per process (`defaultParser()`) and ignores the SDK passed to the LSP client; one SDK
+  choice should feed both (PR 3).
 - Struct getters and setters are not scanned: a write in `set v(x) { this.a = x }` and reads through a getter used in
   `build()` are not recorded.
   - `v2Gap` handles index writes (unknown container, nested container, container in a plain object, other calls) as separate branches; one rule (walk up to the nearest non-container owner, then classify it) would cover them.

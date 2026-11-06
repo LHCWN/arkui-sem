@@ -719,7 +719,7 @@ describe('cross-file: classes and @ObjectLink children from other files (test/fi
       ['note'],
       ['note'],
     ],
-    ['V2: an owner from another module is skipped, with or without the index', 'CardPage.ets', [], []],
+    ['V2: an untraced owner from another module is skipped, with or without the index', 'CardPage.ets', [], []],
   ];
   for (const [name, page, without, withIndex] of cases) {
     test(name, () => {

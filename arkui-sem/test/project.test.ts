@@ -83,7 +83,7 @@ test('after refresh(), the file cache re-parses a file whose mtime changed', () 
   const index = new ProjectIndex();
   const item = join(root, 'common', 'src', 'main', 'ets', 'model', 'Item.ets');
   assert.deepEqual(index.facts(item)?.observedClasses, ['Item']);
-  writeFileSync(item, readFileSync(item, 'utf8').replace('@Observed\n', ''));
+  writeFileSync(item, readFileSync(item, 'utf8').replace(/@Observed\r?\n/, ''));
   touch(item, 60);
   assert.deepEqual(index.facts(item)?.observedClasses, ['Item'], 'same check: the first read stands');
   index.refresh();
@@ -136,7 +136,40 @@ test('a long-lived index sees an imported file change between two checks', async
     );
   assert.equal(await nested(), false);
   const item = join(root, 'common', 'src', 'main', 'ets', 'model', 'Item.ets');
-  writeFileSync(item, readFileSync(item, 'utf8').replace('@Observed\n', ''));
+  writeFileSync(item, readFileSync(item, 'utf8').replace(/@Observed\r?\n/, ''));
   touch(item, 60);
   assert.equal(await nested(), true);
+});
+
+test('a check sharing the index with an overlapping check sees the files as they were when it started', async () => {
+  const root = project();
+  const shared = new ProjectIndex();
+  let release = () => {};
+  const paused = new Promise<void>((r) => {
+    release = r;
+  });
+  let calls = 0;
+  const slow = {
+    name: 'slow',
+    systemOne: async () => {
+      if (calls++ === 0) {
+        await paused;
+      }
+      return bug.systemOne({} as never, {} as never);
+    },
+  } as unknown as SystemOneBackend;
+
+  // The first check waits on the judge for NotePage while ItemList is still to come.
+  const first = checkFiles([join(root, PAGES, 'NotePage.ets'), join(root, PAGES, 'ItemList.ets')], {
+    backend: slow,
+    project: shared,
+  });
+  const item = join(root, 'common', 'src', 'main', 'ets', 'model', 'Item.ets');
+  writeFileSync(item, readFileSync(item, 'utf8').replace(/@Observed\r?\n/, ''));
+  touch(item, 60);
+  await checkFiles([join(root, PAGES, 'ItemList.ets')], { backend: bug, project: shared });
+  release();
+
+  const nested = (await first).findings.filter((f) => f.kind === 'nested-write-unobserved').map((f) => f.component);
+  assert.deepEqual(nested, ['NotePage']);
 });

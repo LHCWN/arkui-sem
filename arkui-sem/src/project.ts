@@ -2,7 +2,14 @@
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import JSON5 from 'json5';
-import { type ClassResolver, type Declaration, declares, type FileFacts, NaiveExtractor } from './analysis.js';
+import {
+  type ClassResolver,
+  type Declaration,
+  declares,
+  type FactExtractor,
+  type FileFacts,
+  NaiveExtractor,
+} from './analysis.js';
 
 interface Module {
   name: string;
@@ -91,9 +98,11 @@ class FileCache<T> {
   }
 }
 
-/** Call refresh() before each check; between refreshes, files and the project layout are not re-read. */
+/**
+ * Call refresh() before each check; between refreshes, files and the project layout are not re-read. Parse with the
+ * extractor that produced the checked file's facts, so both sides agree on what a file declares.
+ */
 export class ProjectIndex implements ClassResolver {
-  private readonly extractor = new NaiveExtractor();
   /** Each path is stat'ed once per check, so a check sees every file as it was at first use. */
   private readonly mtimes = new Map<string, number | undefined>();
   private readonly stat = (path: string) => memo(this.mtimes, path, () => mtime(path));
@@ -104,6 +113,8 @@ export class ProjectIndex implements ClassResolver {
   private readonly moduleLists = new Map<string, ModuleList | undefined>();
   private readonly moduleDirs = new Map<string, string | undefined>();
   private readonly lookups = new Map<string, Declaration | undefined>();
+
+  constructor(private readonly extractor: FactExtractor = new NaiveExtractor()) {}
 
   refresh(): void {
     this.mtimes.clear();

@@ -212,20 +212,24 @@ export async function checkFiles(
   const extractor = opts.extractor ?? new NaiveExtractor();
   const thresholds = opts.thresholds ?? { finding: 0.8, question: 0.5 };
   const cache = new JudgmentCache(opts.cachePath);
-  const project = opts.project ?? new ProjectIndex();
-  project.refresh?.();
   const findings: Finding[] = [];
   const errors: string[] = [];
 
+  // Every candidate is found before the first await: a shared index can't be refreshed by another check in between.
+  const project = opts.project ?? new ProjectIndex(extractor);
+  project.refresh?.();
+  const found: { file: string; facts: FileFacts; candidates: Candidate[] }[] = [];
   for (const file of files) {
-    let facts: FileFacts;
     try {
-      facts = extractor.extract(file, readFileSync(file, 'utf8'));
+      const facts = extractor.extract(file, readFileSync(file, 'utf8'));
+      found.push({ file, facts, candidates: candidates(facts, project) });
     } catch (e) {
       errors.push(`${file}: ${(e as Error).message}`);
-      continue;
     }
-    for (const c of candidates(facts, project)) {
+  }
+
+  for (const { file, facts, candidates: fileCandidates } of found) {
+    for (const c of fileCandidates) {
       const slice = buildSlice(facts, c, opts.taskContext);
       const questions = QUESTIONS[c.rule];
       const key = createHash('sha256')

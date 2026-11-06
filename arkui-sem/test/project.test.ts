@@ -44,6 +44,15 @@ test('a package import resolves through the dependency Index.ets', () => {
   assert.equal(declared(index, FIXTURE, 'ItemList.ets', 'Item'), ITEM);
 });
 
+test('a dependency given as a plain relative path (no file: prefix) resolves', () => {
+  const root = project();
+  const pkg = join(root, 'entry', 'oh-package.json5');
+  writeFileSync(pkg, readFileSync(pkg, 'utf8').replace('"file:../common"', '"../common"'));
+  const profile = join(root, 'build-profile.json5');
+  writeFileSync(profile, readFileSync(profile, 'utf8').replace("{ name: 'common', srcPath: './common', },", ''));
+  assert.equal(declared(new ProjectIndex(), root, 'ItemList.ets', 'Item'), ITEM);
+});
+
 test('a project module that is not a file: dependency resolves through build-profile.json5', () => {
   const root = project();
   const pkg = join(root, 'entry', 'oh-package.json5');

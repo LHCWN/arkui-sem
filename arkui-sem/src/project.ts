@@ -179,8 +179,9 @@ export class ProjectIndex implements ClassResolver {
     const moduleDir = this.moduleDir(fromFile);
     if (moduleDir !== undefined) {
       const dependency = this.packages.get(join(moduleDir, OH_PACKAGE))?.dependencies?.[name];
-      if (dependency?.startsWith(FILE_DEPENDENCY)) {
-        const dir = resolve(moduleDir, dependency.slice(FILE_DEPENDENCY.length));
+      const path = dependency?.startsWith(FILE_DEPENDENCY) ? dependency.slice(FILE_DEPENDENCY.length) : dependency;
+      if (path?.startsWith('.')) {
+        const dir = resolve(moduleDir, path);
         return this.stat(join(dir, OH_PACKAGE)) === undefined ? undefined : dir;
       }
     }

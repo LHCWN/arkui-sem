@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { candidates, nestedDepth } from '../../src/analysis.js';
+import { candidates, nestedDepth, pathText } from '../../src/analysis.js';
 import { ProjectIndex } from '../../src/project.js';
 import { extract, found, put, ROOT, tempDir } from '../helpers.js';
 
@@ -50,7 +50,7 @@ struct P {
   }
 }`).components[0].fields[0].writes;
   assert.deepEqual(
-    writes.map((w) => [w.nestedPath, nestedDepth(w.path)]),
+    writes.map((w) => [pathText(w.path) || undefined, nestedDepth(w.path)]),
     [
       [undefined, 0],
       ['.title', 1],

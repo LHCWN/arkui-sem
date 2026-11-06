@@ -10,6 +10,8 @@ import {
   type FactExtractor,
   type FileFacts,
   nestedDepth,
+  pathText,
+  readLines,
   type V2Gap,
 } from './analysis.js';
 import { EtsExtractor } from './ets/extract.js';
@@ -178,7 +180,7 @@ function describe(c: Candidate): { subject: string; evidence: string; fix: strin
     .join('; ');
   if (c.kind === 'nested-write-unobserved') {
     const [w, ...rest] = c.writes?.length ? c.writes : f.writes;
-    const path = w?.nestedPath ?? '';
+    const path = pathText(w?.path);
     const head = w?.path?.[0];
     const first = head && 'prop' in head ? head.prop : undefined;
     const otherLines = [...new Set(rest.map((x) => x.line))].filter((l) => l !== w.line);
@@ -199,7 +201,7 @@ function describe(c: Candidate): { subject: string; evidence: string; fix: strin
   }
   return {
     subject: `${c.component.name}.${f.name}`,
-    evidence: `rendered in build() (line ${f.readsInBuild[0]}) and written after init (${writes}); no state decorator`,
+    evidence: `rendered in build() (line ${readLines(f)[0]}) and written after init (${writes}); no state decorator`,
     fix: v2
       ? `declare it @Local; if the value comes from the parent, use @Param plus an @Event callback instead.`
       : `declare it @State; if the value comes from the parent, use @Prop (one-way) or @Link (two-way) instead.`,

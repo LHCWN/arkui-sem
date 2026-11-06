@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { type Plugin, tool } from '@opencode-ai/plugin';
-import { absolute, editedFiles, etsFiles } from './analysis.js';
+import { absolute, classesWith, editedFiles, etsFiles, pathText, readLines } from './analysis.js';
 import { cachePath, loadSettings } from './config.js';
 import { checkFiles, type Finding, formatForAgent } from './engine.js';
 import { EtsExtractor } from './ets/extract.js';
@@ -160,7 +160,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
           return JSON.stringify(
             {
               file: relative(ctx.directory, file),
-              observedClasses: facts.observedClasses,
+              observedClasses: classesWith(facts, '@Observed'),
               components: facts.components.map((c) => ({
                 name: c.name,
                 line: c.line,
@@ -170,8 +170,8 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
                   line: f.line,
                   decorators: f.decorators,
                   type: f.type ?? null,
-                  readInBuildAt: f.readsInBuild,
-                  writes: f.writes,
+                  readInBuildAt: readLines(f),
+                  writes: f.writes.map(({ path, ...w }) => ({ ...w, nestedPath: pathText(path) || undefined })),
                 })),
                 resources: c.resources,
               })),

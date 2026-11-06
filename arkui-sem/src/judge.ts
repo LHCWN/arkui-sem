@@ -14,10 +14,15 @@ import {
 } from '@typesafe-ai/sdk';
 import {
   type Candidate,
+  declaresClass,
   type FieldFact,
   type FileFacts,
   holdsFunction,
+  isClassWith,
   nestedDepth,
+  objectLinkTypes,
+  pathText,
+  readLines,
   typeClass,
   typeKind,
 } from './analysis.js';
@@ -370,7 +375,7 @@ export function buildSlice(
     const f = c.field;
     const shown = c.writes ?? f.writes; // a nested-write candidate shows the writes it flags
     lines.add(f.line);
-    for (const l of f.readsInBuild.slice(0, 2)) {
+    for (const l of readLines(f).slice(0, 2)) {
       lines.add(l);
     }
     for (const w of shown.slice(0, 3)) {
@@ -385,14 +390,14 @@ export function buildSlice(
         field: f.name,
         type: f.type ?? null,
         has_initializer: f.hasInitializer,
-        reads_in_build: f.readsInBuild.length,
+        reads_in_build: readLines(f).length,
         writes: f.writes
           .slice(0, 5)
-          .map((w) => ({ line: w.line, context: w.context, method: w.method, nested_path: w.nestedPath ?? null })),
+          .map((w) => ({ line: w.line, context: w.context, method: w.method, nested_path: pathText(w.path) || null })),
         write_count: f.writes.length,
         type_is_observed_class:
           typeName !== undefined
-            ? facts.observedClasses.includes(typeName) || facts.observedV2Classes.includes(typeName)
+            ? isClassWith(facts, typeName, '@Observed') || isClassWith(facts, typeName, '@ObservedV2')
             : null,
         callbacks_invoked: invokedCallbacks(c),
       };
@@ -403,26 +408,26 @@ export function buildSlice(
         decorators: f.decorators,
         type: f.type ?? null,
         has_initializer: f.hasInitializer,
-        reads_in_build: f.readsInBuild.length,
+        reads_in_build: readLines(f).length,
         writes: shown.slice(0, 5).map((w) => ({
           line: w.line,
           context: w.context,
           method: w.method,
-          nested_path: w.nestedPath ?? null,
+          nested_path: pathText(w.path) || null,
           nested_depth: nestedDepth(w.path),
           external: w.external ?? false,
         })),
-        type_is_observed_class: typeName !== undefined ? facts.observedClasses.includes(typeName) : null,
+        type_is_observed_class: typeName !== undefined ? isClassWith(facts, typeName, '@Observed') : null,
         type_kind: f.typeRef ? typeKind(f.typeRef, facts) : null,
         render_contexts: renderContexts(f),
         time_value: f.timeValue ?? null,
-        object_link_types_in_file: facts.objectLinkTypes,
+        object_link_types_in_file: objectLinkTypes(facts),
         // V2 gaps name the classes the writes miss; the field's own class would contradict them for deeper writes.
         ...(c.gaps
           ? { v2_gaps: c.gaps.map((g) => ({ ...g })) }
           : {
-              type_is_observed_v2_class: typeName !== undefined ? facts.observedV2Classes.includes(typeName) : null,
-              type_declared_in_file: typeName !== undefined ? facts.declaredClasses.includes(typeName) : null,
+              type_is_observed_v2_class: typeName !== undefined ? isClassWith(facts, typeName, '@ObservedV2') : null,
+              type_declared_in_file: typeName !== undefined ? declaresClass(facts, typeName) : null,
             }),
       };
     }

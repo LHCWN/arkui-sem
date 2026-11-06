@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { classesWith, readLines } from '../src/analysis.js';
 import { extract } from './helpers.js';
 
 test('a regex literal with an unmatched paren does not hide later members', () => {
@@ -38,12 +39,12 @@ struct P {
 
 test('a member on the class closing line is recorded', () => {
   const facts = extract("@ObservedV2\nclass P {\n  name: string = ''\n  @Trace age: number = 0 }");
-  assert.deepEqual(facts.classMembers.P.age?.decorators, ['@Trace']);
+  assert.deepEqual(facts.types.P.members.age?.decorators, ['@Trace']);
 });
 
 test('an abstract @ObservedV2 class is observed', () => {
   const facts = extract("@ObservedV2\nexport default abstract class Base {\n  @Trace name: string = ''\n}");
-  assert.deepEqual(facts.observedV2Classes, ['Base']);
+  assert.deepEqual(classesWith(facts, '@ObservedV2'), ['Base']);
 });
 
 test('logical and other compound assignments count as writes', () => {
@@ -76,7 +77,7 @@ struct P {
     Text(\`\${this.size}\`)
   }
 }`);
-  assert.equal(facts.components[0].fields[0].readsInBuild.length, 1);
+  assert.equal(readLines(facts.components[0].fields[0]).length, 1);
 });
 
 test('a / starting a continuation line is a division', () => {
@@ -137,7 +138,7 @@ struct P {
 
 test('a member with an inline object type spelled with semicolons is recorded', () => {
   const facts = extract("class C {\n  user: { name: string; age: number } = { name: '', age: 0 }\n}");
-  assert.equal(facts.classMembers.C.user?.type, '{ name: string; age: number }');
+  assert.deepEqual(facts.types.C.members.user?.typeRef, { kind: 'object' });
 });
 
 test('a constructor type ends at its own type arguments', () => {
@@ -153,7 +154,7 @@ struct P {
 
 test('a member after a method in a one-line class is recorded', () => {
   const facts = extract('@ObservedV2\nclass S { foo() {} @Trace bar: number = 0 }');
-  assert.deepEqual(facts.classMembers.S.bar?.decorators, ['@Trace']);
+  assert.deepEqual(facts.types.S.members.bar?.decorators, ['@Trace']);
 });
 
 test('a write in a handler field (an arrow function) is recorded under the field name', () => {
@@ -204,8 +205,15 @@ test('a type annotation spread over lines and a constructor parameter property a
     number
   > = new Map()
 }`);
-  assert.equal(facts.classMembers.C.map?.type, 'Map< string, number >');
-  assert.deepEqual(Object.keys(facts.classMembers.C).sort(), ['age', 'map', 'name']);
+  assert.deepEqual(facts.types.C.members.map?.typeRef, {
+    kind: 'name',
+    name: 'Map',
+    args: [
+      { kind: 'keyword', name: 'string' },
+      { kind: 'keyword', name: 'number' },
+    ],
+  });
+  assert.deepEqual(Object.keys(facts.types.C.members).sort(), ['age', 'map', 'name']);
 });
 
 test('a disable directive only counts inside a comment', () => {

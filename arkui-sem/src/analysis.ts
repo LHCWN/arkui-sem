@@ -19,8 +19,8 @@ export type TypeRef =
   | { kind: 'other' }; // tuples, literal types, …
 
 /** One step below a field: a property, or an index as written ('' for the container a mutating call such as push
- *  changes). */
-export type PathSegment = { prop: string } | { index: string };
+ *  changes); optional for `?.`. */
+export type PathSegment = ({ prop: string } | { index: string }) & { optional?: true };
 
 /** An object literal: a plain object, whatever its declared type. */
 export interface ObjectLiteralFact {
@@ -36,9 +36,7 @@ export interface WriteFact {
   line: number;
   context: WriteContext;
   method: string;
-  /** Property path below the field for in-place mutation (".title", ".items[]"), as written; absent for reassignment. */
-  nestedPath?: string;
-  /** nestedPath's segments. */
+  /** Path below the field for in-place mutation (see pathText); absent for reassignment. */
   path?: PathSegment[];
   /** For an assignment (`=`, compound or update), what the assigned value is. */
   value?: 'object-literal' | 'new' | 'other';
@@ -51,13 +49,12 @@ export interface FieldFact {
   name: string;
   line: number;
   decorators: string[];
-  /** The declared type as written, else the class of a `new X(…)` initializer. */
+  /** The declared type as written, else the class of a `new X(…)` initializer; for display, typeRef for rules. */
   type?: string;
   typeRef?: TypeRef;
   hasInitializer: boolean;
   /** An object-literal initializer. */
   literal?: ObjectLiteralFact;
-  readsInBuild: number[];
   buildReads: BuildRead[];
   writes: WriteFact[];
   /** The component calls the field as a function (`this.f(…)`): a callback it invokes. */
@@ -102,22 +99,29 @@ export interface ComponentFact {
   resources: ResourceFact[];
 }
 
+/** A class, an interface or an object type alias (`type T = { … }`) declared in the file. */
+export interface TypeFact {
+  kind: 'class' | 'interface' | 'object-alias';
+  decorators: string[];
+  /** What it extends, other than Array. */
+  parents: string[];
+  /** It extends Array<element>; params are its own type parameters. */
+  arrayOf?: { element: TypeRef; params: string[] };
+  members: Record<string, ClassMember>;
+}
+
+export interface ClassMember {
+  decorators: string[];
+  setter: boolean;
+  /** Fields: as for FieldFact. */
+  typeRef?: TypeRef;
+  literal?: ObjectLiteralFact;
+}
+
 export interface FileFacts {
   file: string;
   components: ComponentFact[];
-  /** V1 @Observed classes. */
-  observedClasses: string[];
-  observedV2Classes: string[];
-  objectLinkTypes: string[];
-  declaredClasses: string[];
-  /** Interfaces and object type aliases. */
-  declaredTypes: string[];
-  /** Members of the classes, interfaces and object type aliases: class → member name → its facts. */
-  classMembers: Record<string, Record<string, ClassMember>>;
-  /** What each class or interface in the file extends (other than Array): child → parent names. */
-  classParents: Record<string, string[]>;
-  /** Classes that extend Array<…>: class → element type and the class's own type parameters. */
-  arrayClasses: Record<string, { element: TypeRef; params: string[] }>;
+  types: Record<string, TypeFact>;
   imports: ImportFact[];
   /** `export { a as b } from 's'` (source set) and `export { a as b }` of a local or imported name (no source). */
   reexports: ReexportFact[];
@@ -156,18 +160,58 @@ export interface ClassResolver {
   refresh?(): void;
 }
 
-export interface ClassMember {
-  decorators: string[];
-  setter: boolean;
-  /** Fields: as for FieldFact. */
-  type?: string;
-  typeRef?: TypeRef;
-  literal?: ObjectLiteralFact;
-}
-
 export interface FactExtractor {
   readonly name: string;
   extract(file: string, text: string): FileFacts;
+}
+
+// --- Derived facts ---
+
+function own<T>(map: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
+function isIndex(s: PathSegment): s is { index: string } & { optional?: true } {
+  return 'index' in s;
+}
+
+/** A path as written: `.title`, `?.items[]` (a mutating call), `[i].title`; '' for none. */
+export function pathText(path?: PathSegment[]): string {
+  return (path ?? [])
+    .map((s) => (isIndex(s) ? `${s.optional ? '?.' : ''}[${s.index}]` : `${s.optional ? '?.' : '.'}${s.prop}`))
+    .join('');
+}
+
+/** The lines build()/@Builder reads the field on, each once, in source order. */
+export function readLines(f: FieldFact): number[] {
+  return [...new Set(f.buildReads.map((r) => r.line))];
+}
+
+/** The type declared in decl's file under its name, when it is a class, interface or object type alias. */
+export function typeFact(decl: Declaration): TypeFact | undefined {
+  return own(decl.facts.types, decl.name);
+}
+
+/** Classes in the file decorated with `decorator` (`@Observed`, `@ObservedV2`). */
+export function classesWith(facts: FileFacts, decorator: string): string[] {
+  return Object.entries(facts.types)
+    .filter(([, t]) => t.kind === 'class' && t.decorators.includes(decorator))
+    .map(([name]) => name);
+}
+
+/** Whether the file declares a class `name` decorated with `decorator`. */
+export function isClassWith(facts: FileFacts, name: string, decorator: string): boolean {
+  const t = own(facts.types, name);
+  return t?.kind === 'class' && t.decorators.includes(decorator);
+}
+
+export function declaresClass(facts: FileFacts, name: string): boolean {
+  return own(facts.types, name)?.kind === 'class';
+}
+
+/** The classes the file's components take as @ObjectLink. */
+export function objectLinkTypes(facts: FileFacts): string[] {
+  return facts.components.flatMap((c) => linkTypesOf(c, facts).map((t) => t.name));
 }
 
 // --- Files ---
@@ -269,10 +313,6 @@ function isReactiveV1(f: FieldFact) {
   return f.decorators.some((d) => REACTIVE_V1.has(d));
 }
 
-function isIndex(s: PathSegment): s is { index: string } {
-  return 'index' in s;
-}
-
 /** The container a mutating call changes (see PathSegment). */
 function isCallSegment(s: PathSegment | undefined): boolean {
   return s !== undefined && isIndex(s) && s.index === '';
@@ -308,17 +348,9 @@ export function heldClass(t: TypeRef): string | undefined {
   return className(held.kind === 'array' ? held.element : held);
 }
 
-function own<T>(map: Record<string, T>, key: string): T | undefined {
-  return Object.hasOwn(map, key) ? map[key] : undefined;
-}
-
 /** Whether the file itself declares `name`: a class, an interface or object type alias, or a component. */
 export function declares(facts: FileFacts, name: string): boolean {
-  return (
-    facts.declaredClasses.includes(name) ||
-    facts.declaredTypes.includes(name) ||
-    facts.components.some((c) => c.name === name)
-  );
+  return own(facts.types, name) !== undefined || facts.components.some((c) => c.name === name);
 }
 
 /** Where `name`, as written in `scope`, is declared: in `scope` itself, else through the resolver. */
@@ -366,12 +398,12 @@ function scopedElementType(t: TypeRef, scope: FileFacts, resolver?: ClassResolve
     return { type: t.args[0], scope };
   }
   const decl = declarationOf(t.name, scope, resolver);
-  const cls = decl && own(decl.facts.arrayClasses, decl.name);
-  if (!decl || !cls) {
+  const arrayOf = decl && typeFact(decl)?.arrayOf;
+  if (!decl || !arrayOf) {
     return undefined;
   }
-  const { element } = cls;
-  const param = element.kind === 'name' && element.args.length === 0 ? cls.params.indexOf(element.name) : -1;
+  const { element, params } = arrayOf;
+  const param = element.kind === 'name' && element.args.length === 0 ? params.indexOf(element.name) : -1;
   if (param < 0) {
     return { type: element, scope: decl.facts };
   }
@@ -379,40 +411,30 @@ function scopedElementType(t: TypeRef, scope: FileFacts, resolver?: ClassResolve
   return arg ? { type: arg, scope } : undefined;
 }
 
-/** cls, then the types it extends, nearest first; some may be declared in another file. */
-function ancestry(cls: string, facts: FileFacts): string[] {
-  const chain = [cls];
-  for (let i = 0; i < chain.length; i++) {
-    for (const p of own(facts.classParents, chain[i]) ?? []) {
-      if (!chain.includes(p)) {
-        chain.push(p);
-      }
-    }
-  }
-  return chain;
-}
-
-/** decl, then the declarations it extends, nearest first; each parent name resolves from its child's file. */
-function declarationChain(decl: Declaration, resolver?: ClassResolver): Declaration[] {
+/** decl, then the declarations it extends, nearest first; each parent name resolves from its child's file (without a
+ *  resolver, only within it). complete: every parent was found. */
+function hierarchy(decl: Declaration, resolver?: ClassResolver): { chain: Declaration[]; complete: boolean } {
   const chain = [decl];
+  let complete = true;
   for (let i = 0; i < chain.length; i++) {
-    for (const p of own(chain[i].facts.classParents, chain[i].name) ?? []) {
+    for (const p of typeFact(chain[i])?.parents ?? []) {
       const parent = declarationOf(p, chain[i].facts, resolver);
-      if (parent && !chain.some((c) => sameDeclaration(c, parent))) {
+      if (!parent) {
+        complete = false;
+      } else if (!chain.some((c) => sameDeclaration(c, parent))) {
         chain.push(parent);
       }
     }
   }
-  return chain;
+  return { chain, complete };
 }
 
 /** The nearest declaration in chain with member `property`, and the file its type is written in. */
-function memberOf(chain: Declaration[], property: string): { member: ClassMember; scope: FileFacts } | undefined {
+function memberOf(chain: Declaration[], property: string): { member: ClassMember; declaring: Declaration } | undefined {
   for (const d of chain) {
-    const members = own(d.facts.classMembers, d.name);
-    const member = members && own(members, property);
+    const member = own(typeFact(d)?.members ?? {}, property);
     if (member) {
-      return { member, scope: d.facts };
+      return { member, declaring: d };
     }
   }
   return undefined;
@@ -449,9 +471,9 @@ function walk(
       next = element ?? { type: prev.type && recordValue(prev.type), scope: prev.scope };
     } else {
       const decl = prev.type ? declarationOf(className(prev.type), prev.scope, resolver) : undefined;
-      const declared = decl && memberOf(declarationChain(decl, resolver), s.prop);
+      const declared = decl && memberOf(hierarchy(decl, resolver).chain, s.prop);
       const type = declared?.member.typeRef;
-      const scope = declared?.scope ?? prev.scope;
+      const scope = declared?.declaring.facts ?? prev.scope;
       if (replaced.has(normalPath(segs.slice(0, i + 1)))) {
         next = { type, scope }; // assigned elsewhere: its initializer is no longer the value
       } else if (prev.literal === undefined) {
@@ -573,8 +595,8 @@ export function holdsFunction(t: TypeRef): boolean {
 
 /** @ObjectLink field classes of the file's components and of the imported components it calls, each with the file
  *  that names it. */
-function objectLinkTypes(facts: FileFacts, resolver?: ClassResolver): { name: string; scope: FileFacts }[] {
-  const local = facts.objectLinkTypes.map((name) => ({ name, scope: facts }));
+function linkTypesInScope(facts: FileFacts, resolver?: ClassResolver): { name: string; scope: FileFacts }[] {
+  const local = facts.components.flatMap((c) => linkTypesOf(c, facts));
   if (!resolver) {
     return local;
   }
@@ -601,11 +623,11 @@ function linkTypesOf(c: ComponentFact, scope: FileFacts): { name: string; scope:
 function seenByObjectLink(f: FieldFact, path: PathSegment[], facts: FileFacts, resolver?: ClassResolver): boolean {
   const owner = walk(f.typeRef, undefined, path.slice(0, -1), facts, undefined, resolver).at(-1);
   const decl = owner?.type === undefined ? undefined : declarationOf(className(owner.type), owner.scope, resolver);
-  if (!decl?.facts.observedClasses.includes(decl.name)) {
+  if (!decl || !isClassWith(decl.facts, decl.name, '@Observed')) {
     return false;
   }
   return (
-    objectLinkTypes(facts, resolver).some((t) => sameDeclaration(declarationOf(t.name, t.scope, resolver), decl)) &&
+    linkTypesInScope(facts, resolver).some((t) => sameDeclaration(declarationOf(t.name, t.scope, resolver), decl)) &&
     !rendersPath(f, path)
   );
 }
@@ -659,67 +681,37 @@ function v2Gap(f: FieldFact, w: WriteFact, facts: FileFacts, field: FieldContext
   }
   const property = segmentText(last);
   const cls = owner && className(owner);
-  const objectType = cls !== undefined && factSets(facts).types.has(cls);
+  const decl = declarationOf(cls, facts); // V2 judges owners declared in the file only
+  const kind = decl && typeFact(decl)?.kind;
+  const objectType = kind === 'interface' || kind === 'object-alias';
   if (literal !== undefined || (owner !== undefined && isPlainType(owner))) {
-    if (objectType) {
+    if (cls !== undefined && objectType) {
       return { kind: 'object-type', owner: cls, property };
     }
     return { kind: 'object-literal', owner: ownerPath(f, ownerSegs), property };
   }
-  if (cls === undefined || objectType || isIndex(last)) {
-    return undefined; // a computed key on a class instance names no known member
+  if (!decl || objectType || isIndex(last)) {
+    return undefined; // an unknown owner, or a computed key on a class instance, names no known member
   }
-  const chain = ancestry(cls, facts);
-  const { declaring, member } = declaredMember(chain, property, facts);
-  if (!member && !allKnown(chain, facts)) {
+  const { chain, complete } = hierarchy(decl);
+  const declared = memberOf(chain, property);
+  const allClasses = complete && chain.every((d) => typeFact(d)?.kind === 'class');
+  if (!declared && !allClasses) {
     return undefined;
   }
-  const traced = member?.setter || member?.decorators.includes('@Trace');
-  if ((traced && chain.some((c) => isV2(c, facts))) || !rendersPath(f, [...ownerSegs, last])) {
+  const isV2 = (d: Declaration) => isClassWith(d.facts, d.name, '@ObservedV2');
+  const traced = declared?.member.setter || declared?.member.decorators.includes('@Trace');
+  if ((traced && chain.some(isV2)) || !rendersPath(f, [...ownerSegs, last])) {
     return undefined; // observed, or a property nothing renders: leaving it untraced is the point of per-property @Trace
   }
   // @Trace compiles only inside an @ObservedV2 class.
-  return { kind: isV2(declaring, facts) ? 'untraced' : 'class', owner: declaring, property };
+  const declaring = declared?.declaring ?? decl;
+  return { kind: isV2(declaring) ? 'untraced' : 'class', owner: declaring.name, property };
 }
 
 /** this.<field><segs> as a normalPath, so writes through different indexes share one owner. */
 function ownerPath(f: FieldFact, segs: PathSegment[]): string {
   return `this.${f.name}${normalPath(segs)}`;
-}
-
-/** The facts' name lists as sets, built once per FileFacts. */
-const factSetsCache = new WeakMap<FileFacts, { classes: Set<string>; types: Set<string>; v2: Set<string> }>();
-function factSets(facts: FileFacts) {
-  let sets = factSetsCache.get(facts);
-  if (!sets) {
-    sets = {
-      classes: new Set(facts.declaredClasses),
-      types: new Set(facts.declaredTypes),
-      v2: new Set(facts.observedV2Classes),
-    };
-    factSetsCache.set(facts, sets);
-  }
-  return sets;
-}
-
-const isV2 = (c: string, facts: FileFacts) => factSets(facts).v2.has(c);
-/** Every class in chain is declared in the facts (none comes from an unread module). */
-const allKnown = (chain: string[], facts: FileFacts) => chain.every((c) => factSets(facts).classes.has(c));
-
-/** The nearest class in chain that declares property, with its member facts; chain[0] when none does. */
-function declaredMember(
-  chain: string[],
-  property: string,
-  facts: FileFacts,
-): { declaring: string; member?: ClassMember } {
-  for (const c of chain) {
-    const members = own(facts.classMembers, c);
-    const member = members && own(members, property);
-    if (member) {
-      return { declaring: c, member };
-    }
-  }
-  return { declaring: chain[0] };
 }
 
 /** Writes the decorator can't see, minus writes under a disable comment. V1: deeper than the first layer, even with @Observed
@@ -760,8 +752,9 @@ export function candidates(facts: FileFacts, resolver?: ClassResolver): Candidat
       if (f.decorators.some((d) => NON_STATE.has(d))) {
         continue;
       }
+      const rendered = f.buildReads.length > 0;
 
-      if (!isReactive(f) && f.readsInBuild.length > 0 && f.writes.length > 0 && !f.disabledRules.includes('R1')) {
+      if (!isReactive(f) && rendered && f.writes.length > 0 && !f.disabledRules.includes('R1')) {
         out.push({
           rule: 'R1',
           kind: 'undecorated-mutated-rendered',
@@ -774,7 +767,7 @@ export function candidates(facts: FileFacts, resolver?: ClassResolver): Candidat
       }
 
       const { writes: nested, gaps } = isReactive(f) ? unobservedWrites(f, facts, resolver) : { writes: [] };
-      if (nested.length > 0 && f.readsInBuild.length > 0 && !f.disabledRules.includes('R1')) {
+      if (nested.length > 0 && rendered && !f.disabledRules.includes('R1')) {
         out.push({
           rule: 'R1',
           kind: 'nested-write-unobserved',

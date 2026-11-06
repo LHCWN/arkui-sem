@@ -180,7 +180,7 @@ struct P {
   @Local n: number = 0
   async load() {
     this.n = 1
-    await fetchIt()
+    this.n = await fetchIt()
     this.n = 2
     setTimeout(() => {
       this.n = 3
@@ -192,7 +192,7 @@ struct P {
 }`);
   assert.deepEqual(
     facts.components[0].fields[0].writes.map((w) => w.context),
-    ['method', 'async-callback', 'async-callback'],
+    ['method', 'async-callback', 'async-callback', 'async-callback'],
   );
 });
 

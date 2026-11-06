@@ -104,10 +104,13 @@ function entityName(n: ts.EntityName): string {
   return ts.isIdentifier(n) ? n.text : `${entityName(n.left)}.${n.right.text}`;
 }
 
-/** `X` or `a.b.X` as written in an expression; undefined for anything else. */
+/** `X`, `a.b.X` or `this.x` as written in an expression; undefined for anything else. */
 function expressionName(e: ts.Expression): string | undefined {
   if (ts.isIdentifier(e)) {
     return e.text;
+  }
+  if (e.kind === ts.SyntaxKind.ThisKeyword) {
+    return 'this';
   }
   if (ts.isPropertyAccessExpression(e)) {
     const left = expressionName(e.expression);
@@ -274,6 +277,18 @@ function thisMembers(node: ts.Node, names: Set<string>): { name: string; called:
   };
   visit(node);
   return out;
+}
+
+/** The receiver under chained listener calls: `bus.on(a, f).on(b, g)` registers both on `bus`. */
+function chainRoot(e: ts.Expression): ts.Expression {
+  while (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression)) {
+    const name = e.expression.name.text;
+    if (name !== 'on' && name !== 'off' && !REGISTRATION.test(name)) {
+      break;
+    }
+    e = e.expression.expression;
+  }
+  return e;
 }
 
 /** An `await` in scope that ends before pos, outside nested functions. */
@@ -680,7 +695,8 @@ class FileScan {
     // A mutating call changes the container below its receiver: `[]` with no index stands for it.
     const path: PathSegment[] = mutatingCall ? [...segments.slice(0, -1), { index: '' }] : segments;
     const nestedPath = mutatingCall ? `${shown.slice(0, -1).join('')}[]` : shown.join('');
-    const context: WriteContext = this.deferred(base, m.body)
+    // The write lands when the whole assignment, update or call is done: after any await in its own value or arguments.
+    const context: WriteContext = this.deferred(parent, m.body)
       ? 'async-callback'
       : isBuild
         ? 'build-closure'
@@ -699,7 +715,7 @@ class FileScan {
     field.writes.push(write);
   }
 
-  /** The code at node runs later than its method: inside a callback passed to a deferring call, or after an await. */
+  /** node completes later than its method starts: inside a callback passed to a deferring call, or after an await. */
   private deferred(node: ts.Node, body: ts.Node): boolean {
     let scope: ts.Node = body;
     for (let n: ts.Node = node; n !== body && n.parent; n = n.parent) {
@@ -718,7 +734,7 @@ class FileScan {
         return true;
       }
     }
-    return awaitsBefore(scope, node.getStart(this.sf));
+    return awaitsBefore(scope, node.end);
   }
 
   // --- Resources (R3) ---
@@ -761,7 +777,7 @@ class FileScan {
           // Event listeners: target.on('event' | CONST.EVENT, handler) ↔ target.off(same event).
           const event = this.eventName(call.arguments[0]);
           if (event !== undefined) {
-            const target = this.text(callee.expression);
+            const target = this.text(chainRoot(callee.expression));
             add({
               kind: 'listener',
               key: `${target}.on:${event}`,
@@ -774,7 +790,7 @@ class FileScan {
             });
           }
         } else if (ts.isPropertyAccessExpression(callee) && name !== undefined && REGISTRATION.test(name)) {
-          const target = this.text(callee.expression);
+          const target = this.text(chainRoot(callee.expression));
           const undo = name.startsWith('add') ? `remove${name.slice(3)}` : `un${name}`;
           add({
             kind: 'subscription',

@@ -96,6 +96,8 @@ export interface Declaration {
 /** Finds where a name used in a file is declared, across files; the project index implements it. */
 export interface ClassResolver {
   declaration(name: string, from: FileFacts): Declaration | undefined;
+  /** Called once per check, before any lookup: drop what may have changed since the last one. */
+  refresh?(): void;
 }
 
 export interface FactExtractor {

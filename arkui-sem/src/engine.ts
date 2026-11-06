@@ -185,6 +185,7 @@ export async function checkFiles(
   const thresholds = opts.thresholds ?? { finding: 0.8, question: 0.5 };
   const cache = new JudgmentCache(opts.cachePath);
   const project = opts.project ?? new ProjectIndex();
+  project.refresh?.();
   const findings: Finding[] = [];
   const errors: string[] = [];
 

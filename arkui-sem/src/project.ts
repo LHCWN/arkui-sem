@@ -44,7 +44,7 @@ const DEFAULT_ENTRY = 'Index.ets';
 /** Tried in order after an import path; ArkTS imports omit the extension. */
 const SOURCE_SUFFIXES = ['', '.ets', '.ts', '/Index.ets', '/index.ets', '/index.ts'];
 /** SDK and system modules: never in the project. */
-const SYSTEM_IMPORT = /^@(?:ohos|kit|system|arkts|hms)[./]/;
+const SYSTEM_IMPORT = /^@(?:ohos|kit|system|arkts|hms)\./;
 
 const UNQUOTED_KEY = /[A-Za-z_$][\w$]*(?=\s*:)/y;
 
@@ -173,13 +173,32 @@ function isInside(file: string, dir: string) {
   return r !== '' && !r.startsWith('..') && !isAbsolute(r);
 }
 
+/** mtimes stat'ed once per generation: within one check, files are taken as they were at their first stat. */
+class StatCache {
+  private readonly seen = new Map<string, number | undefined>();
+
+  mtime(path: string): number | undefined {
+    if (!this.seen.has(path)) {
+      this.seen.set(path, mtime(path));
+    }
+    return this.seen.get(path);
+  }
+
+  clear(): void {
+    this.seen.clear();
+  }
+}
+
 /** A value derived from one file, recomputed when its mtime changes; undefined for a missing or unreadable file. */
 class FileCache<T> {
   private readonly entries = new Map<string, { mtimeMs: number; value: T | undefined }>();
-  constructor(private readonly load: (path: string) => T | undefined) {}
+  constructor(
+    private readonly stats: StatCache,
+    private readonly load: (path: string) => T | undefined,
+  ) {}
 
   get(path: string): T | undefined {
-    const m = mtime(path);
+    const m = this.stats.mtime(path);
     if (m === undefined) {
       this.entries.delete(path);
       return undefined;
@@ -199,15 +218,33 @@ class FileCache<T> {
   }
 }
 
-/** Resolves names across the files of a DevEco project; caches parsed files by path and mtime. */
+/**
+ * Resolves names across the files of a DevEco project; caches parsed files by path and mtime. Call refresh() before each
+ * check: between two refreshes, files and the project layout are taken as they were when first read.
+ */
 export class ProjectIndex implements ClassResolver {
   private readonly extractor = new NaiveExtractor();
-  private readonly parsed = new FileCache((p) => this.extractor.extract(p, readFileSync(p, 'utf8')));
-  private readonly packages = new FileCache((p) => toPackage(readJson5(p)));
-  private readonly profiles = new FileCache((p) => toProfileModules(readJson5(p), dirname(p)));
-  private readonly maps = new FileCache((p) => toDependencyMap(readJson5(p)));
+  private readonly stats = new StatCache();
+  private readonly parsed = new FileCache(this.stats, (p) => this.extractor.extract(p, readFileSync(p, 'utf8')));
+  private readonly packages = new FileCache(this.stats, (p) => toPackage(readJson5(p)));
+  private readonly profiles = new FileCache(this.stats, (p) => toProfileModules(readJson5(p), dirname(p)));
+  private readonly maps = new FileCache(this.stats, (p) => toDependencyMap(readJson5(p)));
   /** Copy/source content comparisons by both mtimes. */
   private readonly sameContent = new Map<string, { copy: number; source: number; same: boolean }>();
+  /** Kept until refresh(): source dir → project root, root → module list, source dir → module dir, lookups. */
+  private readonly roots = new Map<string, string | undefined>();
+  private readonly lists = new Map<string, ModuleList | undefined>();
+  private readonly moduleDirs = new Map<string, string | undefined>();
+  private readonly lookups = new Map<string, Declaration | undefined>();
+
+  /** Starts a new check: files and the project layout are stat'ed again on their next use. */
+  refresh(): void {
+    this.stats.clear();
+    this.roots.clear();
+    this.lists.clear();
+    this.moduleDirs.clear();
+    this.lookups.clear();
+  }
 
   /** Facts of an .ets/.ts file, or undefined when it is missing or unreadable. */
   facts(file: string): FileFacts | undefined {
@@ -215,13 +252,17 @@ export class ProjectIndex implements ClassResolver {
   }
 
   declaration(name: string, from: FileFacts): Declaration | undefined {
-    return this.find(name, from, new Set());
+    const key = `${from.file}#${name}`;
+    if (!this.lookups.has(key)) {
+      this.lookups.set(key, this.find(name, from, new Set()));
+    }
+    return this.lookups.get(key);
   }
 
   /** The file an import specifier in `fromFile` points to: relative path, or package entry (or package subpath). */
   resolveImport(spec: string, fromFile: string): string | undefined {
     if (spec.startsWith('.')) {
-      return sourceFile(resolve(dirname(fromFile), spec));
+      return this.sourceFile(resolve(dirname(fromFile), spec));
     }
     if (SYSTEM_IMPORT.test(spec)) {
       return undefined;
@@ -234,9 +275,9 @@ export class ProjectIndex implements ClassResolver {
     }
     const subpath = parts.slice(nameParts).join('/');
     if (subpath) {
-      return sourceFile(join(dir, subpath));
+      return this.sourceFile(join(dir, subpath));
     }
-    return sourceFile(join(dir, this.packages.get(join(dir, OH_PACKAGE))?.main || DEFAULT_ENTRY));
+    return this.sourceFile(join(dir, this.packages.get(join(dir, OH_PACKAGE))?.main || DEFAULT_ENTRY));
   }
 
   /** Which source gives the module list for the project around `file`; undefined outside a DevEco project. */
@@ -284,20 +325,59 @@ export class ProjectIndex implements ClassResolver {
   private packageDir(name: string, fromFile: string): string | undefined {
     const root = this.projectRoot(fromFile);
     const list = root === undefined ? undefined : this.moduleList(root);
-    const moduleDir =
-      list?.modules.filter((m) => isInside(fromFile, m.dir)).sort((a, b) => b.dir.length - a.dir.length)[0]?.dir ??
-      nearestPackageDir(fromFile);
+    const moduleDir = this.moduleDir(fromFile, list);
     const dep = moduleDir && this.packages.get(join(moduleDir, OH_PACKAGE))?.dependencies[name];
     if (moduleDir && dep?.startsWith('file:')) {
       const dir = resolve(moduleDir, dep.slice('file:'.length));
-      return mtime(join(dir, OH_PACKAGE)) === undefined ? undefined : dir;
+      return this.stats.mtime(join(dir, OH_PACKAGE)) === undefined ? undefined : dir;
     }
     return list?.byName.get(name);
   }
 
+  /** The innermost listed module holding `file`, else the nearest dir above it with an oh-package.json5. */
+  private moduleDir(file: string, list: ModuleList | undefined): string | undefined {
+    const start = dirname(resolve(file));
+    if (!this.moduleDirs.has(start)) {
+      const listed = list?.modules
+        .filter((m) => isInside(file, m.dir))
+        .sort((a, b) => b.dir.length - a.dir.length)[0]?.dir;
+      this.moduleDirs.set(start, listed ?? this.nearestPackageDir(start));
+    }
+    return this.moduleDirs.get(start);
+  }
+
+  private nearestPackageDir(start: string): string | undefined {
+    for (let dir = start; ; dir = dirname(dir)) {
+      if (this.stats.mtime(join(dir, OH_PACKAGE)) !== undefined) {
+        return dir;
+      }
+      if (dirname(dir) === dir) {
+        return undefined;
+      }
+    }
+  }
+
+  private sourceFile(base: string): string | undefined {
+    for (const suffix of SOURCE_SUFFIXES) {
+      const path = resolve(base + suffix);
+      if (this.stats.mtime(path) !== undefined) {
+        return path;
+      }
+    }
+    return undefined;
+  }
+
   /** Nearest dir above `file` whose build-profile.json5 lists modules. */
   private projectRoot(file: string): string | undefined {
-    for (let dir = dirname(resolve(file)); ; dir = dirname(dir)) {
+    const start = dirname(resolve(file));
+    if (!this.roots.has(start)) {
+      this.roots.set(start, this.findRoot(start));
+    }
+    return this.roots.get(start);
+  }
+
+  private findRoot(start: string): string | undefined {
+    for (let dir = start; ; dir = dirname(dir)) {
       if (this.profiles.get(join(dir, BUILD_PROFILE))) {
         return dir;
       }
@@ -308,6 +388,13 @@ export class ProjectIndex implements ClassResolver {
   }
 
   private moduleList(root: string): ModuleList | undefined {
+    if (!this.lists.has(root)) {
+      this.lists.set(root, this.readModuleList(root));
+    }
+    return this.lists.get(root);
+  }
+
+  private readModuleList(root: string): ModuleList | undefined {
     const profile = this.profiles.get(join(root, BUILD_PROFILE));
     if (!profile) {
       return undefined;
@@ -360,8 +447,8 @@ export class ProjectIndex implements ClassResolver {
 
   /** Whether a map copy matches its source: a source no newer than the copy is taken as unchanged, else contents compare. */
   private inSync(copy: string, source: string): boolean {
-    const mc = mtime(copy);
-    const ms = mtime(source);
+    const mc = this.stats.mtime(copy);
+    const ms = this.stats.mtime(source);
     if (mc === undefined || ms === undefined) {
       return mc === ms;
     }
@@ -381,26 +468,5 @@ export class ProjectIndex implements ClassResolver {
     }
     this.sameContent.set(key, { copy: mc, source: ms, same });
     return same;
-  }
-}
-
-function sourceFile(base: string): string | undefined {
-  for (const suffix of SOURCE_SUFFIXES) {
-    const path = resolve(base + suffix);
-    if (mtime(path) !== undefined) {
-      return path;
-    }
-  }
-  return undefined;
-}
-
-function nearestPackageDir(file: string): string | undefined {
-  for (let dir = dirname(resolve(file)); ; dir = dirname(dir)) {
-    if (mtime(join(dir, OH_PACKAGE)) !== undefined) {
-      return dir;
-    }
-    if (dirname(dir) === dir) {
-      return undefined;
-    }
   }
 }

@@ -124,6 +124,7 @@ test('a stale map loses to the parser', async (t) => {
       const index = new ProjectIndex();
       assert.equal(index.packageSource(join(root, PAGES, 'ItemList.ets')), 'map');
       change(root);
+      index.refresh();
       assert.equal(index.packageSource(join(root, PAGES, 'ItemList.ets')), 'parser');
       assert.equal(declared(index, root, 'ItemList.ets', 'Item'), ITEM);
     });
@@ -148,12 +149,29 @@ test('re-exports: export *, aliases, default imports; cycles end', () => {
   assert.equal(declared(index, root, 'A.ets', 'Missing'), undefined);
 });
 
-test('the file cache re-parses a file when its mtime changes', () => {
+test('after refresh(), the file cache re-parses a file whose mtime changed', () => {
   const root = project();
   const index = new ProjectIndex();
   const item = join(root, 'common', 'src', 'main', 'ets', 'model', 'Item.ets');
   assert.deepEqual(index.facts(item)?.observedClasses, ['Item']);
   writeFileSync(item, readFileSync(item, 'utf8').replace('@Observed\n', ''));
   touch(item, 60);
+  assert.deepEqual(index.facts(item)?.observedClasses, ['Item'], 'same check: the first read stands');
+  index.refresh();
   assert.deepEqual(index.facts(item)?.observedClasses, []);
+});
+
+test('scoped package names resolve; SDK modules (@ohos.x, @kit.x) are skipped', () => {
+  const root = project();
+  for (const [file, from, to] of [
+    ['common/oh-package.json5', '"name": "common"', '"name": "@ohos/common"'],
+    ['entry/oh-package.json5', '"common": "file:../common"', '"@ohos/common": "file:../common"'],
+  ]) {
+    const path = join(root, file);
+    writeFileSync(path, readFileSync(path, 'utf8').replace(from, to));
+  }
+  put(join(root, PAGES, 'Scoped.ets'), "import { Item } from '@ohos/common';\nimport router from '@ohos.router';\n");
+  const index = new ProjectIndex();
+  assert.equal(declared(index, root, 'Scoped.ets', 'Item'), ITEM);
+  assert.equal(index.resolveImport('@ohos.router', join(root, PAGES, 'Scoped.ets')), undefined);
 });

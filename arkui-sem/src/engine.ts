@@ -5,6 +5,7 @@ import { dirname, relative } from 'node:path';
 import type { Questions } from '@typesafe-ai/sdk';
 import {
   type Candidate,
+  type ClassResolver,
   candidates,
   type FactExtractor,
   type FileFacts,
@@ -13,6 +14,7 @@ import {
   type V2Gap,
 } from './analysis.js';
 import { buildSlice, Q_R1, Q_R2, Q_R3, type SystemOneBackend } from './judge.js';
+import { ProjectIndex } from './project.js';
 
 // --- Formatting ---
 
@@ -76,6 +78,8 @@ export interface EngineOptions {
   cachePath?: string;
   taskContext?: string;
   judgeTimeoutMs?: number;
+  /** Cross-file lookups; a fresh project index when absent. Long-lived callers pass one to keep its cache. */
+  project?: ClassResolver;
 }
 
 const QUESTIONS: Record<Candidate['rule'], Questions> = { R1: Q_R1, R2: Q_R2, R3: Q_R3 };
@@ -211,15 +215,21 @@ export async function checkFiles(
   const findings: Finding[] = [];
   const errors: string[] = [];
 
+  // Every candidate is found before the first await: a shared index can't be refreshed by another check in between.
+  const project = opts.project ?? new ProjectIndex(extractor);
+  project.refresh?.();
+  const found: { file: string; facts: FileFacts; candidates: Candidate[] }[] = [];
   for (const file of files) {
-    let facts: FileFacts;
     try {
-      facts = extractor.extract(file, readFileSync(file, 'utf8'));
+      const facts = extractor.extract(file, readFileSync(file, 'utf8'));
+      found.push({ file, facts, candidates: candidates(facts, project) });
     } catch (e) {
       errors.push(`${file}: ${(e as Error).message}`);
-      continue;
     }
-    for (const c of candidates(facts)) {
+  }
+
+  for (const { file, facts, candidates: fileCandidates } of found) {
+    for (const c of fileCandidates) {
       const slice = buildSlice(facts, c, opts.taskContext);
       const questions = QUESTIONS[c.rule];
       const key = createHash('sha256')

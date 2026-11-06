@@ -1,6 +1,6 @@
 // .ets source → program facts → rule candidates. Deterministic; no model calls.
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 // --- Facts ---
 
@@ -70,7 +70,42 @@ export interface FileFacts {
   classParents: Record<string, string[]>;
   /** Classes that extend Array<…>: class → element type text and the class's own type parameters. */
   arrayClasses: Record<string, { element: string; params: string[] }>;
+  imports: ImportFact[];
+  /** `export { a as b } from 's'` (source set) and `export { a as b }` of a local or imported name (no source). */
+  reexports: ReexportFact[];
+  /** Sources of `export * from 's'`. */
+  exportAll: string[];
+  /** Name of the class or struct behind `export default`. */
+  defaultExport?: string;
   lines: string[];
+}
+
+export interface ImportFact {
+  local: string;
+  /** Name in the source module; "default" for a default import. */
+  imported: string;
+  source: string;
+  /** The file calls `local(…)` somewhere outside the import. */
+  called: boolean;
+}
+
+export interface ReexportFact {
+  exported: string;
+  imported: string;
+  source?: string;
+}
+
+/** A class or struct and the file that declares it. */
+export interface Declaration {
+  facts: FileFacts;
+  name: string;
+}
+
+/** Finds where a name used in a file is declared, across files; the project index implements it. */
+export interface ClassResolver {
+  declaration(name: string, from: FileFacts): Declaration | undefined;
+  /** Called once per check, before any lookup: drop what may have changed since the last one. */
+  refresh?(): void;
 }
 
 export interface ClassMember {
@@ -550,6 +585,62 @@ function disabledRulesAt(raw: string[], index: number): string[] {
   return m ? m[1].split(/[\s,]+/).filter((r) => /^R\d+$/.test(r)) : [];
 }
 
+/** Contents of the string literal whose opening quote is at `at` in the raw text. */
+function stringAt(text: string, at: number): string {
+  return text.slice(at + 1, text.indexOf(text[at], at + 1));
+}
+
+/** "a, b as c, type d" → [{ imported: a, local: a }, { imported: b, local: c }, { imported: d, local: d }]. */
+function namedSpecifiers(list: string) {
+  return list
+    .split(',')
+    .map((s) => s.trim().replace(/^type\s+/, ''))
+    .filter(Boolean)
+    .map((s) => {
+      const [imported, local = imported] = s.split(/\s+as\s+/);
+      return { imported: imported.trim(), local: local.trim() };
+    });
+}
+
+/** Imports and exports that link the file to others; regexes run on `flat` (blanked, same offsets) and read sources from `text`. */
+function moduleLinks(
+  text: string,
+  flat: string,
+): Pick<FileFacts, 'imports' | 'reexports' | 'exportAll' | 'defaultExport'> {
+  const imports: ImportFact[] = [];
+  let outsideImports = flat;
+  const IMPORT = /\bimport\s+(?:type\s+)?(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*from\s*(['"])/g;
+  for (const m of flat.matchAll(IMPORT)) {
+    const start = m.index ?? 0;
+    const quote = start + m[0].length - 1;
+    const source = stringAt(text, quote);
+    const end = quote + source.length + 2;
+    outsideImports = outsideImports.slice(0, start) + ' '.repeat(end - start) + outsideImports.slice(end);
+    const named = namedSpecifiers(m[2] ?? '');
+    if (m[1] && m[1] !== 'type') {
+      named.push({ imported: 'default', local: m[1] });
+    }
+    imports.push(...named.map((n) => ({ ...n, source, called: false })));
+  }
+  for (const i of imports) {
+    i.called = new RegExp(`(?<![\\w$.])${i.local.replace(/\$/g, '\\$')}\\s*\\(`).test(outsideImports);
+  }
+  const reexports: ReexportFact[] = [];
+  for (const m of flat.matchAll(/\bexport\s+(?:type\s+)?\{([^}]*)\}(\s*from\s*(['"]))?/g)) {
+    const source = m[2] ? stringAt(text, (m.index ?? 0) + m[0].length - 1) : undefined;
+    for (const n of namedSpecifiers(m[1])) {
+      reexports.push({ exported: n.local, imported: n.imported, source });
+    }
+  }
+  const exportAll = [...flat.matchAll(/\bexport\s*\*\s*from\s*(['"])/g)].map((m) =>
+    stringAt(text, (m.index ?? 0) + m[0].length - 1),
+  );
+  const defaultExport = flat.match(
+    /\bexport\s+default\s+(?:(?:abstract\s+)?class\s+|struct\s+)?(?!class\b|struct\b)([A-Za-z_$][\w$]*)/,
+  )?.[1];
+  return { imports, reexports, exportAll, defaultExport };
+}
+
 export class NaiveExtractor implements FactExtractor {
   readonly name = 'naive';
 
@@ -607,6 +698,7 @@ export class NaiveExtractor implements FactExtractor {
       observedV2Classes: observed.filter((m) => m[1]).map((m) => m[2]),
       objectLinkTypes,
       ...this.classes(code, depthBefore, depthAfter),
+      ...moduleLinks(text, blanked),
       lines: raw,
     };
   }
@@ -1007,25 +1099,61 @@ function own<T>(map: Record<string, T>, key: string): T | undefined {
   return Object.hasOwn(map, key) ? map[key] : undefined;
 }
 
+/** Whether the file itself declares `name`: a class, an interface or object type alias, or a component. */
+export function declares(facts: FileFacts, name: string): boolean {
+  return (
+    facts.declaredClasses.includes(name) ||
+    facts.declaredTypes.includes(name) ||
+    facts.components.some((c) => c.name === name)
+  );
+}
+
+/** Where `name`, as written in `scope`, is declared: in `scope` itself, else through the resolver. */
+function declarationOf(name: string, scope: FileFacts, resolver?: ClassResolver): Declaration | undefined {
+  return declares(scope, name) ? { facts: scope, name } : resolver?.declaration(name, scope);
+}
+
+function samePath(a: string, b: string): boolean {
+  return relative(a, b) === '';
+}
+
+function sameDeclaration(a: Declaration | undefined, b: Declaration) {
+  return a !== undefined && a.name === b.name && samePath(a.facts.file, b.facts.file);
+}
+
+/** Type text and the file it is written in, which resolves the names in it. */
+interface ScopedType {
+  type: string;
+  scope: FileFacts;
+}
+
 /** The class a field of type t holds: the element class for an array, without null, undefined or type arguments. */
 export function typeClass(t: string, facts: FileFacts): string {
   const held = nonNull(t);
   return className(elementType(held, facts) ?? held);
 }
 
-/** Element type of X[], Array<X>, or a file class extending Array<…> (its type parameters bound from t's arguments). */
 function elementType(t: string, facts: FileFacts): string | undefined {
+  return scopedElementType(t, facts)?.type;
+}
+
+/** Element type of X[], Array<X>, or a class extending Array<…> (its type parameters bound from t's arguments). */
+function scopedElementType(t: string, scope: FileFacts, resolver?: ClassResolver): ScopedType | undefined {
   const builtin = (t.match(/^(.+)\[\]$/) ?? t.match(/^Array<(.+)>$/))?.[1].trim();
   if (builtin !== undefined) {
-    return builtin;
+    return { type: builtin, scope };
   }
-  const cls = own(facts.arrayClasses, className(t));
-  if (!cls) {
+  const decl = declarationOf(className(t), scope, resolver);
+  const cls = decl && own(decl.facts.arrayClasses, decl.name);
+  if (!decl || !cls) {
     return undefined;
   }
-  const args = splitTopLevel(t.match(/<(.+)>$/)?.[1] ?? '', ',').map((a) => a.trim());
   const param = cls.params.indexOf(cls.element);
-  return param < 0 ? cls.element : args[param];
+  if (param < 0) {
+    return { type: cls.element, scope: decl.facts };
+  }
+  const type = splitTopLevel(t.match(/<(.+)>$/)?.[1] ?? '', ',').map((a) => a.trim())[param];
+  return type ? { type, scope } : undefined;
 }
 
 /** cls, then the types it extends, nearest first; some may be declared in another file. */
@@ -1041,42 +1169,80 @@ function ancestry(cls: string, facts: FileFacts): string[] {
   return chain;
 }
 
-/** Declared type of this.<field><segs>, from the field's type and the file's class fields; undefined when unknown. */
+/** decl, then the declarations it extends, nearest first; each parent name resolves from its child's file. */
+function declarationChain(decl: Declaration, resolver?: ClassResolver): Declaration[] {
+  const chain = [decl];
+  for (let i = 0; i < chain.length; i++) {
+    for (const p of own(chain[i].facts.classParents, chain[i].name) ?? []) {
+      const parent = declarationOf(p, chain[i].facts, resolver);
+      if (parent && !chain.some((c) => sameDeclaration(c, parent))) {
+        chain.push(parent);
+      }
+    }
+  }
+  return chain;
+}
+
+/** The nearest declaration in chain with member `property`, and the file its type is written in. */
+function memberOf(chain: Declaration[], property: string): { member: ClassMember; scope: FileFacts } | undefined {
+  for (const d of chain) {
+    const members = own(d.facts.classMembers, d.name);
+    const member = members && own(members, property);
+    if (member) {
+      return { member, scope: d.facts };
+    }
+  }
+  return undefined;
+}
 
 interface Step {
   type?: string;
   /** Text of the object literal the object here comes from: a plain object. */
   literal?: string;
+  /** The file the type text is written in. */
+  scope: FileFacts;
+  /** The file the literal text is written in, which can differ from the type's. */
+  literalScope?: FileFacts;
 }
 
 /** The object at each prefix of this.<field><segs> (segs.length + 1 steps). Inside a literal, a property's own value text
  *  decides: `{…}` stays plain, `new X(…)` is an X, anything else takes the declared type and is not known to be plain. A
- *  property at a path in replaced (normalPath) is assigned elsewhere, so no initializer decides its value. */
+ *  property at a path in replaced (normalPath) is assigned elsewhere, so no initializer decides its value. With a
+ *  resolver, types declared in other files are followed there. */
 function walk(
   fieldType: string | undefined,
   literal: string | undefined,
   segs: string[],
   facts: FileFacts,
   replaced = new Set<string>(),
+  resolver?: ClassResolver,
 ): Step[] {
-  const steps: Step[] = [{ type: fieldType && nonNull(fieldType), literal }];
+  const steps: Step[] = [{ type: fieldType && nonNull(fieldType), literal, scope: facts, literalScope: facts }];
   for (const [i, s] of segs.entries()) {
     const prev = steps[steps.length - 1];
     const prop = segmentProp(s);
     let next: Step;
     if (prop === undefined) {
-      next = { type: prev.type && (elementType(prev.type, facts) ?? recordValue(prev.type)) };
+      const element = prev.type === undefined ? undefined : scopedElementType(prev.type, prev.scope, resolver);
+      next = element ?? { type: prev.type && recordValue(prev.type), scope: prev.scope };
     } else {
-      const cls = prev.type && className(prev.type);
-      const declared = cls ? declaredMember(ancestry(cls, facts), prop, facts) : undefined;
+      const decl = prev.type ? declarationOf(className(prev.type), prev.scope, resolver) : undefined;
+      const declared = decl && memberOf(declarationChain(decl, resolver), prop);
+      const type = declared?.member.type;
+      const scope = declared?.scope ?? prev.scope;
       if (replaced.has(normalPath(segs.slice(0, i + 1)))) {
-        next = { type: declared?.type }; // assigned elsewhere: its initializer is no longer the value
+        next = { type, scope }; // assigned elsewhere: its initializer is no longer the value
       } else if (prev.literal === undefined) {
-        next = { type: declared?.type, literal: declared?.member?.literal };
+        next = { type, literal: declared?.member.literal, scope, literalScope: scope };
       } else {
         const value = literalValue(prev.literal, prop);
         const created = value?.match(NEW_INSTANCE)?.[1];
-        next = value?.startsWith('{') ? { type: declared?.type, literal: value } : { type: created ?? declared?.type };
+        const literalScope = prev.literalScope ?? prev.scope;
+        next = value?.startsWith('{')
+          ? { type, literal: value, scope, literalScope }
+          : created
+            ? { type: created, scope: literalScope }
+            : { type, scope };
       }
     }
     steps.push({ ...next, type: next.type && nonNull(next.type) });
@@ -1145,19 +1311,41 @@ function rendersPath(f: FieldFact, path: string, facts: FileFacts): boolean {
   return f.readsInBuild.some((l) => read.test(facts.lines[l - 1] ?? ''));
 }
 
+/** @ObjectLink field types of the file's components and of the imported components it calls. */
+function objectLinkTypes(facts: FileFacts, resolver?: ClassResolver): ScopedType[] {
+  const local = facts.objectLinkTypes.map((type) => ({ type, scope: facts }));
+  if (!resolver) {
+    return local;
+  }
+  const imported = facts.imports
+    .filter((i) => i.called)
+    .flatMap((i) => {
+      const decl = resolver.declaration(i.local, facts);
+      const child = decl?.facts.components.find((c) => c.name === decl.name);
+      return decl && child ? linkTypesOf(child, decl.facts) : [];
+    });
+  return [...local, ...imported];
+}
+
+function linkTypesOf(c: ComponentFact, scope: FileFacts): ScopedType[] {
+  return c.fields.flatMap((f) =>
+    f.decorators.includes('@ObjectLink') && f.type ? [{ type: f.type.replace(/\[\]$/, '').trim(), scope }] : [],
+  );
+}
+
 /** V1: a property change on an @Observed object reaches every @ObjectLink bound to that object (OpenHarmony @Observed/@ObjectLink
- *  docs), so a deep write is seen when a child in the file takes the owning class as @ObjectLink, unless the parent renders the
- *  path itself. */
-function seenByObjectLink(f: FieldFact, nestedPath: string, facts: FileFacts): boolean {
-  const owner = walk(f.type, undefined, segments(nestedPath).slice(0, -1), facts).at(-1)?.type;
-  if (owner === undefined) {
+ *  docs), so a deep write is seen when a child in the file, or an imported child the file calls, takes the owning class as
+ *  @ObjectLink, unless the parent renders the path itself. */
+function seenByObjectLink(f: FieldFact, nestedPath: string, facts: FileFacts, resolver?: ClassResolver): boolean {
+  const owner = walk(f.type, undefined, segments(nestedPath).slice(0, -1), facts, undefined, resolver).at(-1);
+  const decl = owner?.type === undefined ? undefined : declarationOf(className(owner.type), owner.scope, resolver);
+  if (!decl?.facts.observedClasses.includes(decl.name)) {
     return false;
   }
-  const cls = className(owner);
   return (
-    facts.observedClasses.includes(cls) &&
-    facts.objectLinkTypes.some((t) => className(t) === cls) &&
-    !rendersPath(f, nestedPath, facts)
+    objectLinkTypes(facts, resolver).some((t) =>
+      sameDeclaration(declarationOf(className(t.type), t.scope, resolver), decl),
+    ) && !rendersPath(f, nestedPath, facts)
   );
 }
 
@@ -1268,13 +1456,19 @@ function declaredMember(
 
 /** Writes the decorator can't see, minus writes under a disable comment. V1: deeper than the first layer, even with @Observed
  *  classes, unless an @ObjectLink child sees them. V2: see v2Gap, whose distinct gaps come back too. */
-function unobservedWrites(f: FieldFact, facts: FileFacts): { writes: WriteFact[]; gaps?: V2Gap[] } {
+function unobservedWrites(
+  f: FieldFact,
+  facts: FileFacts,
+  resolver?: ClassResolver,
+): { writes: WriteFact[]; gaps?: V2Gap[] } {
   const writes = f.writes.filter((w) => !w.disabledRules.includes('R1'));
   if (isReactiveV1(f)) {
     return {
       writes: writes.filter(
         (w) =>
-          w.nestedPath !== undefined && nestedDepth(w.nestedPath) >= 2 && !seenByObjectLink(f, w.nestedPath, facts),
+          w.nestedPath !== undefined &&
+          nestedDepth(w.nestedPath) >= 2 &&
+          !seenByObjectLink(f, w.nestedPath, facts, resolver),
       ),
     };
   }
@@ -1293,7 +1487,8 @@ function unobservedWrites(f: FieldFact, facts: FileFacts): { writes: WriteFact[]
   return { writes: unseen, gaps: [...gaps.values()] };
 }
 
-export function candidates(facts: FileFacts): Candidate[] {
+/** Rule candidates in one file; with a resolver, V1 classes and @ObjectLink children declared in other files count too. */
+export function candidates(facts: FileFacts, resolver?: ClassResolver): Candidate[] {
   const out: Candidate[] = [];
   for (const c of facts.components) {
     for (const f of c.fields) {
@@ -1313,7 +1508,7 @@ export function candidates(facts: FileFacts): Candidate[] {
         });
       }
 
-      const { writes: nested, gaps } = isReactive(f) ? unobservedWrites(f, facts) : { writes: [] };
+      const { writes: nested, gaps } = isReactive(f) ? unobservedWrites(f, facts, resolver) : { writes: [] };
       if (nested.length > 0 && f.readsInBuild.length > 0 && !f.disabledRules.includes('R1')) {
         out.push({
           rule: 'R1',

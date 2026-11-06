@@ -3,8 +3,9 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { nestedDepth } from '../../src/analysis.js';
-import { found, put, tempDir } from '../helpers.js';
+import { candidates, nestedDepth } from '../../src/analysis.js';
+import { ProjectIndex } from '../../src/project.js';
+import { found, put, ROOT, tempDir } from '../helpers.js';
 
 const nestedHits = (src: string) =>
   found(src)
@@ -695,6 +696,49 @@ describe('disable comments', () => {
   });
 });
 
+describe('cross-file: classes and @ObjectLink children from other files (test/fixtures/project)', () => {
+  const pages = join(ROOT, 'test', 'fixtures', 'project', 'entry', 'src', 'main', 'ets', 'pages');
+  const index = new ProjectIndex();
+  const nestedIn = (page: string, withIndex: boolean) => {
+    const facts = index.facts(join(pages, page));
+    assert.ok(facts);
+    return candidates(facts, withIndex ? index : undefined)
+      .filter((c) => c.kind === 'nested-write-unobserved')
+      .map((c) => c.field.name);
+  };
+  const cases: [string, string, string[], string[]][] = [
+    [
+      'V1: an imported @ObjectLink child of an @Observed class from another module sees the write',
+      'ItemList.ets',
+      ['items'],
+      [],
+    ],
+    [
+      'V1: an imported @ObjectLink child does not help a class that is not @Observed',
+      'NotePage.ets',
+      ['note'],
+      ['note'],
+    ],
+    ['V2: an untraced owner from another module is skipped, with or without the index', 'CardPage.ets', [], []],
+  ];
+  for (const [name, page, without, withIndex] of cases) {
+    test(name, () => {
+      assert.deepEqual(nestedIn(page, false), without);
+      assert.deepEqual(nestedIn(page, true), withIndex);
+    });
+  }
+});
+
+test('an Array subclass used without type arguments leaves the element type unknown', () => {
+  const src = v1(
+    'class Rows<T> extends Array<T> {}',
+    '@State rows: Rows = new Rows()',
+    'this.rows[0].a.b = 1',
+    'this.rows.length',
+  );
+  assert.deepEqual(nestedHits(src), ['rows']);
+});
+
 // Owners declared in other files are skipped until cross-file facts come from ace-server.
 test('V2: a class declared in another file is skipped', () => {
   const dir = tempDir();
@@ -761,5 +805,98 @@ struct P {
   });
   test('a @Trace property is observed', () => {
     assert.deepEqual(nestedHits(user('@ObservedV2\nclass User {\n  @Trace $id: number = 0\n}')), []);
+  });
+});
+
+describe('cross-file V1 through the walk (relative imports)', () => {
+  /** Writes `files` into a temp dir and returns the nested-write hits on P.ets, without and with a project index. */
+  const hits = (files: Record<string, string>) => {
+    const dir = tempDir();
+    for (const [name, text] of Object.entries(files)) {
+      put(join(dir, name), text);
+    }
+    const index = new ProjectIndex();
+    const facts = index.facts(join(dir, 'P.ets'));
+    assert.ok(facts);
+    const nested = (withIndex: boolean) =>
+      candidates(facts, withIndex ? index : undefined)
+        .filter((c) => c.kind === 'nested-write-unobserved')
+        .map((c) => c.field.name);
+    return [nested(false), nested(true)];
+  };
+
+  test('a member inherited from a class in another file leads to the @ObjectLink owner', () => {
+    const result = hits({
+      'model/Base.ets': `@Observed
+export class Inner {
+  text: string = ''
+}
+export class Base {
+  inner: Inner = new Inner()
+}`,
+      'model/Doc.ets': `import { Base } from './Base'
+export class Doc extends Base {
+}`,
+      'view/InnerRow.ets': `import { Inner } from '../model/Base'
+@Component
+export struct InnerRow {
+  @ObjectLink inner: Inner
+  build() {
+    Text(this.inner.text)
+  }
+}`,
+      'P.ets': `import { Doc } from './model/Doc'
+import { InnerRow } from './view/InnerRow'
+@Component
+struct P {
+  @State doc: Doc = new Doc()
+  build() {
+    Column() {
+      InnerRow({ inner: this.doc.inner })
+      Button('x').onClick(() => {
+        this.doc.inner.text = 'y'
+      })
+    }
+  }
+}`,
+    });
+    assert.deepEqual(result, [['doc'], []]);
+  });
+
+  test('an @Observed Array subclass declared in another file gives the element class', () => {
+    const result = hits({
+      'model/Items.ets': `@Observed
+export class Item {
+  title: string = ''
+}
+@Observed
+export class Items extends Array<Item> {
+}`,
+      'view/ItemRow.ets': `import { Item } from '../model/Items'
+@Component
+export struct ItemRow {
+  @ObjectLink item: Item
+  build() {
+    Text(this.item.title)
+  }
+}`,
+      'P.ets': `import { Item, Items } from './model/Items'
+import { ItemRow } from './view/ItemRow'
+@Component
+struct P {
+  @State items: Items = new Items()
+  build() {
+    Column() {
+      ForEach(this.items, (item: Item) => {
+        ItemRow({ item: item })
+      })
+      Button('x').onClick(() => {
+        this.items[0].title = 'y'
+      })
+    }
+  }
+}`,
+    });
+    assert.deepEqual(result, [['items'], []]);
   });
 });

@@ -1,0 +1,6 @@
+{
+  "modelVersion": "6.0.0",
+  "description": "Two-module fixture: entry imports common by package name.",
+  "dependencies": {},
+  "devDependencies": {}
+}

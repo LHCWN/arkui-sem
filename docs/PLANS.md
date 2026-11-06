@@ -13,6 +13,7 @@ The user sets direction; agents plan and execute. Plans live in the repo so ever
 | Plan | About |
 |---|---|
 | [roadmap.md](exec-plans/active/roadmap.md) | the one forward plan: plugin status and P-A roadmap, rule coverage R1–R5 and phases 0–6 (evaluation status: `bench/docs/RESULTS.md`) |
+| [cross-file-facts.md](exec-plans/active/cross-file-facts.md) | handoff: project index, cross-file R1 nested write (PR 1 done), call-site edges, LSP in the plugin (roadmap phase 2) |
 
 ## Completed
 

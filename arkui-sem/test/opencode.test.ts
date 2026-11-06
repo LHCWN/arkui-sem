@@ -93,7 +93,8 @@ test('idle sessions with no .ets edits are left alone', async () => {
 
 test('arkui_check tool scans a directory', async () => {
   const out = await hooks.tool.arkui_check.execute({ paths: ['test/fixtures'] }, ctx);
-  assert.match(out, /5 finding\(s\), 1 question\(s\)/);
+  assert.match(out, /6 finding\(s\), 1 question\(s\)/);
+  assert.match(out, /NotePage\.ets:\d+ NotePage\.note/);
 });
 
 test('arkui_facts tool returns ownership facts', async () => {

@@ -20,6 +20,7 @@ Semantic lint for ArkTS/ArkUI declarative state (opencode v1 plugin + CLI). See 
 ## Code map
 
 - `src/analysis.ts`: fact types, `.ets` discovery, the naive fact extractor, the rules.
+- `src/project.ts`: project index for cross-file rules (package lookup from oh-package.json5 and build-profile.json5, re-exports, file cache).
 - `src/judge.ts`: System One backends, questions, slices; the backend registry (`BACKENDS`).
 - `src/engine.ts`: candidates → slices → judge → findings (≥ 0.8) and questions (0.5–0.8).
 - `src/opencode.ts`: the plugin (post-edit feedback, idle gate, tools `arkui_check` / `arkui_facts`).

@@ -80,10 +80,10 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | Item | Today | With an LSP server | Left after LSP |
 |---|---|---|---|
 | R1 undecorated field, mutated and rendered (V1/V2) | ✅ Facts + Q_R1; MDP runs in the bench | – | Intent verdict (judge/agent) |
-| R1 nested write, V1 (depth ≥ 2) | ✅ Same file | Field's class resolved across files | Aliasing (`const it = this.list[i]; it.x = …`): ArkAnalyzer |
+| R1 nested write, V1 (depth ≥ 2) | ✅ Across files (project index) | – | Aliasing (`const it = this.list[i]; it.x = …`): ArkAnalyzer |
 | R1 nested write, V2 (class not `@ObservedV2`) | ⚠️ Same file; cross-file through ace-server (follow-up) | ✅ Cross-file class lookup | – |
 | `@Trace` per property | ⚠️ Same file (mutated + rendered property, inherited `@Trace` included); cross-file through ace-server (follow-up) | ✅ Class (LSP) + property decorator (our parse) | Eval |
-| `@Observed` / `@ObjectLink` children | ⚠️ Same file only (class, child and parent) | ✅ Cross-file `@Observed` class + child `@ObjectLink` | – |
+| `@Observed` / `@ObjectLink` children | ✅ Across files: imported children the parent calls (project index) | – | – |
 | `@Track` | ❌ | Class lookup only | Rule design |
 | R2 facts: call-site edges | ❌ | ✅ `references` on struct → call sites; our parse of the object literal | Bench scale needs a one-pass index |
 | R2-a | ❌ | ✅ Detected (`references` + `documentHighlight` write kinds) | Judge: snapshot intended? |
@@ -95,7 +95,7 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | Derived state: `@Watch`, `@Monitor`, `@Computed` | ❌ | Locating only | New rule + dataset (MDP doesn't cover them) |
 | R3 unreleased resource | ✅ | Release in another file or owner object | Judge: app-lifetime or released elsewhere |
 | R4 over-reactive | ❌ | "Never written" via `references` | Rule; perf judgment |
-| Imports by package name across modules | ❌ | ❌ Needs `hvigor sync` / `ohpm install` output | Own package index: `oh-package.json5` name → module, `Index.ets` re-exports, then our parse. Without it, cross-module R1 nested-write classes, `@ObjectLink` children, R2 call sites, R3 releases and R4 writers are missed |
+| Imports by package name across modules | ✅ Project index (`src/project.ts`): `oh-package.json5` local dependencies and `build-profile.json5` modules; `Index.ets` re-exports | hvigor's dependency map and dependency records at `initialize` (cross-file-facts PR 3) | `oh_modules` packages, namespace imports (`import * as`) |
 
 **LSP fit:** good for the per-edit plugin, where the server stays warm and runs a few queries per edit. Poor for bench scale (thousands of items and sequential `references` calls, warm-up nondeterminism), so the bench uses a one-pass index instead.
 
@@ -122,7 +122,7 @@ Each phase starts only after an explicit go.
 - [ ] Decide: LSP behind `FactExtractor` for the plugin, or grep for struct names + our parse
 
 #### Phase 2: cross-file facts
-- [ ] `FactExtractor` gains cross-file class resolution (LSP in the plugin, index in the bench)
+- [x] Cross-file class resolution: a project index (`src/project.ts`) passed to the rules, in the plugin and the bench alike; the LSP adds `references` later (cross-file-facts PR 3)
 - [ ] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback)
 - [ ] Parent-side facts: decorator of `x`, writes after init, readers (parent, siblings)
 - [ ] Child-side facts: writes to `f` with context, invoked callbacks/`@Event`s, `@CustomDialog`/controller
@@ -131,7 +131,7 @@ Each phase starts only after an explicit go.
 #### Phase 3: rules from facts alone
 - [ ] V2 nested write with cross-file `@ObservedV2` classes
 - [ ] `@Trace` per property (mutated + rendered property without `@Trace`); evaluate on the bench's trace items (same-file rule done, rendered properties only)
-- [ ] `@Observed` / `@ObjectLink` recognition across files (the same-file case is done)
+- [x] `@Observed` / `@ObjectLink` recognition across files
 - [ ] R2-d event unwired
 - [ ] R2-f multiple parents
 

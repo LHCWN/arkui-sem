@@ -23,7 +23,8 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.18.30",
-    "@typesafe-ai/sdk": "^0.6.0"
+    "@typesafe-ai/sdk": "^0.6.0",
+    "json5": "^2.2.3"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

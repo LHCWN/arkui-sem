@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import { cpSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { ProjectIndex, parseJson5 } from '../src/project.js';
+import { checkFiles } from '../src/engine.js';
+import type { SystemOneBackend } from '../src/judge.js';
+import { ProjectIndex } from '../src/project.js';
 import { put, ROOT, tempDir } from './helpers.js';
 
 const FIXTURE = join(ROOT, 'test', 'fixtures', 'project');
@@ -50,11 +52,6 @@ function declared(index: ProjectIndex, root: string, page: string, name: string)
 }
 
 const ITEM = 'common/src/main/ets/model/Item.ets#Item';
-
-test('parseJson5 reads comments, unquoted keys, single quotes and trailing commas', () => {
-  const text = "{\n  // c\n  a: 'it\\'s \"x\"', /* b */ list: [1, 2,],\n  'q': { url: 'http://h' },\n}";
-  assert.deepEqual(parseJson5(text), { a: 'it\'s "x"', list: [1, 2], q: { url: 'http://h' } });
-});
 
 test('without a dependency map, the parser resolves a package import through Index.ets', () => {
   const index = new ProjectIndex();
@@ -170,8 +167,44 @@ test('scoped package names resolve; SDK modules (@ohos.x, @kit.x) are skipped', 
     const path = join(root, file);
     writeFileSync(path, readFileSync(path, 'utf8').replace(from, to));
   }
-  put(join(root, PAGES, 'Scoped.ets'), "import { Item } from '@ohos/common';\nimport router from '@ohos.router';\n");
+  put(
+    join(root, PAGES, 'Scoped.ets'),
+    "import { Item } from '@ohos/common';\nimport { Item as Direct } from '@ohos/common/src/main/ets/model/Item';\n",
+  );
   const index = new ProjectIndex();
   assert.equal(declared(index, root, 'Scoped.ets', 'Item'), ITEM);
+  assert.equal(declared(index, root, 'Scoped.ets', 'Direct'), ITEM);
   assert.equal(index.resolveImport('@ohos.router', join(root, PAGES, 'Scoped.ets')), undefined);
+});
+
+test('export { X as default } resolves for a default import', () => {
+  const root = project();
+  put(join(root, PAGES, 'Def.ets'), "import { Item } from 'common';\nexport { Item as default };\n");
+  put(join(root, PAGES, 'UsesDef.ets'), "import Thing from './Def';\n");
+  assert.equal(declared(new ProjectIndex(), root, 'UsesDef.ets', 'Thing'), ITEM);
+});
+
+/** A judge that calls every candidate a bug, so findings mirror candidates. */
+const bug = {
+  name: 'stub',
+  systemOne: async () => ({
+    backend: 'stub',
+    latencyMs: 0,
+    answers: { verdict: { type: 'choice', choice: 'desync_bug', confidence: 1, probabilities: { desync_bug: 1 } } },
+  }),
+} as unknown as SystemOneBackend;
+
+test('a long-lived index sees an imported file change between two checks', async () => {
+  const root = project();
+  const project_ = new ProjectIndex();
+  const page = join(root, PAGES, 'ItemList.ets');
+  const nested = async () =>
+    (await checkFiles([page], { backend: bug, project: project_ })).findings.some(
+      (f) => f.kind === 'nested-write-unobserved',
+    );
+  assert.equal(await nested(), false);
+  const item = join(root, 'common', 'src', 'main', 'ets', 'model', 'Item.ets');
+  writeFileSync(item, readFileSync(item, 'utf8').replace('@Observed\n', ''));
+  touch(item, 60);
+  assert.equal(await nested(), true);
 });

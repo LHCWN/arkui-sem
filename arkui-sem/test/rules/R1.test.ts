@@ -260,3 +260,13 @@ describe('cross-file: classes and @ObjectLink children from other files (test/fi
     });
   }
 });
+
+test('an Array subclass used without type arguments leaves the element type unknown', () => {
+  const src = v1(
+    'class Rows<T> extends Array<T> {}',
+    '@State rows: Rows = new Rows()',
+    'this.rows[0].a.b = 1',
+    'this.rows.length',
+  );
+  assert.deepEqual(nestedHits(src), ['rows']);
+});

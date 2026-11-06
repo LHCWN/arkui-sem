@@ -1,6 +1,6 @@
 // .ets source → program facts → rule candidates. Deterministic; no model calls.
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 // --- Facts ---
 
@@ -380,18 +380,22 @@ function moduleLinks(
   flat: string,
 ): Pick<FileFacts, 'imports' | 'reexports' | 'exportAll' | 'defaultExport'> {
   const imports: ImportFact[] = [];
-  const outsideImports = flat.replace(/\bimport\s[^;]*?\bfrom\s*(['"])[^'"\n]*\1/g, '');
-  const called = (name: string) => new RegExp(`(?<![\\w$.])${name.replace(/\$/g, '\\$')}\\s*\\(`).test(outsideImports);
+  let outsideImports = flat;
   const IMPORT = /\bimport\s+(?:type\s+)?(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*from\s*(['"])/g;
   for (const m of flat.matchAll(IMPORT)) {
-    const source = stringAt(text, (m.index ?? 0) + m[0].length - 1);
+    const start = m.index ?? 0;
+    const quote = start + m[0].length - 1;
+    const source = stringAt(text, quote);
+    const end = quote + source.length + 2;
+    outsideImports = outsideImports.slice(0, start) + ' '.repeat(end - start) + outsideImports.slice(end);
     const named = namedSpecifiers(m[2] ?? '');
     if (m[1] && m[1] !== 'type') {
       named.push({ imported: 'default', local: m[1] });
     }
-    for (const n of named) {
-      imports.push({ ...n, source, called: called(n.local) });
-    }
+    imports.push(...named.map((n) => ({ ...n, source, called: false })));
+  }
+  for (const i of imports) {
+    i.called = new RegExp(`(?<![\\w$.])${i.local.replace(/\$/g, '\\$')}\\s*\\(`).test(outsideImports);
   }
   const reexports: ReexportFact[] = [];
   for (const m of flat.matchAll(/\bexport\s+(?:type\s+)?\{([^}]*)\}(\s*from\s*(['"]))?/g)) {
@@ -828,15 +832,21 @@ interface ScopedType {
 }
 
 /** Where `name`, as written in `scope`, is declared: in `scope` itself, else through the resolver. */
+/** Whether the file itself declares `name` as a class or a component. */
+export function declares(facts: FileFacts, name: string): boolean {
+  return facts.declaredClasses.includes(name) || facts.components.some((c) => c.name === name);
+}
+
 function declarationOf(name: string, scope: FileFacts, resolver?: ClassResolver): Declaration | undefined {
-  if (scope.declaredClasses.includes(name)) {
-    return { facts: scope, name };
-  }
-  return resolver?.declaration(name, scope);
+  return declares(scope, name) ? { facts: scope, name } : resolver?.declaration(name, scope);
+}
+
+export function samePath(a: string, b: string): boolean {
+  return relative(a, b) === '';
 }
 
 function sameDeclaration(a: Declaration | undefined, b: Declaration) {
-  return a !== undefined && a.name === b.name && a.facts.file === b.facts.file;
+  return a !== undefined && a.name === b.name && samePath(a.facts.file, b.facts.file);
 }
 
 /** Element type of X[], Array<X>, or a class extending Array<…> (its type parameters bound from t's arguments). */
@@ -856,7 +866,11 @@ function elementType({ type: t, scope }: ScopedType, resolver?: ClassResolver): 
       .split(',')
       .map((a) => a.trim()) ?? [];
   const param = cls.params.indexOf(cls.element);
-  return param < 0 ? { type: cls.element, scope: decl.facts } : { type: args[param], scope };
+  if (param < 0) {
+    return { type: cls.element, scope: decl.facts };
+  }
+  const type = args[param];
+  return type === undefined ? undefined : { type, scope };
 }
 
 /** Declared type of this.<field><segs>, from the field's type and the class fields of the declaring files; undefined when unknown. */

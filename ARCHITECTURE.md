@@ -39,6 +39,8 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/opencode.ts      plugin: tool.execute.after feedback, session.idle gate, tools arkui_check / arkui_facts
   src/analysis.ts      fact types, .ets discovery, naive fact extractor (stand-in for ArkAnalyzer + APAK),
                        rules R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware), R3 unreleased-resource
+  src/project.ts       project index for the rules: imported name → declaring file (relative imports, packages from
+                       hvigor's dependency map when fresh else build-profile/oh-package.json5, Index.ets re-exports), caches
   src/judge.ts         System One interface, Jev, Clef, answer helpers, questions (Q_R1/Q_R2/Q_R3), slices (SPEC_CARDS),
                        heuristic, DeepSeek (flash, structured output), backend registry
   src/engine.ts        candidates → slices → judge → finding/question bands (thresholds 0.8 / 0.5); agent formatting
@@ -46,8 +48,9 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/cli.ts           arkui-sem check | config | lsp  (default backend: clef)
   src/lsp/             utility client for ace-server (ArkTS language server): definition, references, call hierarchy
   test/                node:test, run from src/ via tsx (npm test, offline): rules/R1.test.ts, rules/R3.test.ts, one file
-                       per module (config, engine, deepseek, openrouter, opencode, lsp), helpers.ts; test/fixtures/:
-                       Counter, Feed, Profile (R1), Ticker (R3), fake-ace-server.mjs (both LSP protocols)
+                       per module (config, engine, deepseek, openrouter, opencode, lsp, project), helpers.ts; test/fixtures/:
+                       Counter, Feed, Profile (R1), Ticker (R3), fake-ace-server.mjs (both LSP protocols), project/
+                       (two-module DevEco project: entry imports common by package name)
   skills/arkui-state-management/SKILL.md, scripts/install.mjs
   backends `or-clef` / `or-clef-flash`: Clef via OpenRouter Decisions API (POST https://openrouter.ai/api/alpha/decisions; OPENROUTER_API_KEY or openrouter.apiKey; openrouter.baseUrl)
   backend `laya`: local TypeSafe-compatible server (default http://127.0.0.1:8080; laya.baseUrl / LAYA_BASE_URL);

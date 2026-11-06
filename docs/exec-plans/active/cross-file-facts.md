@@ -1,6 +1,8 @@
 # Handoff: cross-file facts in the plugin
 
-Roadmap phase 2, plus two items of phase 3 (`docs/exec-plans/active/roadmap.md`, Plan). Branch `feat/cross-file-facts`, from `main`.
+Roadmap phase 2, plus two items of phase 3 (`docs/exec-plans/active/roadmap.md`, Plan). One branch per PR, from `main`.
+
+**Status:** PR 1 done on `feat/cross-file-index` (project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PRs 2–3 open.
 
 ## Goal
 
@@ -9,8 +11,11 @@ Rules today see one file. Give them facts from the files a component imports, an
 1. **Project index** (no LSP). Resolve an imported name to the file that declares it:
    - relative imports (`./model/Item`);
    - imports by package name, from one of two sources behind one lookup function:
-     - **hvigor's dependency map** when the project has been synced (`.hvigor/dependencyMap`). We never run `hvigor` ourselves.
-       Check its format against a real synced project before relying on it, and use it only when it is newer than every `oh-package.json5`;
+     - **hvigor's dependency map** when the project has been synced (`.hvigor/dependencyMap/dependencyMap.json5`). We never run
+       `hvigor` ourselves. It gives the module list (name → `srcPath`); `file:` dependencies are resolved by us. Sync rewrites
+       only copies whose content changed, so its mtime is not a sync time: the map is stale, and the parser is used, when its
+       `basePath` is not where it sits, its modules differ from the root `build-profile.json5`, or an `oh-package.json5` copy
+       differs from its source (compared only when the source is newer than the copy);
      - **our own parser** otherwise: `oh-package.json5` `name` → module dir;
    - then `Index.ets` re-exports (`export { X } from './src/...'`, `export * from`) to reach the declaring file;
    - `oh_modules` packages are out (see Out of scope).

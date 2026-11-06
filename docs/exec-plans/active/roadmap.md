@@ -95,7 +95,7 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | Derived state: `@Watch`, `@Monitor`, `@Computed` | ❌ | Locating only | New rule + dataset (MDP doesn't cover them) |
 | R3 unreleased resource | ✅ | Release in another file or owner object | Judge: app-lifetime or released elsewhere |
 | R4 over-reactive | ❌ | "Never written" via `references` | Rule; perf judgment |
-| Imports by package name across modules | ✅ Project index (`src/project.ts`): hvigor's dependency map when fresh, else our parse; `Index.ets` re-exports | Dependency records at `initialize` (cross-file-facts PR 3) | `oh_modules` packages, namespace imports (`import * as`) |
+| Imports by package name across modules | ✅ Project index (`src/project.ts`): `oh-package.json5` `file:` dependencies and `build-profile.json5` modules; `Index.ets` re-exports | hvigor's dependency map and dependency records at `initialize` (cross-file-facts PR 3) | `oh_modules` packages, namespace imports (`import * as`) |
 
 **LSP fit:** good for the per-edit plugin, where the server stays warm and runs a few queries per edit. Poor for bench scale (thousands of items and sequential `references` calls, warm-up nondeterminism), so the bench uses a one-pass index instead.
 

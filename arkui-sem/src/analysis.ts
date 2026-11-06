@@ -841,7 +841,7 @@ function declarationOf(name: string, scope: FileFacts, resolver?: ClassResolver)
   return declares(scope, name) ? { facts: scope, name } : resolver?.declaration(name, scope);
 }
 
-export function samePath(a: string, b: string): boolean {
+function samePath(a: string, b: string): boolean {
   return relative(a, b) === '';
 }
 

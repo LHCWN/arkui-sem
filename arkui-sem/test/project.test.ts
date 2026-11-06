@@ -1,4 +1,4 @@
-// The project index on test/fixtures/project: package lookup (dependency map or parser), re-exports, file cache.
+// The project index on test/fixtures/project: package lookup, re-exports, file cache.
 
 import assert from 'node:assert/strict';
 import { cpSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
@@ -11,30 +11,12 @@ import { put, ROOT, tempDir } from './helpers.js';
 
 const FIXTURE = join(ROOT, 'test', 'fixtures', 'project');
 const PAGES = join('entry', 'src', 'main', 'ets', 'pages');
-const MODULES = ['entry', 'common'];
 
-/** A copy of the fixture in a temp dir, so tests can edit it and write a dependency map. */
+/** A copy of the fixture in a temp dir, so tests can edit it. */
 function project(): string {
   const dir = tempDir();
   cpSync(FIXTURE, dir, { recursive: true });
   return dir;
-}
-
-/** Writes `.hvigor/dependencyMap` as DevEco 6.x sync does: verbatim oh-package.json5 copies and a map file. */
-function sync(root: string, modules = MODULES) {
-  const mapDir = join(root, '.hvigor', 'dependencyMap');
-  const mapFile = join(mapDir, 'dependencyMap.json5');
-  put(join(mapDir, 'oh-package.json5'), readFileSync(join(root, 'oh-package.json5'), 'utf8'));
-  for (const m of modules) {
-    put(join(mapDir, m, 'oh-package.json5'), readFileSync(join(root, m, 'oh-package.json5'), 'utf8'));
-  }
-  put(mapFile, {
-    basePath: mapFile,
-    rootDependency: './oh-package.json5',
-    dependencyMap: Object.fromEntries(modules.map((m) => [m, `./${m}/oh-package.json5`])),
-    modules: modules.map((name) => ({ name, srcPath: `..\\..\\..\\${name}` })),
-  });
-  return mapFile;
 }
 
 /** Sets a file's mtime `seconds` from now. */
@@ -53,9 +35,8 @@ function declared(index: ProjectIndex, root: string, page: string, name: string)
 
 const ITEM = 'common/src/main/ets/model/Item.ets#Item';
 
-test('without a dependency map, the parser resolves a package import through Index.ets', () => {
+test('a package import resolves through the dependency Index.ets', () => {
   const index = new ProjectIndex();
-  assert.equal(index.packageSource(join(FIXTURE, PAGES, 'ItemList.ets')), 'parser');
   assert.equal(
     index.resolveImport('common', join(FIXTURE, PAGES, 'ItemList.ets')),
     resolve(FIXTURE, 'common', 'Index.ets'),
@@ -63,69 +44,11 @@ test('without a dependency map, the parser resolves a package import through Ind
   assert.equal(declared(index, FIXTURE, 'ItemList.ets', 'Item'), ITEM);
 });
 
-test('a fresh dependency map gives the module list, with the same resolution', () => {
+test('a project module that is not a file: dependency resolves through build-profile.json5', () => {
   const root = project();
-  sync(root);
-  const index = new ProjectIndex();
-  assert.equal(index.packageSource(join(root, PAGES, 'ItemList.ets')), 'map');
-  assert.equal(declared(index, root, 'ItemList.ets', 'Item'), ITEM);
-});
-
-test('a source touched after sync with unchanged content keeps the map', () => {
-  const root = project();
-  sync(root);
-  touch(join(root, 'entry', 'oh-package.json5'), 60);
-  assert.equal(new ProjectIndex().packageSource(join(root, PAGES, 'ItemList.ets')), 'map');
-});
-
-test('a stale map loses to the parser', async (t) => {
-  const stale: [string, (root: string) => void][] = [
-    [
-      'an oh-package.json5 changed after sync',
-      (root) => {
-        const pkg = join(root, 'entry', 'oh-package.json5');
-        writeFileSync(pkg, readFileSync(pkg, 'utf8').replace('"1.0.0"', '"1.0.1"'));
-        touch(pkg, 60);
-      },
-    ],
-    [
-      'a module added to build-profile.json5',
-      (root) => {
-        const profile = join(root, 'build-profile.json5');
-        writeFileSync(
-          profile,
-          readFileSync(profile, 'utf8').replace('modules: [', "modules: [\n    { name: 'extra', srcPath: './extra' },"),
-        );
-      },
-    ],
-    [
-      'a module removed from build-profile.json5',
-      (root) => {
-        const profile = join(root, 'build-profile.json5');
-        writeFileSync(profile, readFileSync(profile, 'utf8').replace("{ name: 'common', srcPath: './common', },", ''));
-      },
-    ],
-    [
-      'a map synced elsewhere (basePath)',
-      (root) =>
-        put(join(root, '.hvigor', 'dependencyMap', 'dependencyMap.json5'), {
-          ...JSON.parse(readFileSync(join(root, '.hvigor', 'dependencyMap', 'dependencyMap.json5'), 'utf8')),
-          basePath: join(root, 'moved', 'dependencyMap.json5'),
-        }),
-    ],
-  ];
-  for (const [name, change] of stale) {
-    await t.test(name, () => {
-      const root = project();
-      sync(root);
-      const index = new ProjectIndex();
-      assert.equal(index.packageSource(join(root, PAGES, 'ItemList.ets')), 'map');
-      change(root);
-      index.refresh();
-      assert.equal(index.packageSource(join(root, PAGES, 'ItemList.ets')), 'parser');
-      assert.equal(declared(index, root, 'ItemList.ets', 'Item'), ITEM);
-    });
-  }
+  const pkg = join(root, 'entry', 'oh-package.json5');
+  writeFileSync(pkg, readFileSync(pkg, 'utf8').replace('"common": "file:../common"', ''));
+  assert.equal(declared(new ProjectIndex(), root, 'ItemList.ets', 'Item'), ITEM);
 });
 
 test('re-exports: export *, aliases, default imports; cycles end', () => {

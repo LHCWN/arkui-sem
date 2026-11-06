@@ -10,13 +10,15 @@ Rules today see one file. Give them facts from the files a component imports, an
 
 1. **Project index** (no LSP). Resolve an imported name to the file that declares it:
    - relative imports (`./model/Item`);
-   - imports by package name, from one of two sources behind one lookup function:
-     - **hvigor's dependency map** when the project has been synced (`.hvigor/dependencyMap/dependencyMap.json5`). We never run
-       `hvigor` ourselves. It gives the module list (name → `srcPath`); `file:` dependencies are resolved by us. Sync rewrites
-       only copies whose content changed, so its mtime is not a sync time: the map is stale, and the parser is used, when its
-       `basePath` is not where it sits, its modules differ from the root `build-profile.json5`, or an `oh-package.json5` copy
-       differs from its source (compared only when the source is newer than the copy);
-     - **our own parser** otherwise: `oh-package.json5` `name` → module dir;
+   - imports by package name: the importing module's `file:` dependency in `oh-package.json5`, else a project module from
+     the root `build-profile.json5` (by module name or `oh-package.json5` `name`);
+   - hvigor's dependency map (`.hvigor/dependencyMap/dependencyMap.json5`, written by sync; we never run `hvigor`) moves to
+     PR 3. Its module list must match `build-profile.json5` to count as fresh, so it changes no resolution today; PR 3
+     needs it for the dependency records at `initialize`. Format and staleness rule, checked on a synced DevEco 6.1.1
+     project: `basePath` is the map file's absolute path and `srcPath`s (Windows separators) resolve against it; the
+     `oh-package.json5` copies are verbatim, and sync rewrites only those whose content changed, so its mtime is not a sync
+     time. The map is stale when `basePath` is not where it sits, its modules differ from the root `build-profile.json5`,
+     or a copy differs from its source (compared only when the source is newer than the copy);
    - then `Index.ets` re-exports (`export { X } from './src/...'`, `export * from`) to reach the declaring file;
    - `oh_modules` packages are out (see Out of scope).
 
@@ -48,7 +50,8 @@ Rules today see one file. Give them facts from the files a component imports, an
 ## Tests (offline, `npm test`)
 
 - Fixtures: a two-module project under `test/fixtures/` (a class in module B exported through `Index.ets`, imported by package name in A; an `@ObjectLink` child in its own file; a struct used from two parents).
-- Package lookup: the same import resolves with a dependency map and without one (fallback); a stale map loses to the parser.
+- Package lookup: a `file:` dependency and a project module both resolve through `Index.ets`; with the map (PR 3), the same
+  import resolves with a map and without one, and a stale map loses to the parser.
 - Rule tests: the cross-file `@ObjectLink` case is silent; the cross-file non-`@Observed` nested write is flagged; V2 with
   an `@ObservedV2` class in another file is silent.
 - Plugin test with `test/fixtures/fake-ace-server.mjs`: `open` before query, fallback on a dead or slow server, stop on dispose.
@@ -57,12 +60,13 @@ Rules today see one file. Give them facts from the files a component imports, an
 
 Three PRs, in order. Each adds one visible change, is testable on its own and updates its own roadmap boxes and tracker lines.
 
-1. **Project index + cross-file R1 nested write.** Goal items 1–2: the index with both package sources (dependency map,
-   parser fallback), file cache, the rule changes, their fixtures and tests, the bench re-run below.
+1. **Project index + cross-file R1 nested write.** Goal items 1–2: the index (package lookup from `oh-package.json5`
+   and `build-profile.json5`), file cache, the rule changes, their fixtures and tests, the bench re-run below.
 2. **Call-site edges, index only.** Goal item 3 without the LSP: struct-name scan, object-literal parse, expression forms,
    `arkui_facts` output.
 3. **LSP in the plugin.** Goal item 4: lifecycle, `open` before query, fallback, the `lsp` switch, `references` adding to
-   PR 2's edges (with the legacy open-files workaround), dependency records at `initialize` from PR 1's lookup, the timing
+   PR 2's edges (with the legacy open-files workaround), hvigor's dependency map as the module source when fresh (see Goal 1), dependency records at
+   `initialize` from that lookup, the timing
    check. Moves this plan to `completed/`.
 
 ## Bench

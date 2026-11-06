@@ -2,16 +2,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import JSON5 from 'json5';
-import {
-  type ClassResolver,
-  type Declaration,
-  declares,
-  type FileFacts,
-  NaiveExtractor,
-  samePath,
-} from './analysis.js';
-
-export type PackageSource = 'map' | 'parser';
+import { type ClassResolver, type Declaration, declares, type FileFacts, NaiveExtractor } from './analysis.js';
 
 interface Module {
   name: string;
@@ -19,7 +10,6 @@ interface Module {
 }
 
 interface ModuleList {
-  source: PackageSource;
   modules: Module[];
   /** Keyed by module name and by oh-package.json5 name. */
   dirByName: Map<string, string>;
@@ -31,17 +21,6 @@ interface OhPackage {
   dependencies?: Record<string, string>;
 }
 
-/** `.hvigor/dependencyMap/dependencyMap.json5` as DevEco 6.x sync writes it. */
-interface DependencyMap {
-  /** The map file's own absolute path. */
-  basePath: string;
-  rootDependency: string;
-  dependencyMap: Record<string, string>;
-  /** `srcPath` is relative to `basePath`, with Windows separators. */
-  modules: { name: string; srcPath: string }[];
-}
-
-const MAP_PATH = join('.hvigor', 'dependencyMap', 'dependencyMap.json5');
 const BUILD_PROFILE = 'build-profile.json5';
 const OH_PACKAGE = 'oh-package.json5';
 const DEFAULT_ENTRY = 'Index.ets';
@@ -59,14 +38,6 @@ function readProfileModules(path: string): Module[] | undefined {
     name: m.name,
     dir: resolve(dirname(path), m.srcPath),
   }));
-}
-
-function readDependencyMap(path: string): DependencyMap | undefined {
-  const map = readJson5<DependencyMap>(path);
-  const { basePath, rootDependency, dependencyMap, modules } = map;
-  return basePath && rootDependency && dependencyMap && modules
-    ? { basePath, rootDependency, dependencyMap, modules }
-    : undefined;
 }
 
 function mtime(path: string): number | undefined {
@@ -129,8 +100,6 @@ export class ProjectIndex implements ClassResolver {
   private readonly parsed = new FileCache(this.stat, (p) => this.extractor.extract(p, readFileSync(p, 'utf8')));
   private readonly packages = new FileCache(this.stat, (p) => readJson5<OhPackage>(p));
   private readonly profiles = new FileCache(this.stat, readProfileModules);
-  private readonly maps = new FileCache(this.stat, readDependencyMap);
-  private readonly sameContent = new Map<string, boolean>();
   private readonly roots = new Map<string, string | undefined>();
   private readonly moduleLists = new Map<string, ModuleList | undefined>();
   private readonly moduleDirs = new Map<string, string | undefined>();
@@ -168,11 +137,6 @@ export class ProjectIndex implements ClassResolver {
     }
     const inner = parts.slice(nameLength).join('/') || this.packages.get(join(dir, OH_PACKAGE))?.main || DEFAULT_ENTRY;
     return this.sourceFile(join(dir, inner));
-  }
-
-  /** Undefined outside a DevEco project. */
-  packageSource(file: string): PackageSource | undefined {
-    return this.moduleListOf(file)?.source;
   }
 
   private find(name: string, facts: FileFacts, seen: Set<string>): Declaration | undefined {
@@ -266,64 +230,15 @@ export class ProjectIndex implements ClassResolver {
       if (!profile) {
         return undefined;
       }
-      const fromMap = this.mapModules(root, profile);
-      const modules = fromMap ?? profile;
       const dirByName = new Map<string, string>();
-      for (const m of modules) {
+      for (const m of profile) {
         dirByName.set(m.name, m.dir);
         const packageName = this.packages.get(join(m.dir, OH_PACKAGE))?.name;
         if (packageName) {
           dirByName.set(packageName, m.dir);
         }
       }
-      return { source: fromMap ? 'map' : 'parser', modules, dirByName };
-    });
-  }
-
-  /**
-   * Modules from hvigor's dependency map, or undefined when it is missing or stale. Sync rewrites only the copies whose
-   * content changed, so the map's mtime is not a sync time: compare the module set and the oh-package.json5 copies.
-   */
-  private mapModules(root: string, profile: Module[]): Module[] | undefined {
-    const mapPath = join(root, MAP_PATH);
-    const map = this.maps.get(mapPath);
-    if (!map || !samePath(map.basePath, mapPath)) {
-      return undefined;
-    }
-    const modules = map.modules.map((m) => ({
-      name: m.name,
-      dir: resolve(map.basePath, m.srcPath.replaceAll('\\', '/')),
-    }));
-    const sameModules =
-      modules.length === profile.length &&
-      profile.every((p) => modules.some((m) => m.name === p.name && samePath(m.dir, p.dir)));
-    if (!sameModules || modules.some((m) => map.dependencyMap[m.name] === undefined)) {
-      return undefined;
-    }
-    const mapDir = dirname(mapPath);
-    const copies: [string, string][] = [
-      [resolve(mapDir, map.rootDependency), join(root, OH_PACKAGE)],
-      ...modules.map((m): [string, string] => [resolve(mapDir, map.dependencyMap[m.name]), join(m.dir, OH_PACKAGE)]),
-    ];
-    return copies.every(([copy, source]) => this.inSync(copy, source)) ? modules : undefined;
-  }
-
-  /** A source no newer than its copy is unchanged; otherwise the contents decide. */
-  private inSync(copy: string, source: string): boolean {
-    const copyTime = this.stat(copy);
-    const sourceTime = this.stat(source);
-    if (copyTime === undefined || sourceTime === undefined) {
-      return copyTime === sourceTime;
-    }
-    if (sourceTime <= copyTime) {
-      return true;
-    }
-    return memo(this.sameContent, `${copy}|${copyTime}|${source}|${sourceTime}`, () => {
-      try {
-        return readFileSync(copy, 'utf8') === readFileSync(source, 'utf8');
-      } catch {
-        return false;
-      }
+      return { modules: profile, dirByName };
     });
   }
 }

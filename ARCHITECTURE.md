@@ -40,7 +40,7 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/analysis.ts      fact types, .ets discovery, naive fact extractor (stand-in for ArkAnalyzer + APAK),
                        rules R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware), R3 unreleased-resource
   src/project.ts       project index for the rules: imported name → declaring file (relative imports, packages from
-                       hvigor's dependency map when fresh else build-profile/oh-package.json5, Index.ets re-exports), caches
+                       oh-package.json5 file: dependencies and build-profile.json5 modules, Index.ets re-exports), caches
   src/judge.ts         System One interface, Jev, Clef, answer helpers, questions (Q_R1/Q_R2/Q_R3), slices (SPEC_CARDS),
                        heuristic, DeepSeek (flash, structured output), backend registry
   src/engine.ts        candidates → slices → judge → finding/question bands (thresholds 0.8 / 0.5); agent formatting

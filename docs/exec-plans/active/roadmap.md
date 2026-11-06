@@ -27,7 +27,7 @@ P-A2…P-A4 (intent tool, cross-file facts, LSP) are broken down further under R
 |---|---|---|---|
 | **P-A1** ✓ | opencode plugin vertical slice: post-edit feedback, idle gate, `arkui_check`, `arkui_facts`, skill, installer, tests | done | tests pass; tools and skill registered in opencode |
 | **P-A2** | Label log (fixes, dismissals with reasons) + `arkui_explain(id)` + `arkui_ownership_intent(component, field)` tools | 1–2 d | Labels written for every gate/finding outcome in a session |
-| **P-A3** | ArkAnalyzer + APAK extractor kept warm in the plugin process; incremental updates on edit; cross-file, including across modules via a package index; parent→child edges → **R2** | 4–5 d | p95 ≤ 1.5 s per edit on the big project; E0 fact-precision ≥ 0.95 |
+| **P-A3** | The fact extractor (behind `FactExtractor`: ours on the ohos-typescript tree, with checker types; ArkAnalyzer only if it proves suitable) kept warm in the plugin process; incremental updates on edit; cross-file, including across modules via a package index; parent→child edges → **R2** | 4–5 d | p95 ≤ 1.5 s per edit on the big project; E0 fact-precision ≥ 0.95 |
 | **P-A4** | LSP channel: an `arkui-sem` LSP server registered via `opencode.json` `lsp` for `.ets`, optionally alongside the community ArkTS language server for L0 | 3 d | A/B vs the `tool.execute.after` channel; no duplicate reports |
 | **P-A5** | Intent-aware slices: task text from the session's first user message (via `chat.message` / SDK), opt-in | 1 d | MDP / ArkState-200 lift with task context ≥ 5 pts [H] |
 | **P-A6** | Real backends calibrated: Jev, Clef-flash, fine-tuned Laya (local HTTP sidecar; Laya is Python); the zero-shot Laya baseline is in the bench | 2–3 d | Per-rule ECE ≤ 0.10; τ_hi gives precision ≥ 0.9 on dev (the bench's dev-split tooling tunes it) |
@@ -80,7 +80,7 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | Item | Today | With an LSP server | Left after LSP |
 |---|---|---|---|
 | R1 undecorated field, mutated and rendered (V1/V2) | ✅ Facts + Q_R1; MDP runs in the bench | – | Intent verdict (judge/agent) |
-| R1 nested write, V1 (depth ≥ 2) | ✅ Across files (project index) | – | Aliasing (`const it = this.list[i]; it.x = …`): ArkAnalyzer |
+| R1 nested write, V1 (depth ≥ 2) | ✅ Across files (project index) | – | Aliasing (`const it = this.list[i]; it.x = …`): dataflow in the fact extractor |
 | R1 nested write, V2 (class not `@ObservedV2`) | ⚠️ Same file; cross-file through ace-server (follow-up) | ✅ Cross-file class lookup | – |
 | `@Trace` per property | ⚠️ Same file (mutated + rendered property, inherited `@Trace` included); cross-file through ace-server (follow-up) | ✅ Class (LSP) + property decorator (our parse) | Eval |
 | `@Observed` / `@ObjectLink` children | ✅ Across files: imported children the parent calls (project index) | – | – |
@@ -90,7 +90,7 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | R2-d | ❌ | ✅ Fully decidable | – |
 | R2-f | ❌ | ✅ Facts | Fix choice |
 | R2-b / R2-c | ❌ | Evidence (sibling readers, dialog-ness) | Intent: judge, or agent via `arkui_ownership_intent` |
-| Read/write kind and context | Syntax tree (ohos-typescript) | Read/write kind: `documentHighlight` | Context (handler/`build`/lifecycle/async), reach via `@Builder`/`ForEach`: our parse / ArkAnalyzer |
+| Read/write kind and context | Syntax tree (ohos-typescript) | Read/write kind: `documentHighlight` | Context (handler/`build`/lifecycle/async), reach via `@Builder`/`ForEach`: the fact extractor |
 | String-keyed links: AppStorage/LocalStorage keys, `@Provide`/`@Consume` aliases, `@Watch` names, `@Monitor` paths | ❌ | ❌ | Own key index (grep-level) |
 | Derived state: `@Watch`, `@Monitor`, `@Computed` | ❌ | Locating only | New rule + dataset (MDP doesn't cover them) |
 | R3 unreleased resource | ✅ | Release in another file or owner object | Judge: app-lifetime or released elsewhere |
@@ -118,7 +118,7 @@ Each phase starts only after an explicit go.
   - [ ] `typeDefinition` across files
   - [ ] `references` on an `@Event`
 - [ ] Time the probes on one module of a large real project
-- [ ] Score against the E0 fact sample (LSP vs regex vs ArkAnalyzer; `bench/docs/evaluation-method.md`)
+- [ ] Score against the E0 fact sample (fact extractor vs LSP; `bench/docs/evaluation-method.md`)
 - [ ] Decide: LSP behind `FactExtractor` for the plugin, or grep for struct names + our parse
 
 #### Phase 2: cross-file facts
@@ -152,7 +152,7 @@ Each phase starts only after an explicit go.
 - [ ] End to end: an opencode "edit dialog" run in `sandbox/demo` (does the agent declare intent; is the code correct)
 
 #### Phase 6: left after LSP (later)
-- [ ] Aliasing / dataflow via the ArkAnalyzer extractor
+- [ ] Aliasing / dataflow in the fact extractor (ours; ArkAnalyzer only if it proves suitable)
 - [ ] Derived-state rule (`@Watch` / `@Monitor` / `@Computed`) + dataset
 - [ ] `@Track` rule
 - [ ] R4 over-reactive state

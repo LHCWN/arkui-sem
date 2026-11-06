@@ -95,7 +95,7 @@ Three PRs, in order. Each adds one visible change, is testable on its own and up
 
 - Emitting R2 candidates, intents and R2 evaluation (phases 4–5).
 - The string-key index (storage keys, `@Provide`/`@Consume`, `@Watch`/`@Monitor`), `@Trace` per property, `@Track`.
-- `oh_modules` / third-party packages, aliasing and dataflow (ArkAnalyzer, phase 6).
+- `oh_modules` / third-party packages, aliasing and dataflow (fact extractor, phase 6).
 - LSP diagnostics, hover and completion.
 
 ## Working rules

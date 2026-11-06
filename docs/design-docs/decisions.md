@@ -26,7 +26,8 @@
   (Apache-2.0, maintained by Huawei engineers in OpenHarmony's `third_party_typescript`; the parser DevEco's ets-loader and
   ArkAnalyzer build on), replacing the regex extractor. Parser options come from the SDK when found (ets-loader options plus
   HMS components, as the compiler registers them), else from a bundled copy. Parser only for now; the type checker is a
-  separate step, since a module's program takes seconds to build. Judge features are structured slice fields, not regexes
+  separate step, since a module's program takes seconds to build. Rules depend only on the `FactExtractor` interface:
+  ours is the main extractor; another (ArkAnalyzer) could sit behind it if it proves suitable. Judge features are structured slice fields, not regexes
   over slice text. Bench comparison: `bench/docs/plans/ts-extractor.md`.
 - **Repos: this repo is public, the bench is a private submodule** (2026-10-08).
   - GitHub's free organization plan gives branch protection (required reviews, rulesets) only to public repos, so the code lives in the public repo, where those gates work.

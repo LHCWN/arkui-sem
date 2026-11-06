@@ -40,7 +40,7 @@ flowchart LR
   end
 
   subgraph ENGINE["Engine (one code path)"]
-    FX["Facts<br/>syntax tree → ArkAnalyzer+APAK"]
+    FX["Facts<br/>fact extractor (ohos-typescript tree)"]
     RU["Rules R1/R3 (→ R2, R4)"]
     SL["Slice builder<br/>(+ task context, opt-in)"]
     JU{{"Judge<br/>heuristic · Jev · Clef-flash · Laya-FT · DeepSeek"}}
@@ -98,7 +98,7 @@ sequenceDiagram
 8. **D8 — Intent-aware slices (opt-in).** The slice can carry the user's task text; off by default (privacy) (P-A5).
 9. **D9 — Two latency tiers.** Post-edit uses fast facts and a fast backend; the gate and CI use full analysis.
 10. **D10 — Feedback carries no code excerpts.** The agent sees identifiers, lines and fixes. Excerpts go only to the judge.
-11. **D11 — In-process daemon.** opencode plugins live in the long-running server process, so the ArkAnalyzer scene (P-A3) can be built once and updated incrementally. Unlike a hook-per-process design, this needs no IPC.
+11. **D11 — In-process daemon.** opencode plugins live in the long-running server process, so the fact extractor's state (P-A3: parsed files, checker program) can be built once and updated incrementally. Unlike a hook-per-process design, this needs no IPC.
 
 ---
 
@@ -111,7 +111,7 @@ sequenceDiagram
 | Metric | Definition |
 |---|---|
 | **Task success** | Hidden checks / reproduction tests pass (and Compile@1) |
-| **Defects introduced** | Semantic defects in the final diff (R1–R4 classes), found by an *expert-tier* checker plus human review. This checker is stronger than the plugin under test: ArkAnalyzer facts, Sonnet-class escalation, manual triage. |
+| **Defects introduced** | Semantic defects in the final diff (R1–R4 classes), found by an *expert-tier* checker plus human review. This checker is stronger than the plugin under test: fact-extractor facts with checker types, Sonnet-class escalation, manual triage. |
 | **Finding resolution** | Share of confident findings the agent fixed *correctly* |
 | **Harmful edits** | Agent changes that break previously correct behaviour because of a false finding or question |
 | **Dismissal correctness** | Share of disable comments whose reason a reviewer accepts (watch for silencing instead of fixing) |

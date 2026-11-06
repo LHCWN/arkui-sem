@@ -1199,8 +1199,10 @@ interface Step {
   type?: string;
   /** Text of the object literal the object here comes from: a plain object. */
   literal?: string;
-  /** The file the type and literal text are written in. */
+  /** The file the type text is written in. */
   scope: FileFacts;
+  /** The file the literal text is written in, which can differ from the type's. */
+  literalScope?: FileFacts;
 }
 
 /** The object at each prefix of this.<field><segs> (segs.length + 1 steps). Inside a literal, a property's own value text
@@ -1215,7 +1217,7 @@ function walk(
   replaced = new Set<string>(),
   resolver?: ClassResolver,
 ): Step[] {
-  const steps: Step[] = [{ type: fieldType && nonNull(fieldType), literal, scope: facts }];
+  const steps: Step[] = [{ type: fieldType && nonNull(fieldType), literal, scope: facts, literalScope: facts }];
   for (const [i, s] of segs.entries()) {
     const prev = steps[steps.length - 1];
     const prop = segmentProp(s);
@@ -1231,14 +1233,15 @@ function walk(
       if (replaced.has(normalPath(segs.slice(0, i + 1)))) {
         next = { type, scope }; // assigned elsewhere: its initializer is no longer the value
       } else if (prev.literal === undefined) {
-        next = { type, literal: declared?.member.literal, scope };
+        next = { type, literal: declared?.member.literal, scope, literalScope: scope };
       } else {
         const value = literalValue(prev.literal, prop);
         const created = value?.match(NEW_INSTANCE)?.[1];
+        const literalScope = prev.literalScope ?? prev.scope;
         next = value?.startsWith('{')
-          ? { type, literal: value, scope }
+          ? { type, literal: value, scope, literalScope }
           : created
-            ? { type: created, scope: prev.scope }
+            ? { type: created, scope: literalScope }
             : { type, scope };
       }
     }

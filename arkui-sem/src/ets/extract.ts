@@ -1,5 +1,6 @@
 // .ets source → FileFacts, from the ohos-typescript syntax tree of one file (no type checker).
 import {
+  type BuildRead,
   type ClassMember,
   type ComponentFact,
   type FactExtractor,
@@ -164,6 +165,9 @@ export function typeRef(t: ts.TypeNode): TypeRef {
   if (ts.isUnionTypeNode(t)) {
     return { kind: 'union', members: t.types.map(typeRef) };
   }
+  if (ts.isFunctionTypeNode(t) || ts.isConstructorTypeNode(t)) {
+    return { kind: 'function' };
+  }
   if (ts.isTypeLiteralNode(t)) {
     return { kind: 'object' };
   }
@@ -215,6 +219,73 @@ function createdType(e: ts.Expression, sf?: ts.SourceFile): { type: string; type
     type: args.length ? `${name}<${args.map((a) => oneLine(a.getText(sf))).join(', ')}>` : name,
     typeRef: { kind: 'name', name, args: args.map(typeRef) },
   };
+}
+
+const CLOCKS = new Set(['Date.now', 'performance.now']);
+const TIMERS = new Set(['setTimeout', 'setInterval']);
+const LOOPS = new Set(['ForEach', 'LazyForEach', 'Repeat']);
+
+/** What time value an initializer or assigned value holds (see FieldFact.timeValue). */
+function timeValue(e: ts.Expression | undefined): FieldFact['timeValue'] {
+  if (!e) {
+    return undefined;
+  }
+  const v = unwrap(e);
+  if (ts.isCallExpression(v) && TIMERS.has(expressionName(v.expression) ?? '')) {
+    return 'timer';
+  }
+  return readsTime(v) ? 'clock' : undefined;
+}
+
+function readsTime(e: ts.Node): boolean {
+  if (ts.isCallExpression(e)) {
+    const name = expressionName(e.expression);
+    if (name !== undefined && (CLOCKS.has(name) || TIMERS.has(name))) {
+      return true;
+    }
+  }
+  if (ts.isNewExpression(e) && expressionName(e.expression) === 'Date') {
+    return true;
+  }
+  return ts.forEachChild(e, (c) => readsTime(c) || undefined) ?? false;
+}
+
+/** Where a read in build() sits: the nearest attribute call holding it in its arguments (not through a callback such as
+ *  an event handler), and whether a loop holds it. */
+function uiContext(node: ts.Node, body: ts.Node): Pick<BuildRead, 'attribute' | 'inForEach'> {
+  let attribute: string | undefined;
+  let inForEach = false;
+  let inCallback = false;
+  for (let n: ts.Node = node; n !== body && n.parent; n = n.parent) {
+    inCallback ||= isFunction(n);
+    const call = n.parent;
+    if (!(ts.isCallExpression(call) || ts.isEtsComponentExpression(call)) || !call.arguments.some((a) => a === n)) {
+      continue;
+    }
+    const callee = call.expression;
+    if (attribute === undefined && !inCallback && ts.isPropertyAccessExpression(callee)) {
+      attribute = callee.name.text;
+    }
+    if (ts.isIdentifier(callee) && LOOPS.has(callee.text)) {
+      inForEach = true;
+    }
+  }
+  return { attribute, inForEach };
+}
+
+/** Identifiers in an expression, `this` included, in order. */
+function identifiersIn(e: ts.Node): string[] {
+  const out = new Set<string>();
+  const visit = (n: ts.Node) => {
+    if (ts.isIdentifier(n)) {
+      out.add(n.text);
+    } else if (n.kind === ts.SyntaxKind.ThisKeyword) {
+      out.add('this');
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(e);
+  return [...out];
 }
 
 function oneLine(s: string): string {
@@ -605,6 +676,8 @@ class FileScan {
           readsInBuild: [],
           buildReads: [],
           writes: [],
+          invoked: false,
+          timeValue: timeValue(m.initializer),
           disabledRules,
         });
         const init = m.initializer && unwrap(m.initializer);
@@ -683,12 +756,19 @@ class FileScan {
       (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
       (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken);
     const line = this.line(base);
+    if (segments.length === 0 && ts.isCallExpression(parent) && parent.expression === top) {
+      field.invoked = true;
+    }
+    const assignedTime = assignment && timeValue(assignment.right);
+    if (assignedTime && field.timeValue !== 'timer') {
+      field.timeValue = assignedTime;
+    }
     if (!mutatingCall && !assignment && !updated) {
       if (isBuild) {
         if (!field.readsInBuild.includes(line)) {
           field.readsInBuild.push(line);
         }
-        field.buildReads.push(segments);
+        field.buildReads.push({ line, path: segments, ...uiContext(base, m.body) });
       }
       return;
     }
@@ -777,9 +857,11 @@ class FileScan {
           // Event listeners: target.on('event' | CONST.EVENT, handler) ↔ target.off(same event).
           const event = this.eventName(call.arguments[0]);
           if (event !== undefined) {
-            const target = this.text(chainRoot(callee.expression));
+            const root = chainRoot(callee.expression);
+            const target = this.text(root);
             add({
               kind: 'listener',
+              targetNames: identifiersIn(root),
               key: `${target}.on:${event}`,
               acquireLine,
               acquireIn: via,
@@ -790,10 +872,12 @@ class FileScan {
             });
           }
         } else if (ts.isPropertyAccessExpression(callee) && name !== undefined && REGISTRATION.test(name)) {
-          const target = this.text(chainRoot(callee.expression));
+          const root = chainRoot(callee.expression);
+          const target = this.text(root);
           const undo = name.startsWith('add') ? `remove${name.slice(3)}` : `un${name}`;
           add({
             kind: 'subscription',
+            targetNames: identifiersIn(root),
             key: `${target}.${name}`,
             acquireLine,
             acquireIn: via,
@@ -808,6 +892,7 @@ class FileScan {
               ? {
                   kind: 'timer',
                   key: `timer:${holder}`,
+                  targetNames: ['this', holder.slice('this.'.length)],
                   acquireLine,
                   acquireIn: via,
                   released: releases.some(
@@ -821,6 +906,7 @@ class FileScan {
               : {
                   kind: 'timer',
                   key: `timer:anonymous@${acquireLine}`,
+                  targetNames: [],
                   acquireLine,
                   acquireIn: via,
                   released: false,

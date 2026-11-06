@@ -15,7 +15,8 @@ export type TypeRef =
   | { kind: 'union'; members: TypeRef[] }
   | { kind: 'object' } // an inline object type
   | { kind: 'keyword'; name: string } // number, string, boolean, object, null, undefined, …
-  | { kind: 'other' }; // functions, tuples, literal types, …
+  | { kind: 'function' }
+  | { kind: 'other' }; // tuples, literal types, …
 
 /** One step below a field: a property, or an index as written ('' for the container a mutating call such as push
  *  changes). */
@@ -57,10 +58,25 @@ export interface FieldFact {
   /** An object-literal initializer. */
   literal?: ObjectLiteralFact;
   readsInBuild: number[];
-  /** The path below the field of each read in build()/@Builder. */
-  buildReads: PathSegment[][];
+  buildReads: BuildRead[];
   writes: WriteFact[];
+  /** The component calls the field as a function (`this.f(…)`): a callback it invokes. */
+  invoked: boolean;
+  /** timer: the initializer or an assigned value is a timer id (`setTimeout(…)`, `setInterval(…)`); clock: one reads a
+   *  clock (`Date.now()`, `performance.now()`, `new Date()`) or starts a timer inside a larger expression. */
+  timeValue?: 'timer' | 'clock';
   disabledRules: string[];
+}
+
+/** A read of the field in build()/@Builder. */
+export interface BuildRead {
+  line: number;
+  /** The path below the field. */
+  path: PathSegment[];
+  /** The attribute method whose arguments hold the read (`.visibility(this.f ? … : …)` → "visibility"). */
+  attribute?: string;
+  /** The read sits in the arguments of ForEach, LazyForEach or Repeat. */
+  inForEach: boolean;
 }
 
 export interface ResourceFact {
@@ -72,6 +88,8 @@ export interface ResourceFact {
   released: boolean;
   /** The matching release call, for the fix text. */
   release: string;
+  /** Identifiers in the expression the resource is acquired on (`AppStorage`, `globalThis`, `this`, `bus`, …). */
+  targetNames: string[];
   disabledRules: string[];
 }
 
@@ -515,7 +533,42 @@ function rendersPath(f: FieldFact, path: PathSegment[]): boolean {
   const arrayCall = isCallSegment(path.at(-1));
   const prefix = arrayCall ? path.slice(0, -1) : path;
   const minLength = prefix.length + (arrayCall ? 1 : 0);
-  return f.buildReads.some((read) => read.length >= minLength && prefix.every((s, i) => sameSegment(s, read[i])));
+  return f.buildReads.some(
+    ({ path: read }) => read.length >= minLength && prefix.every((s, i) => sameSegment(s, read[i])),
+  );
+}
+
+/** Coarse kind of a field's type for the judge: a controller or scroller class, a primitive, an array, another class. */
+export function typeKind(
+  t: TypeRef,
+  facts: FileFacts,
+): 'controller' | 'boolean' | 'number' | 'string' | 'array' | 'class' | 'other' {
+  const held = nonNull(t);
+  const cls = typeClass(held, facts)?.toLowerCase() ?? '';
+  if (cls.includes('controller') || cls.includes('scroller')) {
+    return 'controller';
+  }
+  if (held.kind === 'keyword' && (held.name === 'boolean' || held.name === 'number' || held.name === 'string')) {
+    return held.name;
+  }
+  if (elementType(held, facts) !== undefined) {
+    return 'array';
+  }
+  return held.kind === 'name' ? 'class' : 'other';
+}
+
+/** The type is, or wraps (`T | undefined`, `Nullable<() => void>`), a function type. */
+export function holdsFunction(t: TypeRef): boolean {
+  switch (t.kind) {
+    case 'function':
+      return true;
+    case 'union':
+      return t.members.some(holdsFunction);
+    case 'name':
+      return t.args.some(holdsFunction);
+    default:
+      return false;
+  }
 }
 
 /** @ObjectLink field classes of the file's components and of the imported components it calls, each with the file

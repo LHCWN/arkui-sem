@@ -12,7 +12,15 @@ import {
   score,
   TypeSafeClient,
 } from '@typesafe-ai/sdk';
-import { type Candidate, type FileFacts, nestedDepth, typeClass } from './analysis.js';
+import {
+  type Candidate,
+  type FieldFact,
+  type FileFacts,
+  holdsFunction,
+  nestedDepth,
+  typeClass,
+  typeKind,
+} from './analysis.js';
 import type { Credentials } from './config.js';
 
 // --- System One interface, Jev, Clef ---
@@ -325,17 +333,26 @@ function excerpt(facts: FileFacts, line: number): string {
 }
 
 /** Function-typed fields of the component that it invokes as this.name(...): the callbacks the child calls back on. */
-function invokedCallbacks(facts: FileFacts, c: Candidate): string[] {
-  const text = facts.lines.join('\n');
+function invokedCallbacks(c: Candidate): string[] {
   return c.component.fields
-    .filter(
-      (f) =>
-        f.name !== c.field?.name &&
-        /=>/.test(f.type ?? '') &&
-        new RegExp(`this\\.${f.name}\\s*(\\?\\.)?\\(`).test(text),
-    )
+    .filter((f) => f.name !== c.field?.name && f.invoked && f.typeRef !== undefined && holdsFunction(f.typeRef))
     .map((f) => `${f.name}: ${f.type}`)
     .slice(0, 5);
+}
+
+/** Attributes that render a read value directly, by what the heuristic scores them for. */
+const VISIBILITY_ATTRIBUTES = new Set(['visibility', 'opacity']);
+const TRANSFORM_ATTRIBUTES = new Set(['scale', 'rotate', 'translate']);
+const STYLE_ATTRIBUTES = new Set(['color', 'backgroundColor', 'fontColor', 'enabled']);
+/** Names in a resource target that mark an app-lifetime owner. */
+const APP_SCOPED_NAMES = ['appstorage', 'globalthis', 'ability', 'application'];
+
+/** Where build() renders the field: inside a ForEach-style loop, and through which attribute calls. */
+function renderContexts(f: FieldFact): { for_each: boolean; attributes: string[] } {
+  return {
+    for_each: f.buildReads.some((r) => r.inForEach),
+    attributes: [...new Set(f.buildReads.flatMap((r) => (r.attribute === undefined ? [] : [r.attribute])))],
+  };
 }
 
 /** extras: harness-supplied facts merged into the slice (for example an R2 parent call site). */
@@ -377,7 +394,7 @@ export function buildSlice(
           typeName !== undefined
             ? facts.observedClasses.includes(typeName) || facts.observedV2Classes.includes(typeName)
             : null,
-        callbacks_invoked: invokedCallbacks(facts, c),
+        callbacks_invoked: invokedCallbacks(c),
       };
     } else {
       candidate = {
@@ -396,6 +413,9 @@ export function buildSlice(
           external: w.external ?? false,
         })),
         type_is_observed_class: typeName !== undefined ? facts.observedClasses.includes(typeName) : null,
+        type_kind: f.typeRef ? typeKind(f.typeRef, facts) : null,
+        render_contexts: renderContexts(f),
+        time_value: f.timeValue ?? null,
         object_link_types_in_file: facts.objectLinkTypes,
         // V2 gaps name the classes the writes miss; the field's own class would contradict them for deeper writes.
         ...(c.gaps
@@ -415,6 +435,7 @@ export function buildSlice(
       resource_kind: r.kind,
       acquired_in: r.acquireIn,
       released_in_teardown: r.released,
+      target_names: r.targetNames,
     };
   }
 
@@ -445,8 +466,13 @@ function choiceAnswer(probabilities: Record<string, number>): Answer {
 /** The slice fields the heuristic reads (see buildSlice); the state arrives as untyped JSON, so any may be missing. */
 interface HeuristicSlice {
   rule?: unknown;
-  excerpts?: unknown;
-  candidate?: { type?: unknown; writes?: unknown; resource?: unknown };
+  candidate?: {
+    type_kind?: unknown;
+    render_contexts?: { for_each?: unknown; attributes?: unknown };
+    time_value?: unknown;
+    writes?: unknown;
+    target_names?: unknown;
+  };
 }
 
 interface WriteSlice {
@@ -468,14 +494,16 @@ export class HeuristicBackend implements SystemOneBackend {
     const answers: Record<string, Answer> = {};
 
     if (s.rule === 'R1') {
-      const type = typeof cand.type === 'string' ? cand.type : '';
+      const kind = cand.type_kind;
       const writes: WriteSlice[] = Array.isArray(cand.writes)
         ? cand.writes.filter((w) => typeof w === 'object' && w !== null)
         : [];
-      const excerpts = strings(s.excerpts);
+      const attributes = new Set(strings(cand.render_contexts?.attributes));
+      const renders = (names: Set<string>) => [...names].some((a) => attributes.has(a));
 
       let p = 0.55;
-      if (/Controller|Scroller/i.test(type)) {
+      // Controllers, scrollers and timer ids are handles, not rendered state.
+      if (kind === 'controller' || cand.time_value === 'timer') {
         p = 0.05;
       } else {
         const contexts = writes.map((w) => w.context);
@@ -487,13 +515,11 @@ export class HeuristicBackend implements SystemOneBackend {
 
         let z = 1.05;
 
-        if (/\bboolean\b/.test(type)) {
+        if (kind === 'boolean' || kind === 'number') {
           z += 0.7;
-        } else if (/\bnumber\b/.test(type)) {
-          z += 0.7;
-        } else if (/\bstring\b/.test(type)) {
+        } else if (kind === 'string') {
           z -= 0.6;
-        } else if (/\[\]|Array</.test(type)) {
+        } else if (kind === 'array') {
           z -= 0.4;
         }
 
@@ -513,20 +539,20 @@ export class HeuristicBackend implements SystemOneBackend {
           z += 0.7;
         }
 
-        if (excerpts.some((e) => /ForEach\s*\(/i.test(e))) {
+        if (cand.render_contexts?.for_each === true) {
           z += 1.8;
         }
-        if (excerpts.some((e) => /\.(visibility|opacity)\s*\(/i.test(e))) {
+        if (renders(VISIBILITY_ATTRIBUTES)) {
           z += 1.4;
         }
-        if (excerpts.some((e) => /\.(scale|rotate|translate)\s*\(/i.test(e))) {
+        if (renders(TRANSFORM_ATTRIBUTES)) {
           z += 0.6;
         }
-        if (excerpts.some((e) => /\.(color|backgroundColor|fontColor|enabled)\s*\(/i.test(e))) {
+        if (renders(STYLE_ATTRIBUTES)) {
           z += 0.6;
         }
 
-        if (excerpts.some((e) => /Date\.now\(\)|performance\.now\(\)|new Date\(\)|setTimeout|setInterval/.test(e))) {
+        if (cand.time_value === 'clock') {
           z -= 1.4;
         }
 
@@ -543,8 +569,9 @@ export class HeuristicBackend implements SystemOneBackend {
         insufficient_context: (1 - p) * 0.1,
       });
     } else if (s.rule === 'R3') {
-      const appScoped =
-        typeof cand.resource === 'string' && /AppStorage|globalThis|ability|Application/i.test(cand.resource);
+      const appScoped = strings(cand.target_names).some((n) =>
+        APP_SCOPED_NAMES.some((app) => n.toLowerCase().includes(app)),
+      );
       const p = appScoped ? 0.4 : 0.8;
       answers.app_lifetime = { type: 'noul', noul: appScoped ? 0.6 : 0.15 };
       answers.released_elsewhere = { type: 'noul', noul: 0.15 };

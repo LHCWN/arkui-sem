@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { candidates } from '../src/analysis.js';
-import { buildSlice } from '../src/judge.js';
+import { buildSlice, HeuristicBackend, Q_R1 } from '../src/judge.js';
 import { extract } from './helpers.js';
 
 const ITEM = "@Observed\nclass Item {\n  title: string = ''\n}";
@@ -101,4 +101,69 @@ struct P {
   assert.ok(s.v2_gaps);
   assert.equal('type_is_observed_v2_class' in s, false);
   assert.equal('type_declared_in_file' in s, false);
+});
+
+const undecorated = (field: string, render: string, write: string) => `@Component
+struct P {
+  ${field}
+  build() {
+    Column() {
+      ${render}
+    }
+    .onClick(() => {
+      ${write}
+    })
+  }
+}`;
+
+test('an R1 slice carries the type kind, where build() renders the field and what time value it holds', () => {
+  const s = slice(
+    undecorated(
+      'shown: boolean = false',
+      'ForEach(this.rows, (r: Row) => { Text(r.name) })\n      Text("x").visibility(this.shown ? Visibility.Visible : Visibility.None)',
+      'this.shown = !this.shown',
+    ),
+  );
+  assert.equal(s.type_kind, 'boolean');
+  assert.deepEqual(s.render_contexts, { for_each: false, attributes: ['visibility'] });
+  assert.equal(s.time_value, null);
+  const timer = slice(
+    undecorated(
+      'pressTimer: number = -1',
+      'Text(String(this.pressTimer))',
+      'this.pressTimer = setTimeout(() => {}, 300)',
+    ),
+  );
+  assert.equal(timer.time_value, 'timer');
+  const clock = slice(undecorated('at: number = 0', 'Text(String(this.at))', 'this.at = Date.now() - 1'));
+  assert.equal(clock.time_value, 'clock');
+});
+
+test('the heuristic scores a timer handle like a controller: not UI state', async () => {
+  const facts = extract(
+    undecorated(
+      'pressTimer: number = -1',
+      'Text(String(this.pressTimer))',
+      'this.pressTimer = setTimeout(() => {}, 300)',
+    ),
+  );
+  const [c] = candidates(facts);
+  const r = await new HeuristicBackend().systemOne(buildSlice(facts, c), Q_R1);
+  assert.equal(r.answers.is_ui_state?.type === 'noul' && r.answers.is_ui_state.noul, 0.05);
+});
+
+test('an R3 slice names the identifiers of the resource target', () => {
+  const facts = extract(`@Component
+struct R {
+  aboutToAppear() {
+    AppStorage.get<Bus>('bus')?.on('e', this.h)
+  }
+  build() {}
+}`);
+  const [c] = candidates(facts);
+  assert.deepEqual((buildSlice(facts, c).candidate as { target_names: string[] }).target_names, [
+    'AppStorage',
+    'get',
+    'Bus',
+  ]);
 });

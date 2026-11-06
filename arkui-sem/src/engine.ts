@@ -220,9 +220,11 @@ export async function checkFiles(
   const project = opts.project ?? new ProjectIndex(extractor);
   project.refresh?.();
   const found: { file: string; facts: FileFacts; candidates: Candidate[] }[] = [];
+  // Through the index, a checked file that another checked file imports is parsed once.
+  const index = project instanceof ProjectIndex ? project : undefined;
   for (const file of files) {
     try {
-      const facts = extractor.extract(file, readFileSync(file, 'utf8'));
+      const facts = index?.facts(file) ?? extractor.extract(file, readFileSync(file, 'utf8'));
       found.push({ file, facts, candidates: candidates(facts, project) });
     } catch (e) {
       errors.push(`${file}: ${(e as Error).message}`);

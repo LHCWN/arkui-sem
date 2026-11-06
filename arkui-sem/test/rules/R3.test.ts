@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { found } from '../helpers.js';
+import { extract, found } from '../helpers.js';
 
 const leaks = (src: string) =>
   found(src)
@@ -76,4 +76,42 @@ ${teardown}
     ),
     [],
   );
+});
+
+test('a timer id stored through a cast is released by clearInterval of the same field', () => {
+  const src = (teardown: string) => `@Component
+struct R {
+  timer: number = -1
+  aboutToAppear() {
+    this.timer = setInterval(() => {}, 1000) as number
+  }
+  aboutToDisappear() {
+${teardown}
+  }
+  build() {}
+}`;
+  assert.deepEqual(leaks(src('')), ['timer:this.timer']);
+  assert.deepEqual(leaks(src('    clearInterval(this.timer as number)')), []);
+});
+
+test('each call in a listener chain reports its own line, so a disable comment above it applies', () => {
+  const facts = extract(`@Component
+struct R {
+  aboutToAppear() {
+    this.bus
+      .on('a', this.a)
+      // arkui-sem-disable-next-line R3
+      .on('b', this.b)
+  }
+  build() {}
+}`);
+  const resources = facts.components[0].resources;
+  assert.deepEqual(
+    resources.map((r) => [r.key, r.acquireLine]),
+    [
+      ['this.bus.on:a', 5],
+      ['this.bus.on:b', 7],
+    ],
+  );
+  assert.deepEqual(leaks(facts.lines.join('\n')), ['this.bus.on:a']);
 });

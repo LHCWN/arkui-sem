@@ -155,7 +155,8 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
         args: { file: tool.schema.string().describe('Path to a .ets file') },
         async execute(args, ctx) {
           const file = absolute(args.file, ctx.directory);
-          const facts = new EtsExtractor().extract(file, readFileSync(file, 'utf8'));
+          project.refresh();
+          const facts = project.facts(file) ?? new EtsExtractor().extract(file, readFileSync(file, 'utf8'));
           return JSON.stringify(
             {
               file: relative(ctx.directory, file),

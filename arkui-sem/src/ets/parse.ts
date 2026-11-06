@@ -3,52 +3,86 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import JSON5 from 'json5';
 import ts from 'ohos-typescript';
-import { findStudio } from '../lsp/server.js';
+import { etsLoaderDir, findSdk } from '../sdk.js';
 import BUNDLED from './options.json' with { type: 'json' };
 
 export { ts };
 
-/** ets-loader's directory in one SDK kit (`openharmony`, `hms`). */
-function loaderDir(sdk: string, kit: string): string {
-  return join(sdk, 'default', kit, 'ets', 'build-tools', 'ets-loader');
+/** Component names decide how `Name(…) { … }.attr()` parses, so the options come from the SDK the code is built with
+ *  when there is one, else from the copy in options.json (`scripts/ets-options.mjs`). */
+export class EtsParser {
+  readonly options: ts.CompilerOptions;
+
+  /** sdk: the HarmonyOS SDK root (see findSdk); none uses the bundled options. */
+  constructor(sdk?: string) {
+    this.options = { ets: (sdk && sdkEtsOptions(sdk)) || bundledOptions() };
+  }
+
+  parse(file: string, text: string): ts.SourceFile {
+    return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.ETS, this.options);
+  }
 }
 
-/** The options the SDK's compiler parses with: its ets-loader options, plus the HMS components it registers. */
+let shared: EtsParser | undefined;
+
+/** The parser for this machine's SDK, built on first use. */
+export function defaultParser(): EtsParser {
+  shared ??= new EtsParser(findSdk());
+  return shared;
+}
+
+function bundledOptions(): ts.EtsOptions {
+  const ets = asEtsOptions(BUNDLED);
+  if (!ets) {
+    throw new Error('src/ets/options.json has no components list: regenerate it with scripts/ets-options.mjs');
+  }
+  return ets;
+}
+
+/** v when it holds a list of component names; the rest of its shape is the compiler's to check. */
+function asEtsOptions(v: unknown): ts.EtsOptions | undefined {
+  if (typeof v !== 'object' || v === null || !('components' in v)) {
+    return undefined;
+  }
+  const { components } = v;
+  return Array.isArray(components) && components.every((c) => typeof c === 'string') ? (v as ts.EtsOptions) : undefined;
+}
+
+/** The options the SDK's compiler parses with: its ets-loader options, plus the HMS components it registers when the SDK
+ *  has the HMS kit. */
 function sdkEtsOptions(sdk: string): ts.EtsOptions | undefined {
+  let ets: ts.EtsOptions | undefined;
   try {
-    const config = JSON5.parse(readFileSync(join(loaderDir(sdk, 'openharmony'), 'tsconfig.json'), 'utf8'));
-    const ets: ts.EtsOptions = config.compilerOptions.ets;
-    const hmsDir = join(loaderDir(sdk, 'hms'), 'components');
-    const hms = readdirSync(hmsDir)
-      .filter((f) => f.endsWith('.json'))
-      .flatMap((f) => {
-        try {
-          const name: unknown = JSON.parse(readFileSync(join(hmsDir, f), 'utf8')).name;
-          return typeof name === 'string' ? [name] : [];
-        } catch {
-          return [];
-        }
-      });
-    return { ...ets, components: [...new Set([...ets.components, ...hms])] };
+    const config: unknown = JSON5.parse(readFileSync(join(etsLoaderDir(sdk, 'openharmony'), 'tsconfig.json'), 'utf8'));
+    const compilerOptions =
+      typeof config === 'object' && config !== null && 'compilerOptions' in config ? config.compilerOptions : undefined;
+    ets =
+      typeof compilerOptions === 'object' && compilerOptions !== null && 'ets' in compilerOptions
+        ? asEtsOptions(compilerOptions.ets)
+        : undefined;
   } catch {
     return undefined;
   }
-}
-
-let options: ts.CompilerOptions | undefined;
-
-/** Component names decide how `Name(…) { … }.attr()` parses: from the SDK (`ARKUI_SEM_SDK`, else DevEco Studio's), else
- *  the copy in options.json (`scripts/ets-options.mjs`). */
-export function etsOptions(env = process.env): ts.CompilerOptions {
-  if (!options) {
-    const studio = findStudio(env);
-    const sdk = env.ARKUI_SEM_SDK || (studio && join(studio, 'sdk'));
-    const ets = (sdk && sdkEtsOptions(sdk)) || (BUNDLED as unknown as ts.EtsOptions);
-    options = { ets };
+  if (!ets) {
+    return undefined;
   }
-  return options;
+  return { ...ets, components: [...new Set([...ets.components, ...hmsComponents(sdk)])] };
 }
 
-export function parseEts(file: string, text: string): ts.SourceFile {
-  return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.ETS, etsOptions());
+function hmsComponents(sdk: string): string[] {
+  const dir = join(etsLoaderDir(sdk, 'hms'), 'components');
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+  } catch {
+    return []; // an OpenHarmony-only SDK
+  }
+  return files.flatMap((f) => {
+    try {
+      const name: unknown = JSON.parse(readFileSync(join(dir, f), 'utf8')).name;
+      return typeof name === 'string' ? [name] : [];
+    } catch {
+      return [];
+    }
+  });
 }

@@ -86,7 +86,7 @@ ArkUI V1 `@State` only observes first-level property reassignments. In-place mut
 Primitive types exhibit different likelihoods of being reactive state (slice `type_kind`, from the annotation without `null` / `undefined`):
 - `boolean` and `number`: typically represent toggle flags, counters, or indices (+0.7).
 - `string`: often used for static labels or identifiers (-0.6).
-- Arrays (`X[]`, `Array<X>`, classes extending `Array`): (-0.4).
+- Arrays (`X[]`, `Array<X>`, classes extending `Array` declared in the same file): (-0.4).
 
 ### 6. Render Contexts in `build()`
 Each read of the field in `build()` / `@Builder` records where it sits (slice `render_contexts`):

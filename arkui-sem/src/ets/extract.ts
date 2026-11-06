@@ -17,7 +17,7 @@ import {
   type WriteContext,
   type WriteFact,
 } from '../analysis.js';
-import { parseEts, ts } from './parse.js';
+import { defaultParser, type EtsParser, ts } from './parse.js';
 
 const LIFECYCLE = new Set([
   'aboutToAppear',
@@ -75,8 +75,10 @@ interface Method {
 export class EtsExtractor implements FactExtractor {
   readonly name = 'ets';
 
+  constructor(private readonly parser: EtsParser = defaultParser()) {}
+
   extract(file: string, text: string): FileFacts {
-    return new FileScan(file, text).facts();
+    return new FileScan(file, text, this.parser).facts();
   }
 }
 
@@ -122,16 +124,28 @@ function expressionName(e: ts.Expression): string | undefined {
 
 /** The expression under parentheses, `as`/`satisfies` casts and non-null assertions. */
 function unwrap(e: ts.Expression): ts.Expression {
-  while (
-    ts.isParenthesizedExpression(e) ||
-    ts.isAsExpression(e) ||
-    ts.isSatisfiesExpression(e) ||
-    ts.isNonNullExpression(e) ||
-    ts.isTypeAssertionExpression(e)
-  ) {
+  while (isWrapper(e)) {
     e = e.expression;
   }
   return e;
+}
+
+/** Parentheses, a cast or a non-null assertion: a value passed through unchanged. */
+function isWrapper(
+  n: ts.Node,
+): n is
+  | ts.ParenthesizedExpression
+  | ts.AsExpression
+  | ts.SatisfiesExpression
+  | ts.NonNullExpression
+  | ts.TypeAssertion {
+  return (
+    ts.isParenthesizedExpression(n) ||
+    ts.isAsExpression(n) ||
+    ts.isSatisfiesExpression(n) ||
+    ts.isNonNullExpression(n) ||
+    ts.isTypeAssertionExpression(n)
+  );
 }
 
 function isThis(e: ts.Expression): boolean {
@@ -263,7 +277,7 @@ function uiContext(node: ts.Node, body: ts.Node): Pick<BuildRead, 'attribute' | 
       continue;
     }
     const callee = call.expression;
-    if (attribute === undefined && !inCallback && ts.isPropertyAccessExpression(callee)) {
+    if (attribute === undefined && !inCallback && ts.isPropertyAccessExpression(callee) && onComponent(callee)) {
       attribute = callee.name.text;
     }
     if (ts.isIdentifier(callee) && LOOPS.has(callee.text)) {
@@ -271,6 +285,20 @@ function uiContext(node: ts.Node, body: ts.Node): Pick<BuildRead, 'attribute' | 
     }
   }
   return { attribute, inForEach };
+}
+
+/** An attribute call: `.name(…)` chained on a component (`Text(…).opacity(…)`, `Column() {…}.width(…)`), not a method of
+ *  some object (`Math.max(…)`, `this.calc(…)`). Components are capitalized by ArkUI convention. */
+function onComponent(callee: ts.PropertyAccessExpression): boolean {
+  let e = callee.expression;
+  while (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression)) {
+    e = e.expression.expression;
+  }
+  if (!(ts.isCallExpression(e) || ts.isEtsComponentExpression(e)) || !ts.isIdentifier(e.expression)) {
+    return false;
+  }
+  const first = e.expression.text[0] ?? '';
+  return first >= 'A' && first <= 'Z';
 }
 
 /** Identifiers in an expression, `this` included, in order. */
@@ -435,8 +463,9 @@ class FileScan {
   constructor(
     private readonly file: string,
     private readonly source: string,
+    parser: EtsParser,
   ) {
-    this.sf = parseEts(file, source);
+    this.sf = parser.parse(file, source);
     this.disabled = directives(this.sf, source);
   }
 
@@ -797,14 +826,13 @@ class FileScan {
 
   /** node completes later than its method starts: inside a callback passed to a deferring call, or after an await. */
   private deferred(node: ts.Node, body: ts.Node): boolean {
-    let scope: ts.Node = body;
+    // Every function between the node and the method: an await in any of them runs before a synchronous callback.
+    const scopes: ts.Node[] = [body];
     for (let n: ts.Node = node; n !== body && n.parent; n = n.parent) {
       if (!isFunction(n)) {
         continue;
       }
-      if (scope === body) {
-        scope = n; // the innermost function holding the node
-      }
+      scopes.push(n);
       const call = n.parent;
       if (
         ts.isCallExpression(call) &&
@@ -814,7 +842,7 @@ class FileScan {
         return true;
       }
     }
-    return awaitsBefore(scope, node.end);
+    return scopes.some((scope) => awaitsBefore(scope, node.end));
   }
 
   // --- Resources (R3) ---
@@ -852,7 +880,8 @@ class FileScan {
       for (const call of callsIn(m.body)) {
         const name = calleeName(call);
         const callee = call.expression;
-        const acquireLine = this.line(call);
+        // A chained call (`bus\n  .on(a, f)\n  .on(b, g)`) starts where the chain does: take its method name's line.
+        const acquireLine = this.line(ts.isPropertyAccessExpression(callee) ? callee.name : call);
         if (ts.isPropertyAccessExpression(callee) && name === 'on' && call.arguments.length > 0) {
           // Event listeners: target.on('event' | CONST.EVENT, handler) ↔ target.off(same event).
           const event = this.eventName(call.arguments[0]);
@@ -899,7 +928,7 @@ class FileScan {
                     (c) =>
                       calleeName(c) === 'clearInterval' &&
                       c.arguments.length > 0 &&
-                      this.text(c.arguments[0]) === holder,
+                      this.text(unwrap(c.arguments[0])) === holder,
                   ),
                   release: `clearInterval(${holder})`,
                 }
@@ -916,7 +945,7 @@ class FileScan {
         }
       }
     }
-    return out;
+    return out.sort((a, b) => a.acquireLine - b.acquireLine);
   }
 
   /** The event a listener call names: a string's contents, or a constant as written. */
@@ -927,12 +956,16 @@ class FileScan {
     return expressionName(e);
   }
 
-  /** `this.x` when the interval id is assigned to it (`this.x = setInterval(…)`). */
+  /** `this.x` when the interval id is assigned to it (`this.x = setInterval(…)`, also through a cast). */
   private timerHolder(call: ts.CallExpression): string | undefined {
-    const p = call.parent;
+    let value: ts.Node = call;
+    while (isWrapper(value.parent)) {
+      value = value.parent;
+    }
+    const p = value.parent;
     return ts.isBinaryExpression(p) &&
       p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      p.right === call &&
+      p.right === value &&
       ts.isPropertyAccessExpression(p.left) &&
       isThis(p.left.expression)
       ? `this.${p.left.name.text}`

@@ -219,3 +219,70 @@ struct P {
 }`);
   assert.deepEqual(facts.components[0].fields[1].disabledRules, []);
 });
+
+test('a write in a synchronous callback after an outer await is async', () => {
+  const facts = extract(`@ComponentV2
+struct P {
+  @Local list: number[] = []
+  async load() {
+    const r = await fetchIt()
+    r.forEach((i: number) => {
+      this.list.push(i)
+    })
+  }
+  build() {
+    Text(\`\${this.list.length}\`)
+  }
+}`);
+  assert.deepEqual(
+    facts.components[0].fields[0].writes.map((w) => w.context),
+    ['async-callback'],
+  );
+});
+
+test('build reads record the attribute call and the loop holding them, not helper calls', () => {
+  const facts = extract(`@Component
+struct P {
+  @State w: number = 0
+  @State items: string[] = []
+  build() {
+    Column() {
+      Text('a').width(Math.max(this.w, 10)).opacity(this.calc(this.w))
+      ForEach(this.items, (s: string) => { Text(s) })
+      LazyForEach(this.items, (s: string) => { Text(s) })
+    }
+  }
+  calc(n: number): number { return n }
+}`);
+  const [w, items] = facts.components[0].fields;
+  assert.deepEqual(
+    w.buildReads.map((r) => r.attribute),
+    ['width', 'opacity'],
+  );
+  assert.deepEqual(
+    items.buildReads.map((r) => r.inForEach),
+    [true, true],
+  );
+});
+
+test('a callback field the component calls is invoked; $$this bindings count as accesses', () => {
+  const facts = extract(`@Component
+struct P {
+  onDone: () => void = () => {}
+  @State text: string = ''
+  build() {
+    Column() {
+      TextInput({ text: $$this.text })
+      Button('ok').onClick(() => {
+        $$this.text = ''
+        this.onDone?.()
+      })
+    }
+  }
+}`);
+  const [onDone, text] = facts.components[0].fields;
+  assert.equal(onDone.invoked, true);
+  assert.equal(text.invoked, false);
+  assert.equal(text.writes.length, 1);
+  assert.equal(text.buildReads.length, 1);
+});

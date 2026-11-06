@@ -1,8 +1,9 @@
-// Finds ace-server (Huawei's ArkTS language server), the HarmonyOS SDK and node, and spawns the server.
+// Finds ace-server (Huawei's ArkTS language server) and node, and spawns the server.
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
+import { findSdk, findStudio } from '../sdk.js';
 
 /** standard: LSP 3.17 (`out/standardIndex/index.js`, DevEco ≥ 26.0.0.610); legacy: private `aceProject/*` protocol. */
 export type Protocol = 'standard' | 'legacy';
@@ -24,18 +25,6 @@ export interface LspPathOptions {
   aceServer?: string;
   sdk?: string;
   node?: string;
-}
-
-const STUDIO_CANDIDATES: Record<string, string[]> = {
-  win32: ['C:\\Program Files\\Huawei\\DevEco Studio', 'C:\\Program Files (x86)\\Huawei\\DevEco Studio'],
-  darwin: ['/Applications/DevEco-Studio.app/Contents', '/Applications/DevEco Studio.app/Contents'],
-};
-
-export function findStudio(env = process.env): string | undefined {
-  const candidates = [env.DEVECO_STUDIO, ...(STUDIO_CANDIDATES[process.platform] ?? [])].filter(
-    (p): p is string => !!p,
-  );
-  return candidates.find((p) => existsSync(join(p, 'plugins', 'openharmony', 'ace-server')));
 }
 
 /** The server entry under any accepted root; the standard one when the build ships it. */
@@ -67,8 +56,8 @@ export function resolvePaths(options: LspPathOptions = {}, env = process.env): L
   if (!server) {
     throw new Error(`no ace-server entry under ${root}`);
   }
-  const sdk = options.sdk || env.ARKUI_SEM_SDK || (studio && join(studio, 'sdk'));
-  if (!sdk || !existsSync(join(sdk, 'default', 'openharmony'))) {
+  const sdk = findSdk(options.sdk, env);
+  if (!sdk) {
     throw new Error('HarmonyOS SDK not found: set ARKUI_SEM_SDK to the directory holding default/openharmony');
   }
   return { server, sdk, node: options.node || env.ARKUI_SEM_LSP_NODE || defaultNode(studio) };

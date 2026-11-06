@@ -2,7 +2,7 @@
 
 Roadmap phase 2, plus two items of phase 3 (`docs/exec-plans/active/roadmap.md`, Plan). One branch per PR, from `main`.
 
-**Status:** PR 1 done on `feat/cross-file-index` (project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PRs 2–3 open.
+**Status:** PR 1 merged (#18: project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PR 2 is split: 2a (facts from the ohos-typescript syntax tree, judge features as slice fields; `bench/docs/plans/ts-extractor.md`) on `feat/ts-extractor`; 2b (call-site edges, typed values from the checker) and PR 3 open.
 
 ## Goal
 
@@ -22,7 +22,7 @@ Rules today see one file. Give them facts from the files a component imports, an
    - then `Index.ets` re-exports (`export { X } from './src/...'`, `export * from`) to reach the declaring file;
    - `oh_modules` packages are out (see Out of scope).
 
-   Parse resolved files with `NaiveExtractor` and cache them by path + mtime.
+   Parse resolved files with the fact extractor and cache them by path + mtime.
 2. **Cross-file R1 nested write** (phase 3):
    - V1: `@Observed` classes and `@ObjectLink` children declared in other files count for `seenByObjectLink` and the depth check;
    - V2: owners declared in other files stay skipped (#12); they are to be resolved through ace-server `definition` (#14).
@@ -95,7 +95,7 @@ Three PRs, in order. Each adds one visible change, is testable on its own and up
 
 - Emitting R2 candidates, intents and R2 evaluation (phases 4–5).
 - The string-key index (storage keys, `@Provide`/`@Consume`, `@Watch`/`@Monitor`), `@Trace` per property, `@Track`.
-- `oh_modules` / third-party packages, aliasing and dataflow (ArkAnalyzer, phase 6).
+- `oh_modules` / third-party packages, aliasing and dataflow (fact extractor, phase 6).
 - LSP diagnostics, hover and completion.
 
 ## Working rules

@@ -7,5 +7,5 @@ files=$(git diff --cached --name-only --diff-filter=ACMR -- arkui-sem | sed 's|^
 cd arkui-sem
 npx --no-install biome check --no-errors-on-unmatched --files-ignore-unknown=true $files
 if echo "$files" | grep -q '\.ts$'; then
-  npx --no-install tsc --noEmit
+  npm run --silent typecheck
 fi

@@ -2,14 +2,8 @@
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import JSON5 from 'json5';
-import {
-  type ClassResolver,
-  type Declaration,
-  declares,
-  type FactExtractor,
-  type FileFacts,
-  NaiveExtractor,
-} from './analysis.js';
+import { type Declaration, declares, type FactExtractor, type FileFacts, type Project } from './analysis.js';
+import { EtsExtractor } from './ets/extract.js';
 
 interface Module {
   name: string;
@@ -68,9 +62,10 @@ function memo<K, V>(cache: Map<K, V>, key: K, compute: () => V): V {
   return cache.get(key) as V;
 }
 
-/** A value loaded from a file, reloaded when its mtime changes; undefined when the file is missing or fails to load. */
+/** A value loaded from a file, reloaded when its mtime changes. get: undefined when the file is missing or fails to load;
+ *  load: the value, or the error reading or loading it. */
 class FileCache<T> {
-  private readonly entries = new Map<string, { mtimeMs: number; value: T | undefined }>();
+  private readonly entries = new Map<string, { mtimeMs: number; value: T | undefined; error?: unknown }>();
 
   constructor(
     private readonly stat: (path: string) => number | undefined,
@@ -78,23 +73,32 @@ class FileCache<T> {
   ) {}
 
   get(path: string): T | undefined {
+    try {
+      return this.require(path);
+    } catch {
+      return undefined;
+    }
+  }
+
+  require(path: string): T | undefined {
     const mtimeMs = this.stat(path);
     if (mtimeMs === undefined) {
       this.entries.delete(path);
-      return undefined;
+      return this.load(path); // the file is missing: let the loader report it
     }
-    const hit = this.entries.get(path);
-    if (hit?.mtimeMs === mtimeMs) {
-      return hit.value;
+    let hit = this.entries.get(path);
+    if (hit?.mtimeMs !== mtimeMs) {
+      try {
+        hit = { mtimeMs, value: this.load(path) };
+      } catch (error) {
+        hit = { mtimeMs, value: undefined, error };
+      }
+      this.entries.set(path, hit);
     }
-    let value: T | undefined;
-    try {
-      value = this.load(path);
-    } catch {
-      value = undefined;
+    if (hit.error !== undefined) {
+      throw hit.error;
     }
-    this.entries.set(path, { mtimeMs, value });
-    return value;
+    return hit.value;
   }
 }
 
@@ -102,7 +106,7 @@ class FileCache<T> {
  * Call refresh() before each check; between refreshes, files and the project layout are not re-read. Parse with the
  * extractor that produced the checked file's facts, so both sides agree on what a file declares.
  */
-export class ProjectIndex implements ClassResolver {
+export class ProjectIndex implements Project {
   /** Each path is stat'ed once per check, so a check sees every file as it was at first use. */
   private readonly mtimes = new Map<string, number | undefined>();
   private readonly stat = (path: string) => memo(this.mtimes, path, () => mtime(path));
@@ -114,7 +118,7 @@ export class ProjectIndex implements ClassResolver {
   private readonly moduleDirs = new Map<string, string | undefined>();
   private readonly lookups = new Map<string, Declaration | undefined>();
 
-  constructor(private readonly extractor: FactExtractor = new NaiveExtractor()) {}
+  constructor(private readonly extractor: FactExtractor = new EtsExtractor()) {}
 
   refresh(): void {
     this.mtimes.clear();
@@ -124,8 +128,13 @@ export class ProjectIndex implements ClassResolver {
     this.lookups.clear();
   }
 
-  facts(file: string): FileFacts | undefined {
-    return this.parsed.get(resolve(file));
+  /** The facts of a file, keyed by its normalized path; throws when the file can't be read or parsed. */
+  facts(file: string): FileFacts {
+    const facts = this.parsed.require(resolve(file));
+    if (!facts) {
+      throw new Error(`${file}: no facts`);
+    }
+    return facts;
   }
 
   declaration(name: string, from: FileFacts): Declaration | undefined {
@@ -180,7 +189,7 @@ export class ProjectIndex implements ClassResolver {
 
   private follow(name: string, spec: string, fromFile: string, seen: Set<string>): Declaration | undefined {
     const file = this.resolveImport(spec, fromFile);
-    const facts = file === undefined ? undefined : this.facts(file);
+    const facts = file === undefined ? undefined : this.parsed.get(resolve(file));
     const target = name === 'default' ? (facts?.defaultExport ?? name) : name;
     return facts && target ? this.find(target, facts, seen) : undefined;
   }

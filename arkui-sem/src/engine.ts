@@ -5,14 +5,16 @@ import { dirname, relative } from 'node:path';
 import type { Questions } from '@typesafe-ai/sdk';
 import {
   type Candidate,
-  type ClassResolver,
   candidates,
   type FactExtractor,
   type FileFacts,
-  NaiveExtractor,
   nestedDepth,
+  type Project,
+  pathText,
+  readLines,
   type V2Gap,
 } from './analysis.js';
+import { EtsExtractor } from './ets/extract.js';
 import { buildSlice, Q_R1, Q_R2, Q_R3, type SystemOneBackend } from './judge.js';
 import { ProjectIndex } from './project.js';
 
@@ -72,14 +74,16 @@ export interface Finding {
 
 export interface EngineOptions {
   backend: SystemOneBackend;
+  /** Builds the project index when no project is passed; a project brings its own. */
   extractor?: FactExtractor;
   /** P ≥ finding → reported as a finding; question ≤ P < finding → asked as a question; below → dropped. */
   thresholds?: { finding: number; question: number };
   cachePath?: string;
   taskContext?: string;
   judgeTimeoutMs?: number;
-  /** Cross-file lookups; a fresh project index when absent. Long-lived callers pass one to keep its cache. */
-  project?: ClassResolver;
+  /** The checked files' facts and cross-file lookups; a fresh project index when absent. Long-lived callers pass one to
+   *  keep its cache. */
+  project?: Project;
 }
 
 const QUESTIONS: Record<Candidate['rule'], Questions> = { R1: Q_R1, R2: Q_R2, R3: Q_R3 };
@@ -178,8 +182,9 @@ function describe(c: Candidate): { subject: string; evidence: string; fix: strin
     .join('; ');
   if (c.kind === 'nested-write-unobserved') {
     const [w, ...rest] = c.writes?.length ? c.writes : f.writes;
-    const path = w?.nestedPath ?? '';
-    const first = path.match(/^\??\.(\w+)/)?.[1];
+    const path = pathText(w?.path);
+    const head = w?.path?.[0];
+    const first = head && 'prop' in head ? head.prop : undefined;
     const otherLines = [...new Set(rest.map((x) => x.line))].filter((l) => l !== w.line);
     const also = otherLines.length ? `; also written in place at ${lineList(otherLines)}` : '';
     const at = `${w?.context} in ${w?.method}() line ${w?.line}${also}`;
@@ -192,13 +197,13 @@ function describe(c: Candidate): { subject: string; evidence: string; fix: strin
     }
     return {
       subject: `${c.component.name}.${f.name}${path}`,
-      evidence: `${f.decorators.join(' ')} field written ${nestedDepth(path)} levels deep (${at}); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that`,
+      evidence: `${f.decorators.join(' ')} field written ${nestedDepth(w?.path)} levels deep (${at}); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that`,
       fix: `change it at the first layer instead, e.g. build a new object and assign this.${f.name}${first ? `.${first}` : ''} = <new object> (or reassign this.${f.name}); or render the nested object in a child component that receives it as @ObjectLink (its class @Observed) and mutate it there.`,
     };
   }
   return {
     subject: `${c.component.name}.${f.name}`,
-    evidence: `rendered in build() (line ${f.readsInBuild[0]}) and written after init (${writes}); no state decorator`,
+    evidence: `rendered in build() (line ${readLines(f)[0]}) and written after init (${writes}); no state decorator`,
     fix: v2
       ? `declare it @Local; if the value comes from the parent, use @Param plus an @Event callback instead.`
       : `declare it @State; if the value comes from the parent, use @Prop (one-way) or @Link (two-way) instead.`,
@@ -209,20 +214,24 @@ export async function checkFiles(
   files: string[],
   opts: EngineOptions,
 ): Promise<{ findings: Finding[]; errors: string[] }> {
-  const extractor = opts.extractor ?? new NaiveExtractor();
+  if (opts.project && opts.extractor) {
+    throw new Error('checkFiles: pass the extractor to the project, not both');
+  }
   const thresholds = opts.thresholds ?? { finding: 0.8, question: 0.5 };
   const cache = new JudgmentCache(opts.cachePath);
   const findings: Finding[] = [];
   const errors: string[] = [];
 
   // Every candidate is found before the first await: a shared index can't be refreshed by another check in between.
-  const project = opts.project ?? new ProjectIndex(extractor);
+  const project = opts.project ?? new ProjectIndex(opts.extractor ?? new EtsExtractor());
   project.refresh?.();
   const found: { file: string; facts: FileFacts; candidates: Candidate[] }[] = [];
   for (const file of files) {
     try {
-      const facts = extractor.extract(file, readFileSync(file, 'utf8'));
-      found.push({ file, facts, candidates: candidates(facts, project) });
+      // Through the project, a checked file that another checked file imports is parsed once; facts.file is its
+      // normalized path, which findings and fingerprints share.
+      const facts = project.facts(file);
+      found.push({ file: facts.file, facts, candidates: candidates(facts, project) });
     } catch (e) {
       errors.push(`${file}: ${(e as Error).message}`);
     }

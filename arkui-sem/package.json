@@ -12,8 +12,8 @@
     "arkui-sem": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p .",
-    "typecheck": "tsc -p . --noEmit",
+    "build": "node node_modules/typescript/bin/tsc -p .",
+    "typecheck": "node node_modules/typescript/bin/tsc -p . --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "npm run typecheck && node --import tsx --test \"test/**/*.test.ts\"",
@@ -24,7 +24,8 @@
   "dependencies": {
     "@opencode-ai/plugin": "^1.18.30",
     "@typesafe-ai/sdk": "^0.6.0",
-    "json5": "^2.2.3"
+    "json5": "^2.2.3",
+    "ohos-typescript": "4.9.5-r10"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

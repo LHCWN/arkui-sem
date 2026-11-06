@@ -42,7 +42,7 @@ Consequently, components differing solely by the presence or absence of a state 
 
 ## 3. Mathematical Formulation of the AST Logistic Regressor
 
-Instead of embedding raw tokens, `arkui-sem` extracts structured AST facts via `NaiveExtractor` and applies a continuous logistic scoring model in `HeuristicBackend`.
+Instead of embedding raw tokens, `arkui-sem` extracts structured facts from the ohos-typescript syntax tree (`EtsExtractor`), passes them in the slice as typed fields, and applies a continuous logistic scoring model in `HeuristicBackend`.
 
 ### Formulation
 
@@ -62,13 +62,14 @@ To prevent extreme overconfidence on noisy edge cases, the probability is clampe
 
 Rather than relying on brittle naming conventions (such as `on*` or `init*` prefixes that fail to generalize across differing codebases and teams), the feature model relies purely on structural syntax and call-graph reachability:
 
-### 1. Controller / Scroller Architectural Gate
-Certain framework classes are passed to UI components to control scroll positions or views, but do not represent reactive state:
-- Framework controllers: `Scroller`, `Controller` types.
+### 1. Handle Gate: Controllers, Scrollers and Timer Ids
+Certain values are handles passed to UI components or APIs, not reactive state:
+- Framework controllers: a field whose class (or array element class) is named `…Controller` or `…Scroller` (slice `type_kind: "controller"`).
+- Timer ids: a field initialized with or assigned a `setTimeout(…)` / `setInterval(…)` result (slice `time_value: "timer"`).
 - Unconditionally gated to a minimal prior ($P = 0.05$).
 
 ### 2. Structural External-Method Reachability
-To identify event handlers, callbacks, and listener targets without matching method names, `NaiveExtractor` builds an intra-component reachability call graph:
+To identify event handlers, callbacks, and listener targets without matching method names, the extractor builds an intra-component reachability call graph (methods and handler fields holding arrow functions):
 - **Roots:**
   - `build()` and `@Builder` methods (traversing direct calls and method references such as `.onClick(this.handleClick)`).
   - Lifecycle hooks (`aboutToAppear`, `aboutToDisappear`, `onPageShow`, `onPageHide`, etc.).
@@ -81,21 +82,23 @@ Mutations confined strictly to lifecycle hooks (`contexts.every(c => c === "life
 ### 4. Deep Nested Mutation Penalty
 ArkUI V1 `@State` only observes first-level property reassignments. In-place mutations two or more levels deep (`this.a.b.c = ...`) do not trigger re-render on the parent component unless using `@Observed` / `@ObjectLink`. Fields with nested writes are penalized to avoid false positives on unobserved nested paths.
 
-### 5. Type Indicators with Word Boundaries
-Primitive types exhibit different likelihoods of being reactive state:
-- `\bboolean\b` and `\bnumber\b`: typically represent toggle flags, counters, or indices (+0.7).
-- `\bstring\b`: often used for static labels or identifiers (-0.6).
-- Arrays (`[]`, `Array<`): (-0.4).
+### 5. Type Kind
+Primitive types exhibit different likelihoods of being reactive state (slice `type_kind`, from the annotation without `null` / `undefined`):
+- `boolean` and `number`: typically represent toggle flags, counters, or indices (+0.7).
+- `string`: often used for static labels or identifiers (-0.6).
+- Arrays (`X[]`, `Array<X>`, classes extending `Array`): (-0.4).
 
-### 6. Declarative UI Modifiers in Build Excerpts
-Excerpts capturing uses in `build()` are inspected for reactive ArkUI UI patterns:
-- Control flow: `ForEach(...)` (+1.8).
-- Visual state attributes: `.visibility()`, `.opacity()` (+1.4).
+### 6. Render Contexts in `build()`
+Each read of the field in `build()` / `@Builder` records where it sits (slice `render_contexts`):
+- Inside the arguments of `ForEach`, `LazyForEach` or `Repeat` (+1.8).
+- In the arguments of a visual state attribute: `.visibility()`, `.opacity()` (+1.4).
 - Animations / transformations: `.scale()`, `.rotate()`, `.translate()` (+0.6).
 - Styling / interaction state: `.color()`, `.backgroundColor()`, `.fontColor()`, `.enabled()` (+0.6).
 
+Reads inside a callback (an event handler such as `.onClick(() => …)`) name no attribute.
+
 ### 7. Time / Performance Bookkeeping Suppression
-Fields associated with `Date.now()`, `performance.now()`, or timer handles (`setTimeout`, `setInterval`) represent internal measurement or scheduling and are penalized (-1.4).
+Fields whose initializer or an assigned value reads `Date.now()`, `performance.now()` or `new Date()`, or starts a timer inside a larger expression, represent internal measurement or scheduling and are penalized (slice `time_value: "clock"`, -1.4). A value that is itself a timer id gates the field (section 1).
 
 ---
 
@@ -105,21 +108,20 @@ The calibrated feature weights in `HeuristicBackend` operate as follows:
 
 - Base logit: $z_0 = 1.05$
 - Type adjustments:
-  - $\text{type} \sim \text{\textbackslash bboolean\textbackslash b}$: $+0.7$
-  - $\text{type} \sim \text{\textbackslash bnumber\textbackslash b}$: $+0.7$
-  - $\text{type} \sim \text{\textbackslash bstring\textbackslash b}$: $-0.6$
-  - $\text{type} \sim \text{Array}$: $-0.4$
+  - `type_kind` boolean or number: $+0.7$
+  - `type_kind` string: $-0.6$
+  - `type_kind` array: $-0.4$
 - Event / Reachability:
   - `hasEventHandler` (`build-closure` or `external` method): $+1.6$
   - `onlyLifecycle`: $-1.8$
   - `hasNestedMutation`: $-0.7$
   - Multiple writes: $>1$ write ($+0.3$), $>3$ writes ($+0.7$)
-- Markup indicators in excerpts:
-  - `ForEach`: $+1.8$
+- Render contexts:
+  - `for_each`: $+1.8$
   - `visibility` / `opacity`: $+1.4$
   - `scale` / `rotate` / `translate`: $+0.6$
   - `color` / `backgroundColor` / `fontColor` / `enabled`: $+0.6$
-  - Timers / timestamps: $-1.4$
+- `time_value` clock: $-1.4$
 
 ---
 

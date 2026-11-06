@@ -90,7 +90,7 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | R2-d | ❌ | ✅ Fully decidable | – |
 | R2-f | ❌ | ✅ Facts | Fix choice |
 | R2-b / R2-c | ❌ | Evidence (sibling readers, dialog-ness) | Intent: judge, or agent via `arkui_ownership_intent` |
-| Read/write kind and context | Regex extractor | Read/write kind: `documentHighlight` | Context (handler/`build`/lifecycle/async), reach via `@Builder`/`ForEach`: our parse / ArkAnalyzer |
+| Read/write kind and context | Syntax tree (ohos-typescript) | Read/write kind: `documentHighlight` | Context (handler/`build`/lifecycle/async), reach via `@Builder`/`ForEach`: our parse / ArkAnalyzer |
 | String-keyed links: AppStorage/LocalStorage keys, `@Provide`/`@Consume` aliases, `@Watch` names, `@Monitor` paths | ❌ | ❌ | Own key index (grep-level) |
 | Derived state: `@Watch`, `@Monitor`, `@Computed` | ❌ | Locating only | New rule + dataset (MDP doesn't cover them) |
 | R3 unreleased resource | ✅ | Release in another file or owner object | Judge: app-lifetime or released elsewhere |

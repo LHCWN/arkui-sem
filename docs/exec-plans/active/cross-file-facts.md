@@ -10,7 +10,7 @@ Rules today see one file. Give them facts from the files a component imports, an
 
 1. **Project index** (no LSP). Resolve an imported name to the file that declares it:
    - relative imports (`./model/Item`);
-   - imports by package name: the importing module's `file:` dependency in `oh-package.json5`, else a project module from
+   - imports by package name: the importing module's local dependency in `oh-package.json5` (`file:../x` or `../x`), else a project module from
      the root `build-profile.json5` (by module name or `oh-package.json5` `name`);
    - hvigor's dependency map (`.hvigor/dependencyMap/dependencyMap.json5`, written by sync; we never run `hvigor`) moves to
      PR 3. Its module list must match `build-profile.json5` to count as fresh, so it changes no resolution today; PR 3

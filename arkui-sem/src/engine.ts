@@ -9,10 +9,10 @@ import {
   candidates,
   type FactExtractor,
   type FileFacts,
-  NaiveExtractor,
   nestedDepth,
   type V2Gap,
 } from './analysis.js';
+import { EtsExtractor } from './ets/extract.js';
 import { buildSlice, Q_R1, Q_R2, Q_R3, type SystemOneBackend } from './judge.js';
 import { ProjectIndex } from './project.js';
 
@@ -179,7 +179,8 @@ function describe(c: Candidate): { subject: string; evidence: string; fix: strin
   if (c.kind === 'nested-write-unobserved') {
     const [w, ...rest] = c.writes?.length ? c.writes : f.writes;
     const path = w?.nestedPath ?? '';
-    const first = path.match(/^\??\.(\w+)/)?.[1];
+    const head = w?.path?.[0];
+    const first = head && 'prop' in head ? head.prop : undefined;
     const otherLines = [...new Set(rest.map((x) => x.line))].filter((l) => l !== w.line);
     const also = otherLines.length ? `; also written in place at ${lineList(otherLines)}` : '';
     const at = `${w?.context} in ${w?.method}() line ${w?.line}${also}`;
@@ -192,7 +193,7 @@ function describe(c: Candidate): { subject: string; evidence: string; fix: strin
     }
     return {
       subject: `${c.component.name}.${f.name}${path}`,
-      evidence: `${f.decorators.join(' ')} field written ${nestedDepth(path)} levels deep (${at}); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that`,
+      evidence: `${f.decorators.join(' ')} field written ${nestedDepth(w?.path)} levels deep (${at}); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that`,
       fix: `change it at the first layer instead, e.g. build a new object and assign this.${f.name}${first ? `.${first}` : ''} = <new object> (or reassign this.${f.name}); or render the nested object in a child component that receives it as @ObjectLink (its class @Observed) and mutate it there.`,
     };
   }
@@ -209,7 +210,7 @@ export async function checkFiles(
   files: string[],
   opts: EngineOptions,
 ): Promise<{ findings: Finding[]; errors: string[] }> {
-  const extractor = opts.extractor ?? new NaiveExtractor();
+  const extractor = opts.extractor ?? new EtsExtractor();
   const thresholds = opts.thresholds ?? { finding: 0.8, question: 0.5 };
   const cache = new JudgmentCache(opts.cachePath);
   const findings: Finding[] = [];

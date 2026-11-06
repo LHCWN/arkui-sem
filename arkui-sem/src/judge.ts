@@ -359,7 +359,8 @@ export function buildSlice(
     for (const w of shown.slice(0, 3)) {
       lines.add(w.line);
     }
-    const typeName = f.type && typeClass(f.type, facts);
+    // A type that names no class still has a name to check, so the answers are false rather than unknown.
+    const typeName = f.typeRef && (typeClass(f.typeRef, facts) ?? '');
     if (c.rule === 'R2') {
       // No decorators: R2 asks for the intent the decorator should express.
       candidate = {
@@ -372,9 +373,10 @@ export function buildSlice(
           .slice(0, 5)
           .map((w) => ({ line: w.line, context: w.context, method: w.method, nested_path: w.nestedPath ?? null })),
         write_count: f.writes.length,
-        type_is_observed_class: typeName
-          ? facts.observedClasses.includes(typeName) || facts.observedV2Classes.includes(typeName)
-          : null,
+        type_is_observed_class:
+          typeName !== undefined
+            ? facts.observedClasses.includes(typeName) || facts.observedV2Classes.includes(typeName)
+            : null,
         callbacks_invoked: invokedCallbacks(facts, c),
       };
     } else {
@@ -390,17 +392,17 @@ export function buildSlice(
           context: w.context,
           method: w.method,
           nested_path: w.nestedPath ?? null,
-          nested_depth: nestedDepth(w.nestedPath),
+          nested_depth: nestedDepth(w.path),
           external: w.external ?? false,
         })),
-        type_is_observed_class: typeName ? facts.observedClasses.includes(typeName) : null,
+        type_is_observed_class: typeName !== undefined ? facts.observedClasses.includes(typeName) : null,
         object_link_types_in_file: facts.objectLinkTypes,
         // V2 gaps name the classes the writes miss; the field's own class would contradict them for deeper writes.
         ...(c.gaps
           ? { v2_gaps: c.gaps.map((g) => ({ ...g })) }
           : {
-              type_is_observed_v2_class: typeName ? facts.observedV2Classes.includes(typeName) : null,
-              type_declared_in_file: typeName ? facts.declaredClasses.includes(typeName) : null,
+              type_is_observed_v2_class: typeName !== undefined ? facts.observedV2Classes.includes(typeName) : null,
+              type_declared_in_file: typeName !== undefined ? facts.declaredClasses.includes(typeName) : null,
             }),
       };
     }

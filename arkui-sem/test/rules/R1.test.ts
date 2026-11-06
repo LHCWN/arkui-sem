@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { candidates, nestedDepth } from '../../src/analysis.js';
 import { ProjectIndex } from '../../src/project.js';
-import { found, put, ROOT, tempDir } from '../helpers.js';
+import { extract, found, put, ROOT, tempDir } from '../helpers.js';
 
 const nestedHits = (src: string) =>
   found(src)
@@ -34,13 +34,32 @@ const USER_OBSERVED =
 const USER_FIELD = '@State user: User = new User()';
 const CITY = "this.user.address.city = 'a'";
 
-test('nestedDepth counts levels below the field', () => {
-  assert.equal(nestedDepth(undefined), 0);
-  assert.equal(nestedDepth('.title'), 1);
-  assert.equal(nestedDepth('[]'), 1);
-  assert.equal(nestedDepth('.address.city'), 2);
-  assert.equal(nestedDepth('[i].title'), 2);
-  assert.equal(nestedDepth('.tags[]'), 2);
+test('write paths and nestedDepth count levels below the field', () => {
+  const writes = extract(`@Component
+struct P {
+  @State a: A = new A()
+  build() {
+    Button('x').onClick(() => {
+      this.a = new A()
+      this.a.title = 'x'
+      this.a.push(1)
+      this.a.address.city = 'c'
+      this.a[i].title = 't'
+      this.a?.tags.push('t')
+    })
+  }
+}`).components[0].fields[0].writes;
+  assert.deepEqual(
+    writes.map((w) => [w.nestedPath, nestedDepth(w.path)]),
+    [
+      [undefined, 0],
+      ['.title', 1],
+      ['[]', 1],
+      ['.address.city', 2],
+      ['[i].title', 2],
+      ['?.tags[]', 2],
+    ],
+  );
 });
 
 // ArkUI docs: V1 observes first-layer changes only; "@Observed alone has no effect in nested classes".

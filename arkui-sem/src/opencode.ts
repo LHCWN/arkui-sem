@@ -4,9 +4,10 @@
 import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { type Plugin, tool } from '@opencode-ai/plugin';
-import { absolute, editedFiles, etsFiles, NaiveExtractor } from './analysis.js';
+import { absolute, editedFiles, etsFiles } from './analysis.js';
 import { cachePath, loadSettings } from './config.js';
 import { checkFiles, type Finding, formatForAgent } from './engine.js';
+import { EtsExtractor } from './ets/extract.js';
 import { createBackend, type SystemOneBackend } from './judge.js';
 import { ProjectIndex } from './project.js';
 
@@ -154,7 +155,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
         args: { file: tool.schema.string().describe('Path to a .ets file') },
         async execute(args, ctx) {
           const file = absolute(args.file, ctx.directory);
-          const facts = new NaiveExtractor().extract(file, readFileSync(file, 'utf8'));
+          const facts = new EtsExtractor().extract(file, readFileSync(file, 'utf8'));
           return JSON.stringify(
             {
               file: relative(ctx.directory, file),

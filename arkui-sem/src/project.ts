@@ -2,14 +2,8 @@
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import JSON5 from 'json5';
-import {
-  type ClassResolver,
-  type Declaration,
-  declares,
-  type FactExtractor,
-  type FileFacts,
-  NaiveExtractor,
-} from './analysis.js';
+import { type ClassResolver, type Declaration, declares, type FactExtractor, type FileFacts } from './analysis.js';
+import { EtsExtractor } from './ets/extract.js';
 
 interface Module {
   name: string;
@@ -114,7 +108,7 @@ export class ProjectIndex implements ClassResolver {
   private readonly moduleDirs = new Map<string, string | undefined>();
   private readonly lookups = new Map<string, Declaration | undefined>();
 
-  constructor(private readonly extractor: FactExtractor = new NaiveExtractor()) {}
+  constructor(private readonly extractor: FactExtractor = new EtsExtractor()) {}
 
   refresh(): void {
     this.mtimes.clear();

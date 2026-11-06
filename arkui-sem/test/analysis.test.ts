@@ -1,4 +1,4 @@
-// NaiveExtractor facts on inline ArkTS sources.
+// Extractor facts on inline ArkTS sources.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -154,4 +154,68 @@ struct P {
 test('a member after a method in a one-line class is recorded', () => {
   const facts = extract('@ObservedV2\nclass S { foo() {} @Trace bar: number = 0 }');
   assert.deepEqual(facts.classMembers.S.bar?.decorators, ['@Trace']);
+});
+
+test('a write in a handler field (an arrow function) is recorded under the field name', () => {
+  const facts = extract(`@Component
+struct P {
+  count: number = 0
+  onTap = () => {
+    this.count++
+  }
+  build() {
+    Button(\`\${this.count}\`).onClick(this.onTap)
+  }
+}`);
+  const [count] = facts.components[0].fields;
+  assert.deepEqual(
+    count.writes.map((w) => [w.method, w.context, w.external]),
+    [['onTap', 'method', false]],
+  );
+});
+
+test('writes after an await or in a deferred callback are async; a write before the await is not', () => {
+  const facts = extract(`@ComponentV2
+struct P {
+  @Local n: number = 0
+  async load() {
+    this.n = 1
+    await fetchIt()
+    this.n = 2
+    setTimeout(() => {
+      this.n = 3
+    }, 10)
+  }
+  build() {
+    Text(\`\${this.n}\`)
+  }
+}`);
+  assert.deepEqual(
+    facts.components[0].fields[0].writes.map((w) => w.context),
+    ['method', 'async-callback', 'async-callback'],
+  );
+});
+
+test('a type annotation spread over lines and a constructor parameter property are recorded', () => {
+  const facts = extract(`class C {
+  constructor(public name: string, private age: number) {}
+  map: Map<
+    string,
+    number
+  > = new Map()
+}`);
+  assert.equal(facts.classMembers.C.map?.type, 'Map< string, number >');
+  assert.deepEqual(Object.keys(facts.classMembers.C).sort(), ['age', 'map', 'name']);
+});
+
+test('a disable directive only counts inside a comment', () => {
+  const facts = extract(`@Component
+struct P {
+  note: string = 'arkui-sem-disable-next-line R1'
+  count: number = 0
+  build() {
+    Button(\`\${this.count}\`).onClick(() => { this.count++ })
+  }
+}`);
+  assert.deepEqual(facts.components[0].fields[1].disabledRules, []);
 });

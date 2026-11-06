@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { candidates, NaiveExtractor } from '../src/analysis.js';
+import { candidates } from '../src/analysis.js';
+import { EtsExtractor } from '../src/ets/extract.js';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -15,7 +16,7 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const CLI = ['--import', import.meta.resolve('tsx'), join(ROOT, 'src', 'cli.ts')];
 
 /** Facts of an ArkTS source, read as the file at path (relative imports resolve from there). */
-export const extract = (src: string, path = 'T.ets') => new NaiveExtractor().extract(path, src);
+export const extract = (src: string, path = 'T.ets') => new EtsExtractor().extract(path, src);
 
 /** Rule candidates in an inline ArkTS source (no judge). */
 export const found = (src: string, path?: string) => candidates(extract(src, path));

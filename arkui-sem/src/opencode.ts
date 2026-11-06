@@ -8,6 +8,7 @@ import { absolute, editedFiles, etsFiles, NaiveExtractor } from './analysis.js';
 import { cachePath, loadSettings } from './config.js';
 import { checkFiles, type Finding, formatForAgent } from './engine.js';
 import { createBackend, type SystemOneBackend } from './judge.js';
+import { ProjectIndex } from './project.js';
 
 const EDIT_TOOLS = new Set(['edit', 'write', 'multiedit', 'patch', 'apply_patch']);
 const MAX_GATE_FOLLOWUPS = 3;
@@ -37,6 +38,8 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
     return s;
   }
 
+  const project = new ProjectIndex();
+
   async function run(files: string[]): Promise<Finding[]> {
     backend ??= await createBackend(settings.backend, settings.credentials);
     const { findings, errors } = await checkFiles(files, {
@@ -44,6 +47,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
       thresholds: settings.thresholds,
       cachePath: cachePath(settings),
       judgeTimeoutMs: settings.judgeTimeoutMs,
+      project,
     });
     if (errors.length) {
       await log('warn', errors.join('; '));

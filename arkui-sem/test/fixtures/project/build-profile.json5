@@ -1,0 +1,10 @@
+{
+  // Root build profile: the module list.
+  app: {
+    products: [{ name: 'default' }],
+  },
+  modules: [
+    { name: 'entry', srcPath: './entry' },
+    { name: 'common', srcPath: './common', },
+  ],
+}

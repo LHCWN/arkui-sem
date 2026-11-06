@@ -62,7 +62,40 @@ export interface FileFacts {
   classFields: Record<string, Record<string, string>>;
   /** Classes that extend Array<…>: class → element type text and the class's own type parameters. */
   arrayClasses: Record<string, { element: string; params: string[] }>;
+  imports: ImportFact[];
+  /** `export { a as b } from 's'` (source set) and `export { a as b }` of a local or imported name (no source). */
+  reexports: ReexportFact[];
+  /** Sources of `export * from 's'`. */
+  exportAll: string[];
+  /** Name of the class or struct behind `export default`. */
+  defaultExport?: string;
   lines: string[];
+}
+
+export interface ImportFact {
+  local: string;
+  /** Name in the source module; "default" for a default import. */
+  imported: string;
+  source: string;
+  /** The file calls `local(…)` somewhere outside the import. */
+  called: boolean;
+}
+
+export interface ReexportFact {
+  exported: string;
+  imported: string;
+  source?: string;
+}
+
+/** A class or struct and the file that declares it. */
+export interface Declaration {
+  facts: FileFacts;
+  name: string;
+}
+
+/** Finds where a name used in a file is declared, across files; the project index implements it. */
+export interface ClassResolver {
+  declaration(name: string, from: FileFacts): Declaration | undefined;
 }
 
 export interface FactExtractor {
@@ -322,6 +355,58 @@ function disabledRulesAt(raw: string[], index: number): string[] {
   return m ? m[1].split(/[\s,]+/).filter((r) => /^R\d+$/.test(r)) : [];
 }
 
+/** Contents of the string literal whose opening quote is at `at` in the raw text. */
+function stringAt(text: string, at: number): string {
+  return text.slice(at + 1, text.indexOf(text[at], at + 1));
+}
+
+/** "a, b as c, type d" → [{ imported: a, local: a }, { imported: b, local: c }, { imported: d, local: d }]. */
+function namedSpecifiers(list: string) {
+  return list
+    .split(',')
+    .map((s) => s.trim().replace(/^type\s+/, ''))
+    .filter(Boolean)
+    .map((s) => {
+      const [imported, local = imported] = s.split(/\s+as\s+/);
+      return { imported: imported.trim(), local: local.trim() };
+    });
+}
+
+/** Imports and exports that link the file to others; regexes run on `flat` (blanked, same offsets) and read sources from `text`. */
+function moduleLinks(
+  text: string,
+  flat: string,
+): Pick<FileFacts, 'imports' | 'reexports' | 'exportAll' | 'defaultExport'> {
+  const imports: ImportFact[] = [];
+  const outsideImports = flat.replace(/\bimport\s[^;]*?\bfrom\s*(['"])[^'"\n]*\1/g, '');
+  const called = (name: string) => new RegExp(`(?<![\\w$.])${name.replace(/\$/g, '\\$')}\\s*\\(`).test(outsideImports);
+  const IMPORT = /\bimport\s+(?:type\s+)?(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*from\s*(['"])/g;
+  for (const m of flat.matchAll(IMPORT)) {
+    const source = stringAt(text, (m.index ?? 0) + m[0].length - 1);
+    const named = namedSpecifiers(m[2] ?? '');
+    if (m[1] && m[1] !== 'type') {
+      named.push({ imported: 'default', local: m[1] });
+    }
+    for (const n of named) {
+      imports.push({ ...n, source, called: called(n.local) });
+    }
+  }
+  const reexports: ReexportFact[] = [];
+  for (const m of flat.matchAll(/\bexport\s+(?:type\s+)?\{([^}]*)\}(\s*from\s*(['"]))?/g)) {
+    const source = m[2] ? stringAt(text, (m.index ?? 0) + m[0].length - 1) : undefined;
+    for (const n of namedSpecifiers(m[1])) {
+      reexports.push({ exported: n.local, imported: n.imported, source });
+    }
+  }
+  const exportAll = [...flat.matchAll(/\bexport\s*\*\s*from\s*(['"])/g)].map((m) =>
+    stringAt(text, (m.index ?? 0) + m[0].length - 1),
+  );
+  const defaultExport = flat.match(
+    /\bexport\s+default\s+(?:(?:abstract\s+)?class\s+|struct\s+)?(?!class\b|struct\b)([A-Za-z_$][\w$]*)/,
+  )?.[1];
+  return { imports, reexports, exportAll, defaultExport };
+}
+
 export class NaiveExtractor implements FactExtractor {
   readonly name = 'naive';
 
@@ -393,6 +478,7 @@ export class NaiveExtractor implements FactExtractor {
       declaredClasses,
       classFields,
       arrayClasses,
+      ...moduleLinks(text, flat),
       lines: raw,
     };
   }
@@ -733,14 +819,33 @@ function own<T>(map: Record<string, T>, key: string): T | undefined {
   return Object.hasOwn(map, key) ? map[key] : undefined;
 }
 
-/** Element type of X[], Array<X>, or a file class extending Array<…> (its type parameters bound from t's arguments). */
-function elementType(t: string, facts: FileFacts): string | undefined {
+/** Type text and the file it is written in, which resolves the class names in it. */
+interface ScopedType {
+  type: string;
+  scope: FileFacts;
+}
+
+/** Where `name`, as written in `scope`, is declared: in `scope` itself, else through the resolver. */
+function declarationOf(name: string, scope: FileFacts, resolver?: ClassResolver): Declaration | undefined {
+  if (scope.declaredClasses.includes(name)) {
+    return { facts: scope, name };
+  }
+  return resolver?.declaration(name, scope);
+}
+
+function sameDeclaration(a: Declaration | undefined, b: Declaration) {
+  return a !== undefined && a.name === b.name && a.facts.file === b.facts.file;
+}
+
+/** Element type of X[], Array<X>, or a class extending Array<…> (its type parameters bound from t's arguments). */
+function elementType({ type: t, scope }: ScopedType, resolver?: ClassResolver): ScopedType | undefined {
   const builtin = (t.match(/^(.+)\[\]$/) ?? t.match(/^Array<(.+)>$/))?.[1].trim();
   if (builtin !== undefined) {
-    return builtin;
+    return { type: builtin, scope };
   }
-  const cls = own(facts.arrayClasses, className(t));
-  if (!cls) {
+  const decl = declarationOf(className(t), scope, resolver);
+  const cls = decl && own(decl.facts.arrayClasses, decl.name);
+  if (!decl || !cls) {
     return undefined;
   }
   const args =
@@ -749,22 +854,56 @@ function elementType(t: string, facts: FileFacts): string | undefined {
       .split(',')
       .map((a) => a.trim()) ?? [];
   const param = cls.params.indexOf(cls.element);
-  return param < 0 ? cls.element : args[param];
+  return param < 0 ? { type: cls.element, scope: decl.facts } : { type: args[param], scope };
 }
 
-/** Declared type of this.<field><segs>, from the field's type and the file's class fields; undefined when unknown. */
-function typeAt(fieldType: string | undefined, segs: string[], facts: FileFacts): string | undefined {
-  let t = fieldType && nonNull(fieldType);
+/** Declared type of this.<field><segs>, from the field's type and the class fields of the declaring files; undefined when unknown. */
+function typeAt(
+  fieldType: string | undefined,
+  segs: string[],
+  facts: FileFacts,
+  resolver?: ClassResolver,
+): ScopedType | undefined {
+  let t: ScopedType | undefined = fieldType ? { type: nonNull(fieldType), scope: facts } : undefined;
   for (const s of segs) {
     if (t === undefined) {
       return undefined;
     }
     const prop = s.match(/^\??\.(\w+)$/)?.[1];
-    const fields = own(facts.classFields, className(t));
-    const next = prop === undefined ? elementType(t, facts) : fields && own(fields, prop);
-    t = next && nonNull(next);
+    let next: ScopedType | undefined;
+    if (prop === undefined) {
+      next = elementType(t, resolver);
+    } else {
+      const decl = declarationOf(className(t.type), t.scope, resolver);
+      const fields = decl && own(decl.facts.classFields, decl.name);
+      const type = fields && own(fields, prop);
+      next = decl && type ? { type, scope: decl.facts } : undefined;
+    }
+    t = next && { type: nonNull(next.type), scope: next.scope };
   }
   return t;
+}
+
+/** @ObjectLink field types of the file's components and of the imported components it calls. */
+function objectLinkTypes(facts: FileFacts, resolver?: ClassResolver): ScopedType[] {
+  const local = facts.objectLinkTypes.map((type) => ({ type, scope: facts }));
+  if (!resolver) {
+    return local;
+  }
+  const imported = facts.imports
+    .filter((i) => i.called)
+    .flatMap((i) => {
+      const decl = resolver.declaration(i.local, facts);
+      const child = decl?.facts.components.find((c) => c.name === decl.name);
+      return decl && child ? linkTypesOf(child, decl.facts) : [];
+    });
+  return [...local, ...imported];
+}
+
+function linkTypesOf(c: ComponentFact, scope: FileFacts): ScopedType[] {
+  return c.fields.flatMap((f) =>
+    f.decorators.includes('@ObjectLink') && f.type ? [{ type: f.type.replace(/\[\]$/, '').trim(), scope }] : [],
+  );
 }
 
 /** Whether build() or a @Builder reads this.<field><path> or deeper; any index matches any index, with or without ?. before
@@ -779,38 +918,43 @@ function rendersPath(f: FieldFact, path: string, facts: FileFacts): boolean {
 }
 
 /** V1: a property change on an @Observed object reaches every @ObjectLink bound to that object (OpenHarmony @Observed/@ObjectLink
- *  docs), so a deep write is seen when a child in the file takes the owning class as @ObjectLink, unless the parent renders the
- *  path itself. */
-function seenByObjectLink(f: FieldFact, nestedPath: string, facts: FileFacts): boolean {
-  const owner = typeAt(f.type, segments(nestedPath).slice(0, -1), facts);
-  if (owner === undefined) {
+ *  docs), so a deep write is seen when a child in the file, or an imported child the file calls, takes the owning class as
+ *  @ObjectLink, unless the parent renders the path itself. */
+function seenByObjectLink(f: FieldFact, nestedPath: string, facts: FileFacts, resolver?: ClassResolver): boolean {
+  const owner = typeAt(f.type, segments(nestedPath).slice(0, -1), facts, resolver);
+  const decl = owner && declarationOf(className(owner.type), owner.scope, resolver);
+  if (!decl?.facts.observedClasses.includes(decl.name)) {
     return false;
   }
-  const cls = className(owner);
   return (
-    facts.observedClasses.includes(cls) &&
-    facts.objectLinkTypes.some((t) => className(t) === cls) &&
-    !rendersPath(f, nestedPath, facts)
+    objectLinkTypes(facts, resolver).some((t) =>
+      sameDeclaration(declarationOf(className(t.type), t.scope, resolver), decl),
+    ) && !rendersPath(f, nestedPath, facts)
   );
 }
 
 /** Writes the decorator can't see, minus writes under a disable comment. V1: deeper than the first layer, even with @Observed
- *  classes, unless an @ObjectLink child sees them. V2: any property write unless the class is @ObservedV2. */
-function unobservedWrites(f: FieldFact, facts: FileFacts) {
+ *  classes, unless an @ObjectLink child sees them. V2: any property write unless the field's class is @ObservedV2. */
+function unobservedWrites(f: FieldFact, facts: FileFacts, resolver?: ClassResolver) {
   const writes = f.writes.filter((w) => !w.disabledRules.includes('R1'));
   if (isReactiveV1(f)) {
     return writes.filter(
-      (w) => w.nestedPath !== undefined && nestedDepth(w.nestedPath) >= 2 && !seenByObjectLink(f, w.nestedPath, facts),
+      (w) =>
+        w.nestedPath !== undefined &&
+        nestedDepth(w.nestedPath) >= 2 &&
+        !seenByObjectLink(f, w.nestedPath, facts, resolver),
     );
   }
   const type = baseType(f.type);
-  if (type !== undefined && facts.observedV2Classes.includes(type)) {
+  const decl = type === undefined ? undefined : declarationOf(type, facts, resolver);
+  if (decl?.facts.observedV2Classes.includes(decl.name)) {
     return [];
   }
   return writes.filter((w) => w.nestedPath && w.nestedPath !== '[]');
 }
 
-export function candidates(facts: FileFacts): Candidate[] {
+/** Rule candidates in one file; with a resolver, classes and @ObjectLink children declared in other files count too. */
+export function candidates(facts: FileFacts, resolver?: ClassResolver): Candidate[] {
   const out: Candidate[] = [];
   for (const c of facts.components) {
     for (const f of c.fields) {
@@ -830,7 +974,7 @@ export function candidates(facts: FileFacts): Candidate[] {
         });
       }
 
-      const nested = isReactive(f) ? unobservedWrites(f, facts) : [];
+      const nested = isReactive(f) ? unobservedWrites(f, facts, resolver) : [];
       if (nested.length > 0 && f.readsInBuild.length > 0 && !f.disabledRules.includes('R1')) {
         out.push({
           rule: 'R1',

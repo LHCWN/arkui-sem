@@ -5,6 +5,7 @@ import { dirname, relative } from 'node:path';
 import type { Questions } from '@typesafe-ai/sdk';
 import {
   type Candidate,
+  type ClassResolver,
   candidates,
   type FactExtractor,
   type FileFacts,
@@ -12,6 +13,7 @@ import {
   nestedDepth,
 } from './analysis.js';
 import { buildSlice, Q_R1, Q_R2, Q_R3, type SystemOneBackend } from './judge.js';
+import { ProjectIndex } from './project.js';
 
 // --- Formatting ---
 
@@ -75,6 +77,8 @@ export interface EngineOptions {
   cachePath?: string;
   taskContext?: string;
   judgeTimeoutMs?: number;
+  /** Cross-file lookups; a fresh project index when absent. Long-lived callers pass one to keep its cache. */
+  project?: ClassResolver;
 }
 
 const QUESTIONS: Record<Candidate['rule'], Questions> = { R1: Q_R1, R2: Q_R2, R3: Q_R3 };
@@ -180,6 +184,7 @@ export async function checkFiles(
   const extractor = opts.extractor ?? new NaiveExtractor();
   const thresholds = opts.thresholds ?? { finding: 0.8, question: 0.5 };
   const cache = new JudgmentCache(opts.cachePath);
+  const project = opts.project ?? new ProjectIndex();
   const findings: Finding[] = [];
   const errors: string[] = [];
 
@@ -191,7 +196,7 @@ export async function checkFiles(
       errors.push(`${file}: ${(e as Error).message}`);
       continue;
     }
-    for (const c of candidates(facts)) {
+    for (const c of candidates(facts, project)) {
       const slice = buildSlice(facts, c, opts.taskContext);
       const questions = QUESTIONS[c.rule];
       const key = createHash('sha256')

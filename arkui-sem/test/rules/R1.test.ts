@@ -1,9 +1,11 @@
 // R1 nested write (unobserved deep mutation) on inline ArkTS sources.
 
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { nestedDepth } from '../../src/analysis.js';
-import { found } from '../helpers.js';
+import { candidates, nestedDepth } from '../../src/analysis.js';
+import { ProjectIndex } from '../../src/project.js';
+import { found, ROOT } from '../helpers.js';
 
 const nestedHits = (src: string) =>
   found(src)
@@ -224,4 +226,37 @@ describe('disable comments', () => {
     const [c] = found(src).filter((x) => x.kind === 'nested-write-unobserved');
     assert.equal(c.line, src.split('\n').findIndex((l) => l.includes("'b'")) + 1);
   });
+});
+
+describe('cross-file: classes and @ObjectLink children from other files (test/fixtures/project)', () => {
+  const pages = join(ROOT, 'test', 'fixtures', 'project', 'entry', 'src', 'main', 'ets', 'pages');
+  const index = new ProjectIndex();
+  const nestedIn = (page: string, withIndex: boolean) => {
+    const facts = index.facts(join(pages, page));
+    assert.ok(facts);
+    return candidates(facts, withIndex ? index : undefined)
+      .filter((c) => c.kind === 'nested-write-unobserved')
+      .map((c) => c.field.name);
+  };
+  const cases: [string, string, string[], string[]][] = [
+    [
+      'V1: an imported @ObjectLink child of an @Observed class from another module sees the write',
+      'ItemList.ets',
+      ['items'],
+      [],
+    ],
+    [
+      'V1: an imported @ObjectLink child does not help a class that is not @Observed',
+      'NotePage.ets',
+      ['note'],
+      ['note'],
+    ],
+    ['V2: an @ObservedV2 class from another module observes its properties', 'CardPage.ets', ['card'], []],
+  ];
+  for (const [name, page, without, withIndex] of cases) {
+    test(name, () => {
+      assert.deepEqual(nestedIn(page, false), without);
+      assert.deepEqual(nestedIn(page, true), withIndex);
+    });
+  }
 });

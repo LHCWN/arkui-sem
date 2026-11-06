@@ -12,10 +12,14 @@ export { ts };
  *  when there is one, else from the copy in options.json (`scripts/ets-options.mjs`). */
 export class EtsParser {
   readonly options: ts.CompilerOptions;
+  /** Where the options came from. */
+  readonly source: 'sdk' | 'bundled';
 
   /** sdk: the HarmonyOS SDK root (see findSdk); none uses the bundled options. */
   constructor(sdk?: string) {
-    this.options = { ets: (sdk && sdkEtsOptions(sdk)) || bundledOptions() };
+    const fromSdk = sdk ? sdkEtsOptions(sdk) : undefined;
+    this.source = fromSdk ? 'sdk' : 'bundled';
+    this.options = { ets: fromSdk ?? bundledOptions() };
   }
 
   parse(file: string, text: string): ts.SourceFile {

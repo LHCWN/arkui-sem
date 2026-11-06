@@ -1,13 +1,8 @@
-// opencode v1 plugin. tool.execute.after: append new findings to .ets edit results.
-// session.idle: one follow-up while confident findings remain (once per finding set, ≤ 3 per session).
-// Tools: arkui_check, arkui_facts. Session state lives in memory in the long-running opencode server.
-import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { type Plugin, tool } from '@opencode-ai/plugin';
 import { absolute, classesWith, editedFiles, etsFiles, pathText, readLines } from './analysis.js';
 import { cachePath, loadSettings } from './config.js';
 import { checkFiles, type Finding, formatForAgent } from './engine.js';
-import { EtsExtractor } from './ets/extract.js';
 import { createBackend, type SystemOneBackend } from './judge.js';
 import { ProjectIndex } from './project.js';
 
@@ -156,7 +151,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
         async execute(args, ctx) {
           const file = absolute(args.file, ctx.directory);
           project.refresh();
-          const facts = project.facts(file) ?? new EtsExtractor().extract(file, readFileSync(file, 'utf8'));
+          const facts = project.facts(file);
           return JSON.stringify(
             {
               file: relative(ctx.directory, file),

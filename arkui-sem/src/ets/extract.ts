@@ -7,9 +7,12 @@ import { FileScan } from './scan.js';
 import { typeFactOf } from './types.js';
 
 export class EtsExtractor implements FactExtractor {
-  readonly name = 'ets';
+  /** "ets/sdk" or "ets/bundled": which component list parsed the files (see EtsParser). */
+  readonly name: string;
 
-  constructor(private readonly parser: EtsParser = defaultParser()) {}
+  constructor(private readonly parser: EtsParser = defaultParser()) {
+    this.name = `ets/${parser.source}`;
+  }
 
   extract(file: string, text: string): FileFacts {
     const scan = new FileScan(file, text, this.parser);

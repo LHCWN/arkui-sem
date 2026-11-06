@@ -160,6 +160,12 @@ export interface ClassResolver {
   refresh?(): void;
 }
 
+/** A project's files: the facts of each, by normalized path (`resolve`), and where the names they use are declared. */
+export interface Project extends ClassResolver {
+  /** Throws when the file can't be read or parsed. */
+  facts(file: string): FileFacts;
+}
+
 export interface FactExtractor {
   readonly name: string;
   extract(file: string, text: string): FileFacts;

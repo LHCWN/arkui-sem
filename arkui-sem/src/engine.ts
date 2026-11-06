@@ -5,11 +5,11 @@ import { dirname, relative } from 'node:path';
 import type { Questions } from '@typesafe-ai/sdk';
 import {
   type Candidate,
-  type ClassResolver,
   candidates,
   type FactExtractor,
   type FileFacts,
   nestedDepth,
+  type Project,
   pathText,
   readLines,
   type V2Gap,
@@ -74,14 +74,16 @@ export interface Finding {
 
 export interface EngineOptions {
   backend: SystemOneBackend;
+  /** Builds the project index when no project is passed; a project brings its own. */
   extractor?: FactExtractor;
   /** P ≥ finding → reported as a finding; question ≤ P < finding → asked as a question; below → dropped. */
   thresholds?: { finding: number; question: number };
   cachePath?: string;
   taskContext?: string;
   judgeTimeoutMs?: number;
-  /** Cross-file lookups; a fresh project index when absent. Long-lived callers pass one to keep its cache. */
-  project?: ClassResolver;
+  /** The checked files' facts and cross-file lookups; a fresh project index when absent. Long-lived callers pass one to
+   *  keep its cache. */
+  project?: Project;
 }
 
 const QUESTIONS: Record<Candidate['rule'], Questions> = { R1: Q_R1, R2: Q_R2, R3: Q_R3 };
@@ -212,22 +214,24 @@ export async function checkFiles(
   files: string[],
   opts: EngineOptions,
 ): Promise<{ findings: Finding[]; errors: string[] }> {
-  const extractor = opts.extractor ?? new EtsExtractor();
+  if (opts.project && opts.extractor) {
+    throw new Error('checkFiles: pass the extractor to the project, not both');
+  }
   const thresholds = opts.thresholds ?? { finding: 0.8, question: 0.5 };
   const cache = new JudgmentCache(opts.cachePath);
   const findings: Finding[] = [];
   const errors: string[] = [];
 
   // Every candidate is found before the first await: a shared index can't be refreshed by another check in between.
-  const project = opts.project ?? new ProjectIndex(extractor);
+  const project = opts.project ?? new ProjectIndex(opts.extractor ?? new EtsExtractor());
   project.refresh?.();
   const found: { file: string; facts: FileFacts; candidates: Candidate[] }[] = [];
-  // Through the index, a checked file that another checked file imports is parsed once.
-  const index = project instanceof ProjectIndex ? project : undefined;
   for (const file of files) {
     try {
-      const facts = index?.facts(file) ?? extractor.extract(file, readFileSync(file, 'utf8'));
-      found.push({ file, facts, candidates: candidates(facts, project) });
+      // Through the project, a checked file that another checked file imports is parsed once; facts.file is its
+      // normalized path, which findings and fingerprints share.
+      const facts = project.facts(file);
+      found.push({ file: facts.file, facts, candidates: candidates(facts, project) });
     } catch (e) {
       errors.push(`${file}: ${(e as Error).message}`);
     }

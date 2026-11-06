@@ -12,6 +12,9 @@ import { EtsExtractor } from '../src/ets/extract.js';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+// Tests parse with the bundled ets options, whatever SDK this machine has, so they match CI.
+process.env.ARKUI_SEM_SDK = join(tmpdir(), 'arkui-sem-tests-no-sdk');
+
 /** Node arguments that run the CLI from source, from any cwd. */
 export const CLI = ['--import', import.meta.resolve('tsx'), join(ROOT, 'src', 'cli.ts')];
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Regenerate src/ets-options.json, the ArkTS parser options used when no HarmonyOS SDK is found:
+// Regenerate src/ets/options.json, the ArkTS parser options used when no HarmonyOS SDK is found:
 //   node scripts/ets-options.mjs <sdk>   (<sdk>: the directory holding default/openharmony and default/hms)
 // Then run `npm run format`.
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -21,6 +21,6 @@ const hms = readdirSync(hmsDir)
   .filter((n) => typeof n === 'string');
 ets.components = [...new Set([...ets.components, ...hms])].sort();
 
-const out = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'ets-options.json');
+const out = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'ets', 'options.json');
 writeFileSync(out, `${JSON.stringify(ets, null, 2)}\n`);
 console.log(`${ets.components.length} components -> ${out}`);

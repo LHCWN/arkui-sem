@@ -2,8 +2,8 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseEts, ts } from '../src/ets.js';
-import BUNDLED from '../src/ets-options.json' with { type: 'json' };
+import BUNDLED from '../src/ets/options.json' with { type: 'json' };
+import { parseEts, ts } from '../src/ets/parse.js';
 
 const PAGE = `@Entry
 @Component

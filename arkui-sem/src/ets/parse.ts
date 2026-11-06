@@ -3,8 +3,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import JSON5 from 'json5';
 import ts from 'ohos-typescript';
-import BUNDLED from './ets-options.json' with { type: 'json' };
-import { findStudio } from './lsp/server.js';
+import { findStudio } from '../lsp/server.js';
+import BUNDLED from './options.json' with { type: 'json' };
 
 export { ts };
 
@@ -38,7 +38,7 @@ function sdkEtsOptions(sdk: string): ts.EtsOptions | undefined {
 let options: ts.CompilerOptions | undefined;
 
 /** Component names decide how `Name(…) { … }.attr()` parses: from the SDK (`ARKUI_SEM_SDK`, else DevEco Studio's), else
- *  the copy in ets-options.json (`scripts/ets-options.mjs`). */
+ *  the copy in options.json (`scripts/ets-options.mjs`). */
 export function etsOptions(env = process.env): ts.CompilerOptions {
   if (!options) {
     const studio = findStudio(env);

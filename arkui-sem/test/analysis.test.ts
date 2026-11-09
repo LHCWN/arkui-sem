@@ -1,7 +1,8 @@
-// NaiveExtractor facts on inline ArkTS sources.
+// Extractor facts on inline ArkTS sources.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { classesWith, readLines } from '../src/analysis.js';
 import { extract } from './helpers.js';
 
 test('a regex literal with an unmatched paren does not hide later members', () => {
@@ -38,12 +39,12 @@ struct P {
 
 test('a member on the class closing line is recorded', () => {
   const facts = extract("@ObservedV2\nclass P {\n  name: string = ''\n  @Trace age: number = 0 }");
-  assert.deepEqual(facts.classMembers.P.age?.decorators, ['@Trace']);
+  assert.deepEqual(facts.types.P.members.age?.decorators, ['@Trace']);
 });
 
 test('an abstract @ObservedV2 class is observed', () => {
   const facts = extract("@ObservedV2\nexport default abstract class Base {\n  @Trace name: string = ''\n}");
-  assert.deepEqual(facts.observedV2Classes, ['Base']);
+  assert.deepEqual(classesWith(facts, '@ObservedV2'), ['Base']);
 });
 
 test('logical and other compound assignments count as writes', () => {
@@ -76,7 +77,7 @@ struct P {
     Text(\`\${this.size}\`)
   }
 }`);
-  assert.equal(facts.components[0].fields[0].readsInBuild.length, 1);
+  assert.equal(readLines(facts.components[0].fields[0]).length, 1);
 });
 
 test('a / starting a continuation line is a division', () => {
@@ -137,7 +138,7 @@ struct P {
 
 test('a member with an inline object type spelled with semicolons is recorded', () => {
   const facts = extract("class C {\n  user: { name: string; age: number } = { name: '', age: 0 }\n}");
-  assert.equal(facts.classMembers.C.user?.type, '{ name: string; age: number }');
+  assert.deepEqual(facts.types.C.members.user?.typeRef, { kind: 'object' });
 });
 
 test('a constructor type ends at its own type arguments', () => {
@@ -153,5 +154,143 @@ struct P {
 
 test('a member after a method in a one-line class is recorded', () => {
   const facts = extract('@ObservedV2\nclass S { foo() {} @Trace bar: number = 0 }');
-  assert.deepEqual(facts.classMembers.S.bar?.decorators, ['@Trace']);
+  assert.deepEqual(facts.types.S.members.bar?.decorators, ['@Trace']);
+});
+
+test('a write in a handler field (an arrow function) is recorded under the field name', () => {
+  const facts = extract(`@Component
+struct P {
+  count: number = 0
+  onTap = () => {
+    this.count++
+  }
+  build() {
+    Button(\`\${this.count}\`).onClick(this.onTap)
+  }
+}`);
+  const [count] = facts.components[0].fields;
+  assert.deepEqual(
+    count.writes.map((w) => [w.method, w.context, w.external]),
+    [['onTap', 'method', false]],
+  );
+});
+
+test('writes after an await or in a deferred callback are async; a write before the await is not', () => {
+  const facts = extract(`@ComponentV2
+struct P {
+  @Local n: number = 0
+  async load() {
+    this.n = 1
+    this.n = await fetchIt()
+    this.n = 2
+    setTimeout(() => {
+      this.n = 3
+    }, 10)
+  }
+  build() {
+    Text(\`\${this.n}\`)
+  }
+}`);
+  assert.deepEqual(
+    facts.components[0].fields[0].writes.map((w) => w.context),
+    ['method', 'async-callback', 'async-callback', 'async-callback'],
+  );
+});
+
+test('a type annotation spread over lines and a constructor parameter property are recorded', () => {
+  const facts = extract(`class C {
+  constructor(public name: string, private age: number) {}
+  map: Map<
+    string,
+    number
+  > = new Map()
+}`);
+  assert.deepEqual(facts.types.C.members.map?.typeRef, {
+    kind: 'name',
+    name: 'Map',
+    args: [
+      { kind: 'keyword', name: 'string' },
+      { kind: 'keyword', name: 'number' },
+    ],
+  });
+  assert.deepEqual(Object.keys(facts.types.C.members).sort(), ['age', 'map', 'name']);
+});
+
+test('a disable directive only counts inside a comment', () => {
+  const facts = extract(`@Component
+struct P {
+  note: string = 'arkui-sem-disable-next-line R1'
+  count: number = 0
+  build() {
+    Button(\`\${this.count}\`).onClick(() => { this.count++ })
+  }
+}`);
+  assert.deepEqual(facts.components[0].fields[1].disabledRules, []);
+});
+
+test('a write in a synchronous callback after an outer await is async', () => {
+  const facts = extract(`@ComponentV2
+struct P {
+  @Local list: number[] = []
+  async load() {
+    const r = await fetchIt()
+    r.forEach((i: number) => {
+      this.list.push(i)
+    })
+  }
+  build() {
+    Text(\`\${this.list.length}\`)
+  }
+}`);
+  assert.deepEqual(
+    facts.components[0].fields[0].writes.map((w) => w.context),
+    ['async-callback'],
+  );
+});
+
+test('build reads record the attribute call and the loop holding them, not helper calls', () => {
+  const facts = extract(`@Component
+struct P {
+  @State w: number = 0
+  @State items: string[] = []
+  build() {
+    Column() {
+      Text('a').width(Math.max(this.w, 10)).opacity(this.calc(this.w))
+      ForEach(this.items, (s: string) => { Text(s) })
+      LazyForEach(this.items, (s: string) => { Text(s) })
+    }
+  }
+  calc(n: number): number { return n }
+}`);
+  const [w, items] = facts.components[0].fields;
+  assert.deepEqual(
+    w.buildReads.map((r) => r.attribute),
+    ['width', 'opacity'],
+  );
+  assert.deepEqual(
+    items.buildReads.map((r) => r.inForEach),
+    [true, true],
+  );
+});
+
+test('a callback field the component calls is invoked; $$this bindings count as accesses', () => {
+  const facts = extract(`@Component
+struct P {
+  onDone: () => void = () => {}
+  @State text: string = ''
+  build() {
+    Column() {
+      TextInput({ text: $$this.text })
+      Button('ok').onClick(() => {
+        $$this.text = ''
+        this.onDone?.()
+      })
+    }
+  }
+}`);
+  const [onDone, text] = facts.components[0].fields;
+  assert.equal(onDone.invoked, true);
+  assert.equal(text.invoked, false);
+  assert.equal(text.writes.length, 1);
+  assert.equal(text.buildReads.length, 1);
 });

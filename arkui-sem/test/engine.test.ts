@@ -1,9 +1,11 @@
 // checkFiles and formatForAgent with a stub judge that calls everything a bug.
 
 import assert from 'node:assert/strict';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { checkFiles, formatForAgent } from '../src/engine.js';
+import { EtsExtractor } from '../src/ets/extract.js';
+import { ProjectIndex } from '../src/project.js';
 import { put, tempDir } from './helpers.js';
 
 const bug = {
@@ -171,4 +173,28 @@ test('a type alias with nested generic parameters gets the object-type fix', asy
     'this.b.a',
   );
   assert.match(fix, /^make Box an @ObservedV2 class/);
+});
+
+test('a finding and its fingerprint name the file by one normalized path', async () => {
+  const spelled = join(dirname(file), 'sub', '..', 'P.ets');
+  const {
+    findings: [finding],
+  } = await checkFiles([spelled], { backend: bug });
+  assert.equal(finding.file, resolve(file));
+  assert.ok(finding.fingerprint.startsWith(`${resolve(file)}#`));
+});
+
+test('a missing file is reported once as an error', async () => {
+  const missing = join(dirname(file), 'Missing.ets');
+  const { findings, errors } = await checkFiles([missing], { backend: bug });
+  assert.deepEqual(findings, []);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /Missing\.ets: ENOENT/);
+});
+
+test('a project and an extractor are not passed together', async () => {
+  await assert.rejects(
+    checkFiles([file], { backend: bug, project: new ProjectIndex(), extractor: new EtsExtractor() }),
+    /pass the extractor to the project/,
+  );
 });

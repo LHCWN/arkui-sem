@@ -1,10 +1,6 @@
-// opencode v1 plugin. tool.execute.after: append new findings to .ets edit results.
-// session.idle: one follow-up while confident findings remain (once per finding set, ≤ 3 per session).
-// Tools: arkui_check, arkui_facts. Session state lives in memory in the long-running opencode server.
-import { readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { type Plugin, tool } from '@opencode-ai/plugin';
-import { absolute, editedFiles, etsFiles, NaiveExtractor } from './analysis.js';
+import { absolute, classesWith, editedFiles, etsFiles, pathText, readLines } from './analysis.js';
 import { cachePath, loadSettings } from './config.js';
 import { checkFiles, type Finding, formatForAgent } from './engine.js';
 import { createBackend, type SystemOneBackend } from './judge.js';
@@ -154,11 +150,12 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
         args: { file: tool.schema.string().describe('Path to a .ets file') },
         async execute(args, ctx) {
           const file = absolute(args.file, ctx.directory);
-          const facts = new NaiveExtractor().extract(file, readFileSync(file, 'utf8'));
+          project.refresh();
+          const facts = project.facts(file);
           return JSON.stringify(
             {
               file: relative(ctx.directory, file),
-              observedClasses: facts.observedClasses,
+              observedClasses: classesWith(facts, '@Observed'),
               components: facts.components.map((c) => ({
                 name: c.name,
                 line: c.line,
@@ -168,8 +165,8 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
                   line: f.line,
                   decorators: f.decorators,
                   type: f.type ?? null,
-                  readInBuildAt: f.readsInBuild,
-                  writes: f.writes,
+                  readInBuildAt: readLines(f),
+                  writes: f.writes.map(({ path, ...w }) => ({ ...w, nestedPath: pathText(path) || undefined })),
                 })),
                 resources: c.resources,
               })),

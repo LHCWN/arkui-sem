@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { cpSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { classesWith, type FileFacts } from '../src/analysis.js';
 import { checkFiles } from '../src/engine.js';
 import type { SystemOneBackend } from '../src/judge.js';
 import { ProjectIndex } from '../src/project.js';
@@ -11,6 +12,8 @@ import { put, ROOT, tempDir } from './helpers.js';
 
 const FIXTURE = join(ROOT, 'test', 'fixtures', 'project');
 const PAGES = join('entry', 'src', 'main', 'ets', 'pages');
+
+const observed = (facts: FileFacts | undefined) => facts && classesWith(facts, '@Observed');
 
 /** A copy of the fixture in a temp dir, so tests can edit it. */
 function project(): string {
@@ -82,12 +85,12 @@ test('after refresh(), the file cache re-parses a file whose mtime changed', () 
   const root = project();
   const index = new ProjectIndex();
   const item = join(root, 'common', 'src', 'main', 'ets', 'model', 'Item.ets');
-  assert.deepEqual(index.facts(item)?.observedClasses, ['Item']);
+  assert.deepEqual(observed(index.facts(item)), ['Item']);
   writeFileSync(item, readFileSync(item, 'utf8').replace(/@Observed\r?\n/, ''));
   touch(item, 60);
-  assert.deepEqual(index.facts(item)?.observedClasses, ['Item'], 'same check: the first read stands');
+  assert.deepEqual(observed(index.facts(item)), ['Item'], 'same check: the first read stands');
   index.refresh();
-  assert.deepEqual(index.facts(item)?.observedClasses, []);
+  assert.deepEqual(observed(index.facts(item)), []);
 });
 
 test('scoped package names resolve; SDK modules (@ohos.x, @kit.x) are skipped', () => {

@@ -6,7 +6,7 @@ Status: **parked**. Build it only if live agent sessions show real evidence of t
 
 - **`tool.execute.after`** (`src/opencode.ts`) runs after every edit tool call on a `.ets` file.
   - It re-reads the whole file from disk, so partial edits are fine: the tool has already written the file.
-  - It extracts facts with `NaiveExtractor` (~1 ms per field on a large real project; ≤ 10 ms for a 2,700-line file).
+  - It extracts facts from the ohos-typescript syntax tree (`EtsExtractor`; parse timings: `bench/docs/plans/ts-extractor.md`).
   - It judges every R1/R2/R3 candidate in the file. Verdicts are cached by `sha256(backend + slice + question ids)`.
   - Findings whose fingerprint hasn't been reported yet are appended to the tool output.
 - **`session.idle`** re-checks every touched file and sends one follow-up while confident findings remain (≤ 3 per session). This is already a last-gate transaction.

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { cpSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
-import { classesWith, etsFiles, type FileFacts } from '../src/analysis.js';
+import { classesWith, etsFiles, etsFilesIn, type FileFacts } from '../src/analysis.js';
 import { checkFiles } from '../src/engine.js';
 import type { SystemOneBackend } from '../src/judge.js';
 import { ProjectIndex } from '../src/project.js';
@@ -194,6 +194,13 @@ test('etsFiles finds sources, skips output and dot directories, and follows dire
   assert.deepEqual(etsFiles(page), [page]);
   assert.deepEqual(etsFiles(note), []);
   assert.deepEqual(etsFiles(join(root, 'missing')), []);
+});
+
+test('a directory that has gone since its parent was listed yields no files', () => {
+  const root = tempDir();
+  const file = put(join(root, 'Page.ets'), '');
+  assert.deepEqual(etsFilesIn(join(root, 'deleted')), []);
+  assert.deepEqual(etsFilesIn(file), []);
 });
 
 test('a file added after a lookup is found only after refresh', () => {

@@ -1,5 +1,5 @@
 // .ets source → program facts → rule candidates. Deterministic; no model calls.
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { type Dirent, existsSync, readdirSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 // --- Facts ---
@@ -238,9 +238,22 @@ export function etsFiles(path: string): string[] {
   return etsFilesIn(path);
 }
 
+/** Empty when the directory has gone since its parent was listed. */
+function entriesOf(dir: string): Dirent[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    const { code } = e as NodeJS.ErrnoException;
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      return [];
+    }
+    throw e;
+  }
+}
+
 /** Directory entries carry their type, so only links and entries of unknown type cost a stat. */
-function etsFilesIn(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+export function etsFilesIn(dir: string): string[] {
+  return entriesOf(dir).flatMap((e) => {
     if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) {
       return [];
     }

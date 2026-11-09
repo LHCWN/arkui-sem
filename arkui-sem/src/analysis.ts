@@ -1,5 +1,5 @@
 // .ets source → program facts → rule candidates. Deterministic; no model calls.
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { type Dirent, existsSync, readdirSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 // --- Facts ---
@@ -235,9 +235,37 @@ export function etsFiles(path: string): string[] {
   if (statSync(path).isFile()) {
     return path.endsWith('.ets') ? [path] : [];
   }
-  return readdirSync(path).flatMap((name) =>
-    SKIP_DIRS.has(name) || name.startsWith('.') ? [] : etsFiles(join(path, name)),
-  );
+  return etsFilesIn(path);
+}
+
+/** Empty when the directory has gone since its parent was listed. */
+function entriesOf(dir: string): Dirent[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    const { code } = e as NodeJS.ErrnoException;
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      return [];
+    }
+    throw e;
+  }
+}
+
+/** Directory entries carry their type, so only links and entries of unknown type cost a stat. */
+export function etsFilesIn(dir: string): string[] {
+  return entriesOf(dir).flatMap((e) => {
+    if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) {
+      return [];
+    }
+    const path = join(dir, e.name);
+    if (e.isDirectory()) {
+      return etsFilesIn(path);
+    }
+    if (e.isFile()) {
+      return e.name.endsWith('.ets') ? [path] : [];
+    }
+    return etsFiles(path);
+  });
 }
 
 export function editedFiles(args: unknown, directory: string): string[] {

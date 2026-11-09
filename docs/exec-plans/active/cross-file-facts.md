@@ -2,7 +2,7 @@
 
 Roadmap phase 2, plus two items of phase 3 (`docs/exec-plans/active/roadmap.md`, Plan). One branch per PR, from `main`.
 
-**Status:** PR 1 merged (#18: project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PR 2 is split: 2a (facts from the ohos-typescript syntax tree, judge features as slice fields; `bench/docs/plans/ts-extractor.md`) on `feat/ts-extractor`; 2b (call-site edges, typed values from the checker) and PR 3 open.
+**Status:** PR 1 merged (#18: project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PR 2 is split: 2a (facts from the ohos-typescript syntax tree, judge features as slice fields; `bench/docs/plans/ts-extractor.md`) merged (#19); 2b (call-site edges, index only) open; typed values from the checker are a separate later item. PR 3 open. Project index performance fixes, ahead of 2b, on `perf/project-index` (timings: `bench/docs/plans/index-baseline.md`).
 
 ## Goal
 

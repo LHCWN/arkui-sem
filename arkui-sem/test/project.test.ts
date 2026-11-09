@@ -243,3 +243,19 @@ test('without a build profile, a file takes the closest oh-package.json5, and a 
   assert.equal(index.resolveImport('gone', from), undefined);
   assert.equal(index.resolveImport('./Missing', from), undefined);
 });
+
+test('on Windows, a file finds its module whatever the case of its path', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const root = tempDir();
+  put(join(root, 'build-profile.json5'), { modules: [{ name: 'app', srcPath: './App' }] });
+  put(join(root, 'App', 'oh-package.json5'), { name: 'app', dependencies: { dep: 'file:../module-dep' } });
+  // Closer to the file than the module's own package: wins only if the module isn't recognized.
+  put(join(root, 'App', 'src', 'oh-package.json5'), { name: 'src', dependencies: { dep: 'file:../../closest-dep' } });
+  for (const pkg of ['module-dep', 'closest-dep']) {
+    put(join(root, pkg, 'oh-package.json5'), { name: pkg });
+    put(join(root, pkg, 'Index.ets'), '');
+  }
+  const from = join(root, 'app', 'src', 'P.ets');
+  assert.equal(new ProjectIndex().resolveImport('dep', from), resolve(root, 'module-dep', 'Index.ets'));
+});

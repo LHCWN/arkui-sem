@@ -2,7 +2,7 @@
 
 Roadmap phase 2, plus two items of phase 3 (`docs/exec-plans/active/roadmap.md`, Plan). One branch per PR, from `main`.
 
-**Status:** PR 1 merged (#18: project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PR 2 is split: 2a (facts from the ohos-typescript syntax tree, judge features as slice fields; `bench/docs/plans/ts-extractor.md`) merged (#19); 2b (call-site edges, index only) open; typed values from the checker are a separate later item. PR 3 open. Project index performance fixes, ahead of 2b, on `perf/project-index` (timings: `bench/docs/plans/index-baseline.md`).
+**Status:** PR 1 merged (#18: project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PR 2 is split: 2a (facts from the ohos-typescript syntax tree, judge features as slice fields; `bench/docs/plans/ts-extractor.md`) merged (#19); 2b (call-site edges, index only: `ProjectIndex.callSites`, exposed in `arkui_facts`) on `feat/call-site-edges` (scan timings and comparison: `bench/docs/plans/index-baseline.md`); typed values from the checker are a separate later item. PR 3 open. Project index performance fixes merged (#21).
 
 ## Goal
 
@@ -68,6 +68,31 @@ Three PRs, in order. Each adds one visible change, is testable on its own and up
    PR 2's edges (with the legacy open-files workaround), hvigor's dependency map as the module source when fresh (see Goal 1), dependency records at
    `initialize` from that lookup, the timing
    check. Moves this plan to `completed/`.
+
+## Order after 2b
+
+2b, then lazy call sites, then PR 3, then a disk cache if still needed, then checker types and R2 candidates. A scan cut short can't support an absence claim ("no call site passes `onX`"), so R2 waits until the plugin gets complete edges on large projects, from the lazy path or the disk cache.
+
+**In 2b** (whole-project scan, index only):
+
+- `callSites(decl)` takes its files from one function: all project files here, which the bench keeps.
+- A file is parsed for the scan only if it has a word-bounded `struct` or `@Builder` (a substring match also catches `constructor`). A call is recorded only if its name is declared or imported in that file.
+- Edges are reused while no file has changed.
+- A time budget stops the scan early and reports the files left as `unscanned`. The bench runs without a budget, so its results stay deterministic.
+- Directory link cycles end the listing instead of recursing.
+
+**Lazy call sites** (the next PR, plugin path only). Work follows how often the asked-about struct is used, not project size:
+
+1. Search the project text for the struct's name, word-bounded, in the directories the scan covers.
+2. Parse only the matching files, through the file cache.
+3. Follow aliases until none are new: a candidate's `export { Child as Kid }` adds `Kid`; for a default export, also search import paths for the declaring file's name, and for the package name when a package entry re-exports it.
+4. Resolve each call with `declaration()`, so a name that only matches as text is dropped.
+
+Parents further up are found by repeating this on demand. The search is asynchronous; only the small parse step blocks.
+
+- First measure the search on a large project, warm and with a cold OS file cache: ripgrep (needs a fallback when the binary is missing) against reading from Node (keeping each file's capitalized identifiers in memory, refreshed by mtime).
+- Exit criterion: on a large project, the edges for a sample of structs match the full scan exactly.
+- Whole-project runs (`arkui_check .`, the bench) still parse everything. Decide on the disk cache after the measurement.
 
 ## Bench
 

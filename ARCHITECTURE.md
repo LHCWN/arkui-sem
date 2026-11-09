@@ -44,12 +44,14 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/ets/extract.ts   fact extractor on the syntax tree (single file, no type checker): file visit, imports, types
   src/ets/component.ts a component: fields, one walk per method for reads, writes and their context, reachability
   src/ets/resources.ts R3 facts: listeners, subscriptions, timers and their release
+  src/ets/uses.ts      where a file instantiates components: parent, method, arguments and how each is written
   src/ets/types.ts     type annotations → TypeRef, object literals, per-type records (classes, interfaces, aliases)
   src/ets/syntax.ts, scan.ts, modules.ts, directives.ts, lifecycle.ts   node helpers, file context, imports/exports,
                        disable comments, lifecycle hook names
   src/sdk.ts           DevEco Studio and HarmonyOS SDK lookup (parser options, ace-server)
   src/project.ts       project index for the rules: imported name → declaring file (relative imports, packages from
-                       oh-package.json5 local dependencies and build-profile.json5 modules, Index.ets re-exports), caches
+                       oh-package.json5 local dependencies and build-profile.json5 modules, Index.ets re-exports), caches;
+                       call-site edges: a project scan resolving each file's component uses (callSites)
   src/judge.ts         System One interface, Jev, Clef, answer helpers, questions (Q_R1/Q_R2/Q_R3), slices (SPEC_CARDS),
                        heuristic, DeepSeek (flash, structured output), backend registry
   src/engine.ts        candidates → slices → judge → finding/question bands (thresholds 0.8 / 0.5); agent formatting

@@ -27,8 +27,16 @@
 - The LSP client sends no package dependency records at `initialize`: modules come from a folder scan (up to four
   levels below the project root), so the server doesn't resolve imports by package name (listing modules from
   `oh-package.json5` alone was not enough, nor was the server's own `--projectPath` mode). The rules resolve them through
-  the project index (`src/project.ts`); the LSP records come from the same lookup (cross-file-facts PR 3). R2 call sites,
-  R3 releases in helpers and R4 writers across modules are still missing.
+  the project index (`src/project.ts`); the LSP records come from the same lookup (cross-file-facts PR 3). R3 releases in
+  helpers and R4 writers across modules are still missing.
+- Call-site edges (`ProjectIndex.callSites`):
+  - The time budget stops the scan between files, but listing the project can't be interrupted: on a cold OS file cache
+    the listing alone can exceed the budget.
+  - A scan cut short lists fewer sites and reports `unscanned`, so it can't support an absence claim (R2 waits for complete
+    edges on large projects).
+  - `CustomDialogController({ builder: Dlg({…}) })` sits in a field initializer, outside build()/@Builder: not recorded.
+  - A file with parser errors keeps its sites and counts as `unscanned`; some valid ArkTS reports an error too
+    (`.attr()` after the closure of `Child() { … }`).
 - On legacy ace-server (DevEco 6.x) `references` and `callers` see usages in open files only (queried and edited ones), so
   usages in other files are missed; the standard server (DevEco 26+) searches the whole project.
 - No licence yet: the owner picks one before the repo goes public.

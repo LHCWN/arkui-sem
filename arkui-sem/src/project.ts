@@ -194,8 +194,8 @@ export class ProjectIndex implements Project {
    * the scan reads the whole project. Undefined when the file belongs to no project, so nothing was searched.
    * Synchronous by design: a check must not see a refresh of this index mid-scan.
    */
-  callSites(decl: Declaration, options: { budgetMs?: number } = {}): CallSites | undefined {
-    const dirs = this.projectDirs(decl.facts.file);
+  callSites(decl: Declaration, options: { budgetMs?: number; workspace?: string } = {}): CallSites | undefined {
+    const dirs = this.projectDirs(decl.facts.file, options.workspace);
     if (dirs.length === 0) {
       return undefined;
     }
@@ -225,14 +225,22 @@ export class ProjectIndex implements Project {
   }
 
   /** The build-profile root and the module directories outside it; without a profile, the closest package directory. */
-  private projectDirs(file: string): string[] {
-    const root = this.projectRoot(file);
+  private projectDirs(file: string, workspace?: string): string[] {
+    const root = this.projectRoot(file) ?? (workspace === undefined ? undefined : this.rootListing(file, workspace));
     if (root !== undefined) {
       const modules = [...(this.moduleList(root)?.dirs.values() ?? [])];
       return [root, ...modules.filter((dir) => isOutside(dir, root))];
     }
     const packageDir = this.moduleDir(file);
     return packageDir === undefined ? [] : [packageDir];
+  }
+
+  /** The workspace's project, when it lists the file's module: a module outside the root has no profile above it. */
+  private rootListing(file: string, workspace: string): string | undefined {
+    const root = this.projectRoot(join(workspace, OH_PACKAGE));
+    const dirs = root === undefined ? undefined : this.moduleList(root)?.dirs;
+    const listed = dirs && this.closestDir(dirname(resolve(file)), (dir) => dirs.has(directoryKey(dir)));
+    return listed === undefined ? undefined : root;
   }
 
   private isCurrent(scan: EdgeScan, files: string[]): boolean {

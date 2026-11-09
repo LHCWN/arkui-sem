@@ -4,9 +4,9 @@ import {
   absolute,
   type CallSites,
   classesWith,
-  type Declaration,
   editedFiles,
   etsFiles,
+  type FileFacts,
   pathText,
   readLines,
 } from './analysis.js';
@@ -21,10 +21,15 @@ const MAX_GATE_FOLLOWUPS = 3;
 const CALL_SITE_BUDGET_MS = 15_000;
 const MAX_ARGUMENT_TEXT = 200;
 
-/** Undefined when nothing could be searched: a failed project listing must not cost the file's own facts. */
-function callSitesOf(project: ProjectIndex, decl: Declaration): CallSites | undefined {
+/** By component. Undefined when the search failed: a failed project listing must not cost the file's own facts. */
+function callSitesOf(
+  project: ProjectIndex,
+  facts: FileFacts,
+  workspace: string,
+): Map<string, CallSites | undefined> | undefined {
+  const options = { budgetMs: CALL_SITE_BUDGET_MS, workspace };
   try {
-    return project.callSites(decl, { budgetMs: CALL_SITE_BUDGET_MS });
+    return new Map(facts.components.map((c) => [c.name, project.callSites({ facts, name: c.name }, options)]));
   } catch {
     return undefined;
   }
@@ -171,18 +176,18 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
 
       arkui_facts: tool({
         description:
-          "Show ArkUI state-ownership facts for one .ets file: each component's fields with decorators, where each is read in build() and where it is written (event handler, async callback, lifecycle), listeners/timers with their release status, and where the component is used (parent, arguments and how each is written). unscanned above 0 means call sites may be missing or wrong; callSites null means none could be searched (for example, the file is in no project). Use before changing state decorators or how data flows between components.",
+          "Show ArkUI state-ownership facts for one .ets file: each component's fields with decorators, where each is read in build() and where it is written (event handler, async callback, lifecycle), listeners/timers with their release status, and where the component is used (parent, arguments and how each is written). unscanned above 0 means call sites may be missing or wrong; callSites and unscanned null mean none could be searched (for example, the file is in no project). Use before changing state decorators or how data flows between components.",
         args: { file: tool.schema.string().describe('Path to a .ets file') },
         async execute(args, ctx) {
           const file = absolute(args.file, ctx.directory);
           project.refresh();
           const facts = project.facts(file);
-          const uses = new Map(facts.components.map((c) => [c.name, callSitesOf(project, { facts, name: c.name })]));
+          const uses = callSitesOf(project, facts, ctx.directory);
           return JSON.stringify(
             {
               file: relative(ctx.directory, file),
               observedClasses: classesWith(facts, '@Observed'),
-              unscanned: [...uses.values()][0]?.unscanned ?? 0,
+              unscanned: [...(uses?.values() ?? [])][0]?.unscanned ?? null,
               components: facts.components.map((c) => ({
                 name: c.name,
                 line: c.line,
@@ -197,7 +202,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
                 })),
                 resources: c.resources,
                 callSites:
-                  uses.get(c.name)?.sites.map((s) => ({
+                  uses?.get(c.name)?.sites.map((s) => ({
                     ...s,
                     file: relative(ctx.directory, s.file),
                     args: s.args.map((a) => ({ ...a, text: shortened(a.text) })),

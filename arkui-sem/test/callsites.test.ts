@@ -280,6 +280,27 @@ test('a project without a build profile is the closest oh-package.json5 director
   assert.deepEqual(usedFrom(new ProjectIndex(), declared, 'Child').parents, ['P:Child']);
 });
 
+test('a module outside the build-profile root finds its callers through the workspace', () => {
+  const root = tempDir();
+  const app = join(root, 'app');
+  put(join(app, 'build-profile.json5'), {
+    modules: [
+      { name: 'entry', srcPath: './entry' },
+      { name: 'common', srcPath: '../common' },
+    ],
+  });
+  put(join(app, 'entry', 'oh-package.json5'), {});
+  put(join(root, 'common', 'oh-package.json5'), {});
+  const declared = put(join(root, 'common', 'Child.ets'), child);
+  put(join(app, 'entry', 'P.ets'), page('P', "import { Child } from '../../common/Child'", 'Child()'));
+  const index = new ProjectIndex();
+  const decl = { facts: index.facts(declared), name: 'Child' };
+  assert.deepEqual(
+    edges(index, decl, { workspace: app }).sites.map((s) => s.parent),
+    ['P'],
+  );
+});
+
 test('a use in a field initializer records the field', () => {
   const [use] = extract(`
 import { Dlg } from './Dlg'

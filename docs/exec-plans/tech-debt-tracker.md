@@ -37,6 +37,8 @@
   - A file with parser errors counts as `unscanned`. What the parser recovered is still listed, and sites may be missing
     or wrong: an unclosed object or string can swallow later calls as arguments, and a stray `}` can lose a builder. Some
     valid ArkTS reports an error too (`.attr()` after the closure of `Child() { … }`).
+  - A module outside the build-profile root is tied to its project through the session's directory. Opened from anywhere
+    else, the scan covers that module alone.
   - A directory link to a folder the listing also walks directly lists its files twice, so their sites appear twice. Only
     cycles are cut.
   - The budget is checked between files, so resolving one file's uses can overrun it by the files those imports parse.

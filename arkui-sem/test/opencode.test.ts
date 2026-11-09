@@ -133,6 +133,7 @@ test('arkui_facts shows callSites null for a file in no project', async () => {
   const child = put(join(dir, 'Child.ets'), '@Component\nexport struct Child {\n  build() {}\n}');
   const facts = JSON.parse(await hooks.tool.arkui_facts.execute({ file: child }, ctx));
   assert.equal(facts.components[0].callSites, null);
+  assert.equal(facts.unscanned, null);
 });
 
 test('arkui_facts lists only classes declared in the file, by their source names', async () => {

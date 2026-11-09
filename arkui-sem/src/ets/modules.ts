@@ -3,7 +3,6 @@ import type { FileFacts, ImportFact, ReexportFact } from '../analysis.js';
 import { ts } from './parse.js';
 import { hasModifier } from './syntax.js';
 
-/** The file's imports (called: false until the caller knows which names the file calls) and exports. */
 export function moduleLinks(
   sf: ts.SourceFile,
 ): Pick<FileFacts, 'imports' | 'reexports' | 'exportAll' | 'defaultExport'> {
@@ -17,11 +16,11 @@ export function moduleLinks(
       const { name, namedBindings } = st.importClause;
       if (namedBindings && ts.isNamedImports(namedBindings)) {
         for (const el of namedBindings.elements) {
-          imports.push({ imported: (el.propertyName ?? el.name).text, local: el.name.text, source, called: false });
+          imports.push({ imported: (el.propertyName ?? el.name).text, local: el.name.text, source });
         }
       }
       if (name) {
-        imports.push({ imported: 'default', local: name.text, source, called: false });
+        imports.push({ imported: 'default', local: name.text, source });
       }
     } else if (ts.isExportDeclaration(st)) {
       const source = st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) ? st.moduleSpecifier.text : undefined;

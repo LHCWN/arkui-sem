@@ -6,7 +6,6 @@ import type { Questions } from '@typesafe-ai/sdk';
 import {
   type Candidate,
   candidates,
-  type FactExtractor,
   type FileFacts,
   nestedDepth,
   type Project,
@@ -14,7 +13,6 @@ import {
   readLines,
   type V2Gap,
 } from './analysis.js';
-import { EtsExtractor } from './ets/extract.js';
 import { buildSlice, Q_R1, Q_R2, Q_R3, type SystemOneBackend } from './judge.js';
 import { ProjectIndex } from './project.js';
 
@@ -74,8 +72,6 @@ export interface Finding {
 
 export interface EngineOptions {
   backend: SystemOneBackend;
-  /** Builds the project index when no project is passed; a project brings its own. */
-  extractor?: FactExtractor;
   /** P ≥ finding → reported as a finding; question ≤ P < finding → asked as a question; below → dropped. */
   thresholds?: { finding: number; question: number };
   cachePath?: string;
@@ -214,17 +210,14 @@ export async function checkFiles(
   files: string[],
   opts: EngineOptions,
 ): Promise<{ findings: Finding[]; errors: string[] }> {
-  if (opts.project && opts.extractor) {
-    throw new Error('checkFiles: pass the extractor to the project, not both');
-  }
   const thresholds = opts.thresholds ?? { finding: 0.8, question: 0.5 };
   const cache = new JudgmentCache(opts.cachePath);
   const findings: Finding[] = [];
   const errors: string[] = [];
 
   // Every candidate is found before the first await: a shared index can't be refreshed by another check in between.
-  const project = opts.project ?? new ProjectIndex(opts.extractor ?? new EtsExtractor());
-  project.refresh?.();
+  const project = opts.project ?? new ProjectIndex();
+  project.refresh();
   const found: { file: string; facts: FileFacts; candidates: Candidate[] }[] = [];
   for (const file of files) {
     try {

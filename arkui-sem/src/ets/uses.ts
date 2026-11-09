@@ -1,10 +1,9 @@
-// Where a file instantiates components: `Child({ … })` in build(), @Builder and @LocalBuilder bodies.
+// Where a file instantiates components: `Child({ … })` in build(), @Builder and @LocalBuilder bodies and field initializers.
 import type { ArgumentForm, ComponentArgument, ComponentUse } from '../analysis.js';
+import { methodsOf, rendersUi } from './component.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
 import { decoratorNames, isFunction, isThis, isWrapper, memberName, thisMember, unwrap } from './syntax.js';
-
-const STRUCT_BUILDERS = ['@Builder', '@LocalBuilder'];
 
 type Site = Pick<ComponentUse, 'parent' | 'method'>;
 
@@ -24,11 +23,16 @@ export function componentUses(scan: FileScan, callable: Set<string>): ComponentU
   };
   for (const st of scan.sf.statements) {
     if (ts.isStructDeclaration(st) && st.name) {
-      const methods = methodNames(st);
+      const parent = st.name.text;
+      const methods = methodsOf(st);
+      const names = new Set(methods.map((m) => m.name));
+      for (const m of methods.filter(rendersUi)) {
+        collect(m.body, { parent, method: m.name }, names);
+      }
       for (const m of st.members) {
-        const name = memberName(m.name);
-        if (ts.isMethodDeclaration(m) && m.body && name !== undefined && rendersUi(name, m)) {
-          collect(m.body, { parent: st.name.text, method: name }, methods);
+        const field = memberName(m.name);
+        if (ts.isPropertyDeclaration(m) && m.initializer && field !== undefined) {
+          collect(m.initializer, { parent, method: field }, names);
         }
       }
     } else if (ts.isFunctionDeclaration(st) && st.name && st.body && decoratorNames(st).includes('@Builder')) {
@@ -36,21 +40,6 @@ export function componentUses(scan: FileScan, callable: Set<string>): ComponentU
     }
   }
   return out;
-}
-
-function rendersUi(name: string, m: ts.MethodDeclaration): boolean {
-  return name === 'build' || decoratorNames(m).some((d) => STRUCT_BUILDERS.includes(d));
-}
-
-/** The struct's methods and its fields holding a function. */
-function methodNames(s: ts.StructDeclaration): Set<string> {
-  return new Set(
-    s.members.flatMap((m) => {
-      const name = memberName(m.name);
-      const init = ts.isPropertyDeclaration(m) && m.initializer ? unwrap(m.initializer) : undefined;
-      return name !== undefined && (ts.isMethodDeclaration(m) || (init && isFunction(init))) ? [name] : [];
-    }),
-  );
 }
 
 function use(

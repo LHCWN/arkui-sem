@@ -280,6 +280,17 @@ test('a project without a build profile is the closest oh-package.json5 director
   assert.deepEqual(usedFrom(new ProjectIndex(), declared, 'Child').parents, ['P:Child']);
 });
 
+test('a use in a field initializer records the field', () => {
+  const [use] = extract(`
+import { Dlg } from './Dlg'
+@Component
+struct P {
+  ctrl: CustomDialogController = new CustomDialogController({ builder: Dlg({ n: 1 }) })
+  build() {}
+}`).componentUses;
+  assert.deepEqual([use.parent, use.child, use.method, use.args[0].form], ['P', 'Dlg', 'ctrl', 'literal']);
+});
+
 test('directory link cycles end the listing', () => {
   const root = tempDir();
   const inA = put(join(root, 'a', 'A.ets'), '');

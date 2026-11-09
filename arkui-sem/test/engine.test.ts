@@ -4,8 +4,6 @@ import assert from 'node:assert/strict';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { checkFiles, formatForAgent } from '../src/engine.js';
-import { EtsExtractor } from '../src/ets/extract.js';
-import { ProjectIndex } from '../src/project.js';
 import { put, tempDir } from './helpers.js';
 
 const bug = {
@@ -190,11 +188,4 @@ test('a missing file is reported once as an error', async () => {
   assert.deepEqual(findings, []);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /Missing\.ets: ENOENT/);
-});
-
-test('a project and an extractor are not passed together', async () => {
-  await assert.rejects(
-    checkFiles([file], { backend: bug, project: new ProjectIndex(), extractor: new EtsExtractor() }),
-    /pass the extractor to the project/,
-  );
 });

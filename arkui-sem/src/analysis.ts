@@ -146,13 +146,13 @@ export interface ComponentArgument {
   text: string;
 }
 
-/** `Child({ … })` in a build(), @Builder or @LocalBuilder body. */
+/** `Child({ … })` in a build(), @Builder or @LocalBuilder body, or a field initializer (a dialog controller's builder). */
 export interface ComponentUse {
   /** As written in the file, an alias included. */
   child: string;
   /** Absent in a file-level @Builder. */
   parent?: string;
-  /** `build`, a builder's name, or `@Builder foo` for a file-level builder. */
+  /** `build`, a builder's or field's name, or `@Builder foo` for a file-level builder. */
   method: string;
   line: number;
   args: ComponentArgument[];
@@ -176,8 +176,6 @@ export interface ImportFact {
   /** Name in the source module; "default" for a default import. */
   imported: string;
   source: string;
-  /** The file calls `local(…)` somewhere outside the import. */
-  called: boolean;
 }
 
 export interface ReexportFact {
@@ -195,12 +193,12 @@ export interface Declaration {
 /** Finds where a name used in a file is declared, across files; the project index implements it. */
 export interface ClassResolver {
   declaration(name: string, from: FileFacts): Declaration | undefined;
-  /** Called once per check, before any lookup: drop what may have changed since the last one. */
-  refresh?(): void;
 }
 
 /** A project's files: the facts of each, by normalized path (`resolve`), and where the names they use are declared. */
 export interface Project extends ClassResolver {
+  /** Called once per check, before any lookup: drop what may have changed since the last one. */
+  refresh(): void;
   /** Throws when the file can't be read or parsed. */
   facts(file: string): FileFacts;
 }
@@ -679,8 +677,9 @@ function linkTypesInScope(facts: FileFacts, resolver?: ClassResolver): { name: s
   if (!resolver) {
     return local;
   }
+  const used = new Set(facts.componentUses.map((u) => u.child));
   const imported = facts.imports
-    .filter((i) => i.called)
+    .filter((i) => used.has(i.local))
     .flatMap((i) => {
       const decl = resolver.declaration(i.local, facts);
       const child = decl?.facts.components.find((c) => c.name === decl.name);

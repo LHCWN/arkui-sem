@@ -34,7 +34,6 @@
     the listing alone can exceed the budget.
   - A scan cut short lists fewer sites and reports `unscanned`, so it can't support an absence claim (R2 waits for complete
     edges on large projects).
-  - `CustomDialogController({ builder: Dlg({…}) })` sits in a field initializer, outside build()/@Builder: not recorded.
   - A file with parser errors counts as `unscanned`. What the parser recovered is still listed, and sites may be missing
     or wrong: an unclosed object or string can swallow later calls as arguments, and a stray `}` can lose a builder. Some
     valid ArkTS reports an error too (`.attr()` after the closure of `Child() { … }`).

@@ -20,11 +20,7 @@ export class EtsExtractor implements FactExtractor {
     const scan = new FileScan(file, text, this.parser);
     const components: ComponentFact[] = [];
     const types: Record<string, TypeFact> = {};
-    const called = new Set<string>();
     const visit = (n: ts.Node) => {
-      if ((ts.isCallExpression(n) || ts.isEtsComponentExpression(n)) && ts.isIdentifier(n.expression)) {
-        called.add(n.expression.text);
-      }
       if (ts.isStructDeclaration(n)) {
         const c = component(n, scan);
         if (c) {
@@ -40,9 +36,6 @@ export class EtsExtractor implements FactExtractor {
     };
     visit(scan.sf);
     const links = moduleLinks(scan.sf);
-    for (const i of links.imports) {
-      i.called = called.has(i.local);
-    }
     const callable = new Set([...links.imports.map((i) => i.local), ...components.map((c) => c.name)]);
     return {
       file,

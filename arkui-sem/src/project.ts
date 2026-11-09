@@ -1,6 +1,6 @@
 // Project index: finds the file that declares a name used in an .ets file, across imports, module packages and re-exports.
 import { readFileSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import JSON5 from 'json5';
 import { type Declaration, declares, type FactExtractor, type FileFacts, type Project } from './analysis.js';
 import { EtsExtractor } from './ets/extract.js';
@@ -11,7 +11,8 @@ interface Module {
 }
 
 interface ModuleList {
-  modules: Module[];
+  /** Module directories, keyed by directoryKey. */
+  dirs: Map<string, string>;
   /** Keyed by module name and by oh-package.json5 name. */
   dirByName: Map<string, string>;
 }
@@ -43,16 +44,16 @@ function readProfileModules(path: string): Module[] | undefined {
 
 function mtime(path: string): number | undefined {
   try {
-    const s = statSync(path);
-    return s.isFile() ? s.mtimeMs : undefined;
+    const s = statSync(path, { throwIfNoEntry: false });
+    return s?.isFile() ? s.mtimeMs : undefined;
   } catch {
     return undefined;
   }
 }
 
-function isInside(file: string, dir: string) {
-  const r = relative(dir, file);
-  return r !== '' && !r.startsWith('..') && !isAbsolute(r);
+/** Windows paths compare without case, as in path.relative. */
+function directoryKey(dir: string) {
+  return process.platform === 'win32' ? dir.toLowerCase() : dir;
 }
 
 function memo<K, V>(cache: Map<K, V>, key: K, compute: () => V): V {
@@ -73,6 +74,10 @@ class FileCache<T> {
   ) {}
 
   get(path: string): T | undefined {
+    if (this.stat(path) === undefined) {
+      this.entries.delete(path);
+      return undefined;
+    }
     try {
       return this.require(path);
     } catch {
@@ -117,6 +122,8 @@ export class ProjectIndex implements Project {
   private readonly moduleLists = new Map<string, ModuleList | undefined>();
   private readonly moduleDirs = new Map<string, string | undefined>();
   private readonly lookups = new Map<string, Declaration | undefined>();
+  /** The answer depends on the importing directory, not the file: its module, and the base of relative specifiers. */
+  private readonly imports = new Map<string, string | undefined>();
 
   constructor(private readonly extractor: FactExtractor = new EtsExtractor()) {}
 
@@ -126,6 +133,7 @@ export class ProjectIndex implements Project {
     this.moduleLists.clear();
     this.moduleDirs.clear();
     this.lookups.clear();
+    this.imports.clear();
   }
 
   /** The facts of a file, keyed by its normalized path; throws when the file can't be read or parsed. */
@@ -143,6 +151,10 @@ export class ProjectIndex implements Project {
 
   /** The file an import specifier points to: a relative path, a package entry or a file inside a package. */
   resolveImport(spec: string, fromFile: string): string | undefined {
+    return memo(this.imports, `${dirname(fromFile)}#${spec}`, () => this.findImport(spec, fromFile));
+  }
+
+  private findImport(spec: string, fromFile: string): string | undefined {
     if (spec.startsWith('.')) {
       return this.sourceFile(resolve(dirname(fromFile), spec));
     }
@@ -216,10 +228,11 @@ export class ProjectIndex implements Project {
   private moduleDir(file: string): string | undefined {
     const start = dirname(resolve(file));
     return memo(this.moduleDirs, start, () => {
-      const innermost = this.moduleListOf(file)
-        ?.modules.filter((m) => isInside(file, m.dir))
-        .sort((a, b) => b.dir.length - a.dir.length)[0];
-      return innermost?.dir ?? this.closestDir(start, (dir) => this.stat(join(dir, OH_PACKAGE)) !== undefined);
+      const dirs = this.moduleListOf(file)?.dirs;
+      const innermost = dirs && this.closestDir(start, (dir) => dirs.has(directoryKey(dir)));
+      return innermost !== undefined
+        ? dirs?.get(directoryKey(innermost))
+        : this.closestDir(start, (dir) => this.stat(join(dir, OH_PACKAGE)) !== undefined);
     });
   }
 
@@ -242,7 +255,13 @@ export class ProjectIndex implements Project {
   }
 
   private sourceFile(base: string): string | undefined {
-    return SOURCE_SUFFIXES.map((s) => resolve(base + s)).find((p) => this.stat(p) !== undefined);
+    for (const suffix of SOURCE_SUFFIXES) {
+      const path = resolve(base + suffix);
+      if (this.stat(path) !== undefined) {
+        return path;
+      }
+    }
+    return undefined;
   }
 
   private moduleList(root: string): ModuleList | undefined {
@@ -252,14 +271,16 @@ export class ProjectIndex implements Project {
         return undefined;
       }
       const dirByName = new Map<string, string>();
+      const dirs = new Map<string, string>();
       for (const m of profile) {
+        dirs.set(directoryKey(m.dir), m.dir);
         dirByName.set(m.name, m.dir);
         const packageName = this.packages.get(join(m.dir, OH_PACKAGE))?.name;
         if (packageName) {
           dirByName.set(packageName, m.dir);
         }
       }
-      return { modules: profile, dirByName };
+      return { dirs, dirByName };
     });
   }
 }

@@ -1,10 +1,10 @@
 // The project index on test/fixtures/project: package lookup, re-exports, file cache.
 
 import assert from 'node:assert/strict';
-import { cpSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { cpSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
-import { classesWith, type FileFacts } from '../src/analysis.js';
+import { classesWith, etsFiles, type FileFacts } from '../src/analysis.js';
 import { checkFiles } from '../src/engine.js';
 import type { SystemOneBackend } from '../src/judge.js';
 import { ProjectIndex } from '../src/project.js';
@@ -175,4 +175,71 @@ test('a check sharing the index with an overlapping check sees the files as they
 
   const nested = (await first).findings.filter((f) => f.kind === 'nested-write-unobserved').map((f) => f.component);
   assert.deepEqual(nested, ['NotePage']);
+});
+
+test('etsFiles finds sources, skips output and dot directories, and follows directory links', () => {
+  const root = tempDir();
+  const page = put(join(root, 'a', 'b', 'Page.ets'), '');
+  const note = put(join(root, 'a', 'note.txt'), '');
+  for (const skipped of ['build', 'dist', 'oh_modules', 'node_modules', '.hvigor']) {
+    put(join(root, skipped, 'Out.ets'), '');
+  }
+  const outside = tempDir();
+  put(join(outside, 'Linked.ets'), '');
+  symlinkSync(outside, join(root, 'linked'), 'junction');
+  symlinkSync(join(root, 'gone'), join(root, 'broken'), 'junction');
+
+  const found = etsFiles(root).map((f) => relative(root, f).replace(/\\/g, '/'));
+  assert.deepEqual(found.sort(), ['a/b/Page.ets', 'linked/Linked.ets']);
+  assert.deepEqual(etsFiles(page), [page]);
+  assert.deepEqual(etsFiles(note), []);
+  assert.deepEqual(etsFiles(join(root, 'missing')), []);
+});
+
+test('a file added after a lookup is found only after refresh', () => {
+  const root = project();
+  const from = join(root, PAGES, 'ItemList.ets');
+  const index = new ProjectIndex();
+  assert.equal(index.resolveImport('./Added', from), undefined);
+  const added = put(join(root, PAGES, 'Added.ets'), 'export class Added {}');
+  assert.equal(index.resolveImport('./Added', from), undefined);
+  index.refresh();
+  assert.equal(index.resolveImport('./Added', from), resolve(added));
+});
+
+test('a file takes the package dependencies of its innermost module', () => {
+  const root = tempDir();
+  put(join(root, 'build-profile.json5'), {
+    modules: [
+      { name: 'outer', srcPath: './outer' },
+      { name: 'inner', srcPath: './outer/inner' },
+    ],
+  });
+  put(join(root, 'outer', 'oh-package.json5'), { name: 'outer', dependencies: { dep: 'file:../a' } });
+  put(join(root, 'outer', 'inner', 'oh-package.json5'), { name: 'inner', dependencies: { dep: 'file:../../b' } });
+  for (const pkg of ['a', 'b']) {
+    put(join(root, pkg, 'oh-package.json5'), { name: pkg });
+    put(join(root, pkg, 'Index.ets'), '');
+  }
+  const index = new ProjectIndex();
+  assert.equal(index.resolveImport('dep', join(root, 'outer', 'src', 'P.ets')), resolve(root, 'a', 'Index.ets'));
+  assert.equal(
+    index.resolveImport('dep', join(root, 'outer', 'inner', 'src', 'P.ets')),
+    resolve(root, 'b', 'Index.ets'),
+  );
+});
+
+test('without a build profile, a file takes the closest oh-package.json5, and a missing target stays undefined', () => {
+  const root = tempDir();
+  put(join(root, 'app', 'oh-package.json5'), {
+    name: 'app',
+    dependencies: { dep: 'file:../dep', gone: 'file:../gone' },
+  });
+  put(join(root, 'dep', 'oh-package.json5'), { name: 'dep' });
+  put(join(root, 'dep', 'Index.ets'), '');
+  const from = join(root, 'app', 'src', 'main', 'P.ets');
+  const index = new ProjectIndex();
+  assert.equal(index.resolveImport('dep', from), resolve(root, 'dep', 'Index.ets'));
+  assert.equal(index.resolveImport('gone', from), undefined);
+  assert.equal(index.resolveImport('./Missing', from), undefined);
 });

@@ -235,9 +235,24 @@ export function etsFiles(path: string): string[] {
   if (statSync(path).isFile()) {
     return path.endsWith('.ets') ? [path] : [];
   }
-  return readdirSync(path).flatMap((name) =>
-    SKIP_DIRS.has(name) || name.startsWith('.') ? [] : etsFiles(join(path, name)),
-  );
+  return etsFilesIn(path);
+}
+
+/** Directory entries carry their type, so only links and entries of unknown type cost a stat. */
+function etsFilesIn(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) {
+      return [];
+    }
+    const path = join(dir, e.name);
+    if (e.isDirectory()) {
+      return etsFilesIn(path);
+    }
+    if (e.isFile()) {
+      return e.name.endsWith('.ets') ? [path] : [];
+    }
+    return etsFiles(path);
+  });
 }
 
 export function editedFiles(args: unknown, directory: string): string[] {

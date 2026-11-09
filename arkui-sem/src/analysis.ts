@@ -1,5 +1,5 @@
 // .ets source → program facts → rule candidates. Deterministic; no model calls.
-import { type Dirent, existsSync, readdirSync, statSync } from 'node:fs';
+import { type Dirent, existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 // --- Facts ---
@@ -129,7 +129,47 @@ export interface FileFacts {
   exportAll: string[];
   /** Name of the class or struct behind `export default`. */
   defaultExport?: string;
+  componentUses: ComponentUse[];
+  /** The parser reported syntax errors and the facts hold what it could read; some valid ArkTS reports one too
+   *  (`.attr()` after the closure of `Child() { … }`). */
+  parseErrors: boolean;
   lines: string[];
+}
+
+/** How an argument's value is written, after casts, parentheses and `!`. `this.x.y`: a deeper property or index path. */
+export type ArgumentForm = 'this.x' | '$x' | 'this.x.y' | 'literal' | 'callback' | 'other';
+
+export interface ComponentArgument {
+  field: string;
+  line: number;
+  form: ArgumentForm;
+  /** The expression as written, on one line. */
+  text: string;
+}
+
+/** `Child({ … })` in a build(), @Builder or @LocalBuilder body. */
+export interface ComponentUse {
+  /** As written in the file, an alias included. */
+  child: string;
+  /** Absent in a file-level @Builder. */
+  parent?: string;
+  /** `build`, a builder's name, or `@Builder foo` for a file-level builder. */
+  method: string;
+  line: number;
+  args: ComponentArgument[];
+  /** `Child(opts)` or a spread: fields may be passed that args doesn't list. */
+  opaqueArgs?: boolean;
+}
+
+/** A component use, resolved to the struct it instantiates. */
+export interface CallSite extends ComponentUse {
+  file: string;
+}
+
+export interface CallSites {
+  sites: CallSite[];
+  /** Files not read: left when the budget ran out, unreadable, or with syntax errors (their sites are kept). */
+  unscanned: number;
 }
 
 export interface ImportFact {
@@ -229,13 +269,23 @@ export function absolute(p: string, base: string) {
 }
 
 export function etsFiles(path: string): string[] {
+  return etsFilesAt(path, new Set());
+}
+
+/** followed: real paths of the listing's root and of directories behind links, each listed once so link cycles end. */
+function etsFilesAt(path: string, followed: Set<string>): string[] {
   if (!existsSync(path)) {
     return [];
   }
   if (statSync(path).isFile()) {
     return path.endsWith('.ets') ? [path] : [];
   }
-  return etsFilesIn(path);
+  const real = realpathSync(path);
+  if (followed.has(real)) {
+    return [];
+  }
+  followed.add(real);
+  return etsFilesIn(path, followed);
 }
 
 /** Empty when the directory has gone since its parent was listed. */
@@ -252,19 +302,19 @@ function entriesOf(dir: string): Dirent[] {
 }
 
 /** Directory entries carry their type, so only links and entries of unknown type cost a stat. */
-export function etsFilesIn(dir: string): string[] {
+export function etsFilesIn(dir: string, followed = new Set<string>()): string[] {
   return entriesOf(dir).flatMap((e) => {
     if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) {
       return [];
     }
     const path = join(dir, e.name);
     if (e.isDirectory()) {
-      return etsFilesIn(path);
+      return etsFilesIn(path, followed);
     }
     if (e.isFile()) {
       return e.name.endsWith('.ets') ? [path] : [];
     }
-    return etsFiles(path);
+    return etsFilesAt(path, followed);
   });
 }
 

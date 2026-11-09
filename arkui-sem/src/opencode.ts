@@ -8,6 +8,13 @@ import { ProjectIndex } from './project.js';
 
 const EDIT_TOOLS = new Set(['edit', 'write', 'multiedit', 'patch', 'apply_patch']);
 const MAX_GATE_FOLLOWUPS = 3;
+/** The scan blocks opencode while it runs. */
+const CALL_SITE_BUDGET_MS = 15_000;
+const MAX_ARGUMENT_TEXT = 200;
+
+function shortened(text: string): string {
+  return text.length > MAX_ARGUMENT_TEXT ? `${text.slice(0, MAX_ARGUMENT_TEXT - 3)}...` : text;
+}
 
 interface SessionState {
   touched: Set<string>;
@@ -146,16 +153,23 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
 
       arkui_facts: tool({
         description:
-          "Show ArkUI state-ownership facts for one .ets file: each component's fields with decorators, where each is read in build() and where it is written (event handler, async callback, lifecycle), and listeners/timers with their release status. Use before changing state decorators or how data flows between components.",
+          "Show ArkUI state-ownership facts for one .ets file: each component's fields with decorators, where each is read in build() and where it is written (event handler, async callback, lifecycle), listeners/timers with their release status, and where the component is used (parent, arguments and how each is written). unscanned above 0 means call sites may be missing. Use before changing state decorators or how data flows between components.",
         args: { file: tool.schema.string().describe('Path to a .ets file') },
         async execute(args, ctx) {
           const file = absolute(args.file, ctx.directory);
           project.refresh();
           const facts = project.facts(file);
+          const uses = new Map(
+            facts.components.map((c) => [
+              c.name,
+              project.callSites({ facts, name: c.name }, { budgetMs: CALL_SITE_BUDGET_MS }),
+            ]),
+          );
           return JSON.stringify(
             {
               file: relative(ctx.directory, file),
               observedClasses: classesWith(facts, '@Observed'),
+              unscanned: [...uses.values()][0]?.unscanned ?? 0,
               components: facts.components.map((c) => ({
                 name: c.name,
                 line: c.line,
@@ -169,6 +183,11 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
                   writes: f.writes.map(({ path, ...w }) => ({ ...w, nestedPath: pathText(path) || undefined })),
                 })),
                 resources: c.resources,
+                callSites: uses.get(c.name)?.sites.map((s) => ({
+                  ...s,
+                  file: relative(ctx.directory, s.file),
+                  args: s.args.map((a) => ({ ...a, text: shortened(a.text) })),
+                })),
               })),
             },
             null,

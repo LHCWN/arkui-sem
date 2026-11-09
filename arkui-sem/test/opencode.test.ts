@@ -106,6 +106,28 @@ test('arkui_facts tool returns ownership facts', async () => {
   assert.equal(facts.components.find((c: any) => c.name === 'GoodCounterV2').stateManagement, 'V2');
 });
 
+test('arkui_facts shows where a component is used, with long argument text cut', async () => {
+  const dir = tempDir();
+  put(join(dir, 'oh-package.json5'), {});
+  const child = put(
+    join(dir, 'Child.ets'),
+    '@Component\nexport struct Child {\n  @Prop n: number = 0\n  build() {}\n}',
+  );
+  const long = `'${'x'.repeat(300)}'`;
+  put(
+    join(dir, 'Parent.ets'),
+    `import { Child } from './Child'\n@Component\nstruct Parent {\n  @State n: number = 0\n  build() {\n    Child({ n: this.n, s: ${long} })\n  }\n}`,
+  );
+  const facts = JSON.parse(await hooks.tool.arkui_facts.execute({ file: child }, ctx));
+  assert.equal(facts.unscanned, 0);
+  const [site] = facts.components[0].callSites;
+  assert.match(site.file, /Parent\.ets$/);
+  assert.deepEqual([site.parent, site.child, site.method, site.line], ['Parent', 'Child', 'build', 6]);
+  assert.deepEqual(site.args[0], { field: 'n', line: 6, form: 'this.x', text: 'this.n' });
+  assert.equal(site.args[1].text.length, 200);
+  assert.ok(site.args[1].text.endsWith('...'));
+});
+
 test('arkui_facts lists only classes declared in the file, by their source names', async () => {
   const dir = tempDir();
   put(join(dir, 'model.ets'), '@Observed\nexport class Info {\n  n: number = 0\n}');

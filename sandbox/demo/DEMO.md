@@ -6,7 +6,7 @@ Its fix (adding `@Observed` to the classes) was still wrong, and the linter of t
 
 ## The project
 
-`sandbox/demo/` is a minimal opencode project. Its pages in `entry/src/main/ets/pages/` are the committed baselines, each with an R1 bug (a state change the UI never sees):
+`sandbox/demo/` is a minimal opencode project. Its pages in `entry/src/main/ets/pages/` are the committed baselines. `Shelf.ets` is clean and uses the child in `entry/src/main/ets/components/ShelfRow.ets`, so `arkui_facts` on `ShelfRow.ets` shows a call site. The others each have an R1 bug (a state change the UI never sees):
 
 - `Profile.ets`: the main demo. The `Move` button writes `this.user.address.city`, two levels below the `@State` field, so ArkUI never re-renders. A new button written the same way has the same bug.
 - `Counter.ets`: a simpler backup demo. `count` has no state decorator, so the counter never updates on screen.

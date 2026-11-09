@@ -2,7 +2,12 @@
 import { ts } from './parse.js';
 
 export function decoratorNames(n: ts.Node): string[] {
-  const decorators = ts.canHaveDecorators(n) ? ts.getDecorators(n) : undefined;
+  // The parser files a decorator on a function (`@Builder function f`, ArkTS only) as illegal, as plain TypeScript would.
+  const decorators = ts.canHaveDecorators(n)
+    ? ts.getDecorators(n)
+    : ts.isFunctionDeclaration(n)
+      ? ts.getIllegalDecorators(n)
+      : undefined;
   return (decorators ?? []).flatMap((d) => {
     const e = ts.isCallExpression(d.expression) ? d.expression.expression : d.expression;
     return ts.isIdentifier(e) ? [`@${e.text}`] : [];
@@ -119,6 +124,11 @@ export function identifiersIn(e: ts.Node): string[] {
   };
   visit(e);
   return [...out];
+}
+
+/** parseDiagnostics is internal to the parser, absent from its public types. */
+export function hasParseErrors(sf: ts.SourceFile): boolean {
+  return (sf as unknown as { parseDiagnostics: readonly unknown[] }).parseDiagnostics.length > 0;
 }
 
 export function oneLine(s: string): string {

@@ -1,32 +1,18 @@
 // The project index on test/fixtures/project: package lookup, re-exports, file cache.
 
 import assert from 'node:assert/strict';
-import { cpSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 import { classesWith, etsFiles, etsFilesIn, type FileFacts } from '../src/analysis.js';
 import { checkFiles } from '../src/engine.js';
 import type { SystemOneBackend } from '../src/judge.js';
 import { ProjectIndex } from '../src/project.js';
-import { put, ROOT, tempDir } from './helpers.js';
+import { FIXTURE, project, put, tempDir, touch } from './helpers.js';
 
-const FIXTURE = join(ROOT, 'test', 'fixtures', 'project');
 const PAGES = join('entry', 'src', 'main', 'ets', 'pages');
 
 const observed = (facts: FileFacts | undefined) => facts && classesWith(facts, '@Observed');
-
-/** A copy of the fixture in a temp dir, so tests can edit it. */
-function project(): string {
-  const dir = tempDir();
-  cpSync(FIXTURE, dir, { recursive: true });
-  return dir;
-}
-
-/** Sets a file's mtime `seconds` from now. */
-function touch(path: string, seconds: number) {
-  const t = Date.now() / 1000 + seconds;
-  utimesSync(path, t, t);
-}
 
 /** Where `name`, as used in the page, is declared: "<file relative to root>#<name>". */
 function declared(index: ProjectIndex, root: string, page: string, name: string) {

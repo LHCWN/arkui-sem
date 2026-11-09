@@ -43,13 +43,13 @@ export class EtsExtractor implements FactExtractor {
     for (const i of links.imports) {
       i.called = called.has(i.local);
     }
-    const usable = new Set([...links.imports.map((i) => i.local), ...components.map((c) => c.name)]);
+    const callable = new Set([...links.imports.map((i) => i.local), ...components.map((c) => c.name)]);
     return {
       file,
       components,
       types,
       ...links,
-      componentUses: componentUses(scan, usable),
+      componentUses: componentUses(scan, callable),
       parseErrors: hasParseErrors(scan.sf),
       lines: text.split(/\r?\n/),
     };

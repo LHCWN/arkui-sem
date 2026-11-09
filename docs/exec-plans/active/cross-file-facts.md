@@ -88,6 +88,8 @@ Three PRs, in order. Each adds one visible change, is testable on its own and up
 3. Follow aliases until none are new: a candidate's `export { Child as Kid }` adds `Kid`; for a default export, also search import paths for the declaring file's name, and for the package name when a package entry re-exports it.
 4. Resolve each call with `declaration()`, so a name that only matches as text is dropped.
 
+`ProjectIndex` keeps one scan per project and refresh, so this path must key its results by struct and pass the declaration to the function that lists files.
+
 Parents further up are found by repeating this on demand. The search is asynchronous; only the small parse step blocks.
 
 - First measure the search on a large project, warm and with a cold OS file cache: ripgrep (needs a fallback when the binary is missing) against reading from Node (keeping each file's capitalized identifiers in memory, refreshed by mtime).

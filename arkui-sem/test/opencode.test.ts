@@ -128,6 +128,13 @@ test('arkui_facts shows where a component is used, with long argument text cut',
   assert.ok(site.args[1].text.endsWith('...'));
 });
 
+test('arkui_facts shows callSites null for a file in no project', async () => {
+  const dir = tempDir();
+  const child = put(join(dir, 'Child.ets'), '@Component\nexport struct Child {\n  build() {}\n}');
+  const facts = JSON.parse(await hooks.tool.arkui_facts.execute({ file: child }, ctx));
+  assert.equal(facts.components[0].callSites, null);
+});
+
 test('arkui_facts lists only classes declared in the file, by their source names', async () => {
   const dir = tempDir();
   put(join(dir, 'model.ets'), '@Observed\nexport class Info {\n  n: number = 0\n}');

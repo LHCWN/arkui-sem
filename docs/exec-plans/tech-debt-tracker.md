@@ -35,8 +35,14 @@
   - A scan cut short lists fewer sites and reports `unscanned`, so it can't support an absence claim (R2 waits for complete
     edges on large projects).
   - `CustomDialogController({ builder: Dlg({…}) })` sits in a field initializer, outside build()/@Builder: not recorded.
-  - A file with parser errors keeps its sites and counts as `unscanned`; some valid ArkTS reports an error too
-    (`.attr()` after the closure of `Child() { … }`).
+  - A file with parser errors counts as `unscanned`. What the parser recovered is still listed, and sites may be missing
+    or wrong: an unclosed object or string can swallow later calls as arguments, and a stray `}` can lose a builder. Some
+    valid ArkTS reports an error too (`.attr()` after the closure of `Child() { … }`).
+  - A directory link to a folder the listing also walks directly lists its files twice, so their sites appear twice. Only
+    cycles are cut.
+  - The budget is checked between files, so resolving one file's uses can overrun it by the files those imports parse.
+  - No signal catches a half-typed line that still parses: `this.` above `Child()` reads as `this.Child()`, so the site is
+    lost with no parser error.
 - On legacy ace-server (DevEco 6.x) `references` and `callers` see usages in open files only (queried and edited ones), so
   usages in other files are missed; the standard server (DevEco 26+) searches the whole project.
 - No licence yet: the owner picks one before the repo goes public.

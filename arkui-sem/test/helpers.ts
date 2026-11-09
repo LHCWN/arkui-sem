@@ -1,6 +1,6 @@
 // Shared test helpers: paths, rule candidates, temp dirs and a JSON mock server (cleaned up after the file's tests).
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -11,6 +11,7 @@ import { candidates } from '../src/analysis.js';
 import { EtsExtractor } from '../src/ets/extract.js';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+export const FIXTURE = join(ROOT, 'test', 'fixtures', 'project');
 
 // Tests parse with the bundled ets options, whatever SDK this machine has, so they match CI.
 process.env.ARKUI_SEM_SDK = join(tmpdir(), 'arkui-sem-tests-no-sdk');
@@ -29,6 +30,19 @@ export function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'arkui-sem-test-'));
   after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
+}
+
+/** A copy of the fixture in a temp dir, so tests can edit it. */
+export function project(): string {
+  const dir = tempDir();
+  cpSync(FIXTURE, dir, { recursive: true });
+  return dir;
+}
+
+/** Sets a file's mtime `seconds` from now. */
+export function touch(path: string, seconds: number) {
+  const t = Date.now() / 1000 + seconds;
+  utimesSync(path, t, t);
 }
 
 /** Writes `text` (or JSON) to `path`, creating parent dirs; returns the path. */

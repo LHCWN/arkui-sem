@@ -1,4 +1,5 @@
-// Project index: finds the file that declares a name used in an .ets file, across imports, module packages and re-exports.
+// Project index: finds the file that declares a name used in an .ets file, across imports, module packages and re-exports,
+// and where each struct is used.
 import { readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import JSON5 from 'json5';
@@ -190,19 +191,23 @@ export class ProjectIndex implements Project {
   /**
    * Where a struct is used across its project. budgetMs stops the scan between files and counts the rest as unscanned,
    * so sites may be missing; it applies to the first call after refresh, whose scan later calls share. Without a budget
-   * the scan reads the whole project. Synchronous by design: a check must not see a refresh of this index mid-scan.
+   * the scan reads the whole project. Undefined when the file belongs to no project, so nothing was searched.
+   * Synchronous by design: a check must not see a refresh of this index mid-scan.
    */
-  callSites(decl: Declaration, options: { budgetMs?: number } = {}): CallSites {
-    const scan = this.scanOf(decl.facts.file, options.budgetMs ?? Number.POSITIVE_INFINITY);
+  callSites(decl: Declaration, options: { budgetMs?: number } = {}): CallSites | undefined {
+    const dirs = this.projectDirs(decl.facts.file);
+    if (dirs.length === 0) {
+      return undefined;
+    }
+    const scan = this.scanOf(dirs, options.budgetMs ?? Number.POSITIVE_INFINITY);
     return { sites: scan.edges.get(edgeKey(decl.facts.file, decl.name)) ?? [], unscanned: scan.unscanned };
   }
 
-  private scanOf(file: string, budgetMs: number): EdgeScan {
+  private scanOf(dirs: string[], budgetMs: number): EdgeScan {
     const deadline = performance.now() + budgetMs;
-    const dirs = this.projectDirs(file);
-    const key = directoryKey(dirs[0] ?? file);
+    const key = directoryKey(dirs[0]);
     return memo(this.scans, key, () => {
-      const files = this.projectFiles(dirs, file);
+      const files = this.projectFiles(dirs);
       const previous = this.completeScans.get(key);
       if (previous && this.isCurrent(previous, files)) {
         return previous;
@@ -215,9 +220,8 @@ export class ProjectIndex implements Project {
     });
   }
 
-  /** The files call sites are looked for in. */
-  private projectFiles(dirs: string[], file: string): string[] {
-    return dirs.length === 0 ? [resolve(file)] : [...new Set(dirs.flatMap((dir) => etsFiles(dir)))];
+  private projectFiles(dirs: string[]): string[] {
+    return [...new Set(dirs.flatMap((dir) => etsFiles(dir)))];
   }
 
   /** The build-profile root and the module directories outside it; without a profile, the closest package directory. */
@@ -227,7 +231,7 @@ export class ProjectIndex implements Project {
       const modules = [...(this.moduleList(root)?.dirs.values() ?? [])];
       return [root, ...modules.filter((dir) => isOutside(dir, root))];
     }
-    const packageDir = this.closestDir(dirname(resolve(file)), (dir) => this.stat(join(dir, OH_PACKAGE)) !== undefined);
+    const packageDir = this.moduleDir(file);
     return packageDir === undefined ? [] : [packageDir];
   }
 
@@ -240,12 +244,11 @@ export class ProjectIndex implements Project {
     let unscanned = 0;
     let done = 0;
     for (; done < files.length && performance.now() < deadline; done++) {
-      const file = resolve(files[done]);
-      const mayUse = this.mayUseComponents.get(file);
-      if (mayUse === false) {
+      const file = files[done];
+      if (this.mayUseComponents.get(file) === false) {
         continue;
       }
-      const facts = mayUse ? this.parsed.get(file) : undefined;
+      const facts = this.parsed.get(file);
       if (!facts || facts.parseErrors) {
         unscanned++;
       }

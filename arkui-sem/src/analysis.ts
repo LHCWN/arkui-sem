@@ -130,8 +130,7 @@ export interface FileFacts {
   /** Name of the class or struct behind `export default`. */
   defaultExport?: string;
   componentUses: ComponentUse[];
-  /** The parser reported syntax errors and the facts hold what it could read; some valid ArkTS reports one too
-   *  (`.attr()` after the closure of `Child() { … }`). */
+  /** The parser reported syntax errors; some valid ArkTS does too (`.attr()` after the closure of `Child() { … }`). */
   parseErrors: boolean;
   lines: string[];
 }
@@ -168,7 +167,7 @@ export interface CallSite extends ComponentUse {
 
 export interface CallSites {
   sites: CallSite[];
-  /** Files not read: left when the budget ran out, unreadable, or with syntax errors (their sites are kept). */
+  /** Files whose sites may be missing or wrong: left when the budget ran out, unreadable, or with syntax errors. */
   unscanned: number;
 }
 
@@ -268,12 +267,8 @@ export function absolute(p: string, base: string) {
   return isAbsolute(p) ? p : resolve(base, p);
 }
 
-export function etsFiles(path: string): string[] {
-  return etsFilesAt(path, new Set());
-}
-
 /** followed: real paths of the listing's root and of directories behind links, each listed once so link cycles end. */
-function etsFilesAt(path: string, followed: Set<string>): string[] {
+export function etsFiles(path: string, followed = new Set<string>()): string[] {
   if (!existsSync(path)) {
     return [];
   }
@@ -314,7 +309,7 @@ export function etsFilesIn(dir: string, followed = new Set<string>()): string[] 
     if (e.isFile()) {
       return e.name.endsWith('.ets') ? [path] : [];
     }
-    return etsFilesAt(path, followed);
+    return etsFiles(path, followed);
   });
 }
 

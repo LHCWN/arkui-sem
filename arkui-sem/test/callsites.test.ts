@@ -1,30 +1,29 @@
 // Call-site edges: component uses in one file, then resolved across the project on test/fixtures/project.
 
 import assert from 'node:assert/strict';
-import { cpSync, symlinkSync, utimesSync } from 'node:fs';
+import { rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { etsFiles, type FactExtractor, type FileFacts } from '../src/analysis.js';
 import { EtsExtractor } from '../src/ets/extract.js';
 import { ProjectIndex } from '../src/project.js';
-import { extract, put, ROOT, tempDir } from './helpers.js';
+import { extract, FIXTURE, project, put, tempDir, touch } from './helpers.js';
 
-const FIXTURE = join(ROOT, 'test', 'fixtures', 'project');
 const COMPONENTS = join('entry', 'src', 'main', 'ets', 'components');
 const PAGES = join('entry', 'src', 'main', 'ets', 'pages');
 const FIXTURE_FILES = etsFiles(FIXTURE).length;
 
-function project(): string {
-  const dir = tempDir();
-  cpSync(FIXTURE, dir, { recursive: true });
-  return dir;
-}
-
 const child = '@Component\nexport struct Child {\n  @Prop n: number = 0\n  build() {}\n}\n';
 
-/** The file's only struct `name`, as a declaration, with its call sites as "<parent>:<child as written>". */
+function edges(index: ProjectIndex, ...args: Parameters<ProjectIndex['callSites']>) {
+  const found = index.callSites(...args);
+  assert.ok(found);
+  return found;
+}
+
+/** The call sites of struct `name` declared in `file`, as "<parent>:<child as written>". */
 function usedFrom(index: ProjectIndex, file: string, name: string) {
-  const { sites, unscanned } = index.callSites({ facts: index.facts(file), name });
+  const { sites, unscanned } = edges(index, { facts: index.facts(file), name });
   return { parents: sites.map((s) => `${s.parent}:${s.child}`).sort(), unscanned };
 }
 
@@ -153,7 +152,7 @@ test('a struct used from two parents, in ForEach bodies', () => {
     parents: ['ItemGrid:ItemRow', 'ItemList:ItemRow'],
     unscanned: 0,
   });
-  const { sites } = index.callSites({ facts: index.facts(row), name: 'ItemRow' });
+  const { sites } = edges(index, { facts: index.facts(row), name: 'ItemRow' });
   assert.deepEqual(sites[0].args[0], { field: 'item', line: sites[0].line, form: 'other', text: 'item' });
   assert.ok(sites.every((s) => s.method === 'build' && s.file.endsWith('.ets')));
 });
@@ -187,10 +186,10 @@ test('the budget stops the scan and reports the rest as unscanned, with one cloc
   const index = new ProjectIndex();
   const facts = index.facts(join(FIXTURE, COMPONENTS, 'ItemRow.ets'));
   const decl = { facts, name: 'ItemRow' };
-  assert.deepEqual(index.callSites(decl, { budgetMs: 0 }), { sites: [], unscanned: FIXTURE_FILES });
-  assert.deepEqual(index.callSites(decl), { sites: [], unscanned: FIXTURE_FILES });
+  assert.deepEqual(edges(index, decl, { budgetMs: 0 }), { sites: [], unscanned: FIXTURE_FILES });
+  assert.deepEqual(edges(index, decl), { sites: [], unscanned: FIXTURE_FILES });
   index.refresh();
-  const full = index.callSites(decl);
+  const full = edges(index, decl);
   assert.equal(full.unscanned, 0);
   assert.equal(full.sites.length, 2);
 });
@@ -207,9 +206,9 @@ test('a file with syntax errors keeps its sites and counts as unscanned; edges a
     parents: ['Broken:ItemRow', 'ItemGrid:ItemRow', 'ItemList:ItemRow'],
     unscanned: 1,
   });
-  const first = index.callSites({ facts: index.facts(row), name: 'ItemRow' }).sites;
+  const first = edges(index, { facts: index.facts(row), name: 'ItemRow' }).sites;
   index.refresh();
-  assert.equal(index.callSites({ facts: index.facts(row), name: 'ItemRow' }).sites, first);
+  assert.equal(edges(index, { facts: index.facts(row), name: 'ItemRow' }).sites, first);
 });
 
 test('edges are reused until a file changes', () => {
@@ -217,20 +216,26 @@ test('edges are reused until a file changes', () => {
   const row = join(root, COMPONENTS, 'ItemRow.ets');
   const list = join(root, PAGES, 'ItemList.ets');
   const index = new ProjectIndex();
-  const sites = () => index.callSites({ facts: index.facts(row), name: 'ItemRow' }).sites;
+  const sites = () => edges(index, { facts: index.facts(row), name: 'ItemRow' }).sites;
   const first = sites();
   index.refresh();
   assert.equal(sites(), first);
 
   put(list, page('ItemList', "import { ItemRow } from '../components/ItemRow'", 'ItemRow()\n    ItemRow()'));
-  const later = Date.now() / 1000 + 5;
-  utimesSync(list, later, later);
+  touch(list, 5);
   index.refresh();
   assert.equal(sites().length, 3);
 
-  put(join(root, PAGES, 'New.ets'), page('New', "import { ItemRow } from '../components/ItemRow'", 'ItemRow()'));
+  const added = put(
+    join(root, PAGES, 'New.ets'),
+    page('New', "import { ItemRow } from '../components/ItemRow'", 'ItemRow()'),
+  );
   index.refresh();
   assert.equal(sites().length, 4);
+
+  rmSync(added);
+  index.refresh();
+  assert.equal(sites().length, 3);
 });
 
 test('a dependency change rebuilds the edges', () => {
@@ -241,10 +246,9 @@ test('a dependency change rebuilds the edges', () => {
   const index = new ProjectIndex();
   assert.deepEqual(usedFrom(index, tag, 'Tag').parents, ['A:Tag']);
   put(join(root, 'entry', 'oh-package.json5'), { name: 'entry', dependencies: {} });
-  const later = Date.now() / 1000 + 5;
-  utimesSync(join(root, 'entry', 'oh-package.json5'), later, later);
+  touch(join(root, 'entry', 'oh-package.json5'), 5);
   put(join(root, 'build-profile.json5'), { modules: [{ name: 'entry', srcPath: './entry' }] });
-  utimesSync(join(root, 'build-profile.json5'), later, later);
+  touch(join(root, 'build-profile.json5'), 5);
   index.refresh();
   assert.deepEqual(usedFrom(index, tag, 'Tag').parents, []);
 });

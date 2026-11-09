@@ -1,6 +1,15 @@
 import { relative } from 'node:path';
 import { type Plugin, tool } from '@opencode-ai/plugin';
-import { absolute, classesWith, editedFiles, etsFiles, pathText, readLines } from './analysis.js';
+import {
+  absolute,
+  type CallSites,
+  classesWith,
+  type Declaration,
+  editedFiles,
+  etsFiles,
+  pathText,
+  readLines,
+} from './analysis.js';
 import { cachePath, loadSettings } from './config.js';
 import { checkFiles, type Finding, formatForAgent } from './engine.js';
 import { createBackend, type SystemOneBackend } from './judge.js';
@@ -11,6 +20,15 @@ const MAX_GATE_FOLLOWUPS = 3;
 /** The scan blocks opencode while it runs. */
 const CALL_SITE_BUDGET_MS = 15_000;
 const MAX_ARGUMENT_TEXT = 200;
+
+/** Undefined when nothing could be searched: a failed project listing must not cost the file's own facts. */
+function callSitesOf(project: ProjectIndex, decl: Declaration): CallSites | undefined {
+  try {
+    return project.callSites(decl, { budgetMs: CALL_SITE_BUDGET_MS });
+  } catch {
+    return undefined;
+  }
+}
 
 function shortened(text: string): string {
   return text.length > MAX_ARGUMENT_TEXT ? `${text.slice(0, MAX_ARGUMENT_TEXT - 3)}...` : text;
@@ -153,18 +171,13 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
 
       arkui_facts: tool({
         description:
-          "Show ArkUI state-ownership facts for one .ets file: each component's fields with decorators, where each is read in build() and where it is written (event handler, async callback, lifecycle), listeners/timers with their release status, and where the component is used (parent, arguments and how each is written). unscanned above 0 means call sites may be missing. Use before changing state decorators or how data flows between components.",
+          "Show ArkUI state-ownership facts for one .ets file: each component's fields with decorators, where each is read in build() and where it is written (event handler, async callback, lifecycle), listeners/timers with their release status, and where the component is used (parent, arguments and how each is written). unscanned above 0 means call sites may be missing or wrong; callSites null means none could be searched (for example, the file is in no project). Use before changing state decorators or how data flows between components.",
         args: { file: tool.schema.string().describe('Path to a .ets file') },
         async execute(args, ctx) {
           const file = absolute(args.file, ctx.directory);
           project.refresh();
           const facts = project.facts(file);
-          const uses = new Map(
-            facts.components.map((c) => [
-              c.name,
-              project.callSites({ facts, name: c.name }, { budgetMs: CALL_SITE_BUDGET_MS }),
-            ]),
-          );
+          const uses = new Map(facts.components.map((c) => [c.name, callSitesOf(project, { facts, name: c.name })]));
           return JSON.stringify(
             {
               file: relative(ctx.directory, file),
@@ -183,11 +196,12 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
                   writes: f.writes.map(({ path, ...w }) => ({ ...w, nestedPath: pathText(path) || undefined })),
                 })),
                 resources: c.resources,
-                callSites: uses.get(c.name)?.sites.map((s) => ({
-                  ...s,
-                  file: relative(ctx.directory, s.file),
-                  args: s.args.map((a) => ({ ...a, text: shortened(a.text) })),
-                })),
+                callSites:
+                  uses.get(c.name)?.sites.map((s) => ({
+                    ...s,
+                    file: relative(ctx.directory, s.file),
+                    args: s.args.map((a) => ({ ...a, text: shortened(a.text) })),
+                  })) ?? null,
               })),
             },
             null,

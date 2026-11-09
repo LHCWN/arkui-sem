@@ -8,13 +8,13 @@ const STRUCT_BUILDERS = ['@Builder', '@LocalBuilder'];
 
 type Site = Pick<ComponentUse, 'parent' | 'method'>;
 
-/** Instantiations of the names in `components`: other capitalized calls are system components. */
-export function componentUses(scan: FileScan, components: Set<string>): ComponentUse[] {
+/** Calls of the names in `callable`, the file's components and imports, which leaves out system components. */
+export function componentUses(scan: FileScan, callable: Set<string>): ComponentUse[] {
   const out: ComponentUse[] = [];
   const collect = (body: ts.Node, site: Site, methods: Set<string>) => {
     const visit = (n: ts.Node) => {
       if ((ts.isCallExpression(n) || ts.isEtsComponentExpression(n)) && ts.isIdentifier(n.expression)) {
-        if (components.has(n.expression.text)) {
+        if (callable.has(n.expression.text)) {
           out.push(use(n, n.expression.text, site, methods, scan));
         }
       }
@@ -101,7 +101,7 @@ function formOf(value: ts.Expression, methods: Set<string>): ArgumentForm {
   if (isLiteral(e)) {
     return 'literal';
   }
-  if (ts.isArrowFunction(e) || ts.isFunctionExpression(e)) {
+  if (isFunction(e)) {
     return 'callback';
   }
   if (ts.isIdentifier(e)) {

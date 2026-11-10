@@ -24,7 +24,7 @@ README.md, AGENTS.md, CLAUDE.md (@AGENTS.md), CONTRIBUTING.md, ARCHITECTURE.md
 docs/                                    see AGENTS.md for the map
 scripts/setup.mjs [--doctor]             build the linter, install the plugin into sandbox/demo, enable .githooks; runs bench/setup.mjs when present
 .githooks/pre-commit                     Biome check of staged arkui-sem/ files, typecheck when TypeScript is staged
-.github/workflows/test.yml               CI: npm ci + npm run lint + npm test in arkui-sem/ on Linux and Windows, every PR and push to main
+.github/workflows/test.yml               CI: npm ci + npm run lint + npm test in arkui-sem/ on Linux and Windows (ripgrep installed for the call-site search), every PR and push to main
 .github/pull_request_template.md         PR description: what and why, how it was checked, notes
 .claude/settings.json, opencode.json,    deny rules for the key file and `arkui-sem config`
 .codex/rules/arkui-sem.rules               (Codex: exact command prefixes; test with `codex execpolicy check`)
@@ -51,7 +51,9 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/sdk.ts           DevEco Studio and HarmonyOS SDK lookup (parser options, ace-server)
   src/project.ts       project index for the rules: imported name → declaring file (relative imports, packages from
                        oh-package.json5 local dependencies and build-profile.json5 modules, Index.ets re-exports), caches;
-                       call-site edges: a project scan resolving each file's component uses (callSites)
+                       call-site edges: a project scan resolving each file's component uses (callSites), or for one
+                       struct a text search and a parse of the matching files only (searchCallSites)
+  src/search.ts        text search over a project's .ets files: ripgrep (ARKUI_SEM_RG, PATH, or opencode's own binary), else Node
   src/judge.ts         System One interface, Jev, Clef, answer helpers, questions (Q_R1/Q_R2/Q_R3), slices (SPEC_CARDS),
                        heuristic, DeepSeek (flash, structured output), backend registry
   src/engine.ts        candidates → slices → judge → finding/question bands (thresholds 0.8 / 0.5); agent formatting
@@ -59,10 +61,11 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/cli.ts           arkui-sem check | config | lsp  (default backend: clef)
   src/lsp/             utility client for ace-server (ArkTS language server): definition, references, call hierarchy
   test/                node:test, run from src/ via tsx (npm test, offline): rules/R1.test.ts, rules/R3.test.ts, one file
-                       per module (config, engine, deepseek, openrouter, opencode, lsp, project), helpers.ts; test/fixtures/:
+                       per module (config, engine, deepseek, openrouter, opencode, lsp, project, callsites, search), helpers.ts; test/fixtures/:
                        Counter, Feed, Profile (R1), Ticker (R3), fake-ace-server.mjs (both LSP protocols), project/
                        (two-module DevEco project: entry imports common by package name)
   scripts/install.mjs
+  scripts/compare-callsites.mjs   searched call sites against the whole-project scan on a project or a generated one, with timings
   backends `or-clef` / `or-clef-flash`: Clef via OpenRouter Decisions API (POST https://openrouter.ai/api/alpha/decisions; OPENROUTER_API_KEY or openrouter.apiKey; openrouter.baseUrl)
   backend `laya`: local TypeSafe-compatible server (default http://127.0.0.1:8080; laya.baseUrl / LAYA_BASE_URL);
     state limit ~424 tokens, so slices are trimmed on 422; zero-shot it scores the fixture bugs 0.13–0.27 (unusable before fine-tuning)

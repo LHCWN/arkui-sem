@@ -42,3 +42,12 @@
   - Why: no linting step used the tool, and nothing showed agents call it or act on it. The skill's only job beyond decorator guidance was to point the agent at the tool.
   - Consequence: the plugin has one agent tool, `arkui_check`. The evaluation's skill-only arm is gone: the control is the no-plugin arm (`docs/design-docs/agentic-plugin.md`).
   - Kept: the call-site edges in the project index (`ProjectIndex.callSites`), which R2 needs. A `facts` subcommand in the CLI for looking at extracted facts is possible later.
+- **Call sites of one struct from a text search** (2026-11-10; numbers in `docs/exec-plans/active/cross-file-facts.md`, Result).
+  - An API on the index, `ProjectIndex.searchCallSites(decl)`, and no plugin tool or CLI command: the plugin has no user of the edges until R2, and a tool was just removed for having none. The whole-project scan `callSites` stays as the reference, and tests and `scripts/compare-callsites.mjs` hold the two equal.
+  - Search: ripgrep first (`ARKUI_SEM_RG`, `PATH`, then the binary opencode downloads for itself), else Node reading the files 64 at a time. ripgrep was about twice as fast warm and the fallback stays under about a second on 10,000 files, so no binary is bundled. A failed ripgrep run is repeated from Node, which also reports what it could not read.
+  - No in-memory identifier index: no faster than ripgrep once built, and it stats every file on each check.
+  - No disk cache: the search answers for one struct in about half a second without one. Whole-project runs parse everything.
+  - The search lists the same files as the scan: no ignore files, the same skipped directories, links followed.
+  - Results live for one check, keyed by struct. A new caller can only be seen by searching again, so nothing is reused across checks.
+  - An import's local name is not an alias: only ArkTS that doesn't compile can import it from another file. This is the one place where the scan lists a site the search doesn't.
+  - Asynchronous, unlike `callSites`: a refresh during the search is tolerated, not prevented.

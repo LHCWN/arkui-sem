@@ -123,7 +123,7 @@ Each phase starts only after an explicit go.
 
 #### Phase 2: cross-file facts
 - [x] Cross-file class resolution: a project index (`src/project.ts`) passed to the rules, in the plugin and the bench alike; the LSP adds `references` later (cross-file-facts PR 3)
-- [x] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback), from our own walk and the project index (no R2 candidate yet)
+- [x] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback), from our own walk and the project index (no R2 candidate yet); for one struct without parsing the project: `searchCallSites` (text search, then a parse of the matching files)
 - [ ] Parent-side facts: decorator of `x`, writes after init, readers (parent, siblings)
 - [ ] Child-side facts: writes to `f` with context, invoked callbacks/`@Event`s, `@CustomDialog`/controller
 - [ ] String-key index: storage keys, `@Provide`/`@Consume` aliases, `@Watch`/`@Monitor` targets
@@ -136,7 +136,7 @@ Each phase starts only after an explicit go.
 - [ ] R2-f multiple parents
 
 #### Phase 4: R2 with intent
-- [ ] Emit R2-a / R2-b / R2-c candidates with fact-summary slices (fit the Laya ~424-token limit)
+- [ ] Emit R2-a / R2-b / R2-c candidates with fact-summary slices (fit the Laya ~424-token limit); call sites in the plugin come from `searchCallSites` (steps: `cross-file-facts.md`, Next: R2 in the plugin)
 - [ ] Engine mapping intent × V1/V2 × current decorator → finding / question / silent (0.8 / 0.5)
 - [ ] `arkui_ownership_intent(component, field, intent)` tool; intents stored as in-code annotations (`// arkui-sem: intent …`) or in a label log (choice open)
 - [ ] Questions to the agent phrased as intent, not decorator; listed once at `session.idle`

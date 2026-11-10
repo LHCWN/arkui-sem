@@ -1,19 +1,19 @@
 // Project index: finds the file that declares a name used in an .ets file, across imports, module packages and re-exports,
 // and where each struct is used.
 import { readFileSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import JSON5 from 'json5';
 import {
   type CallSite,
   type CallSites,
   type Declaration,
   declares,
-  etsFiles,
   type FactExtractor,
   type FileFacts,
   type Project,
 } from './analysis.js';
 import { EtsExtractor } from './ets/extract.js';
+import { FileSearch, listEtsFiles, type SearchTerms, type TextSearch } from './search.js';
 
 /** A whole-project pass over call sites. */
 interface EdgeScan {
@@ -25,6 +25,14 @@ interface EdgeScan {
   /** What the edges were built from: the listing, and every path looked at (absent ones as undefined). */
   listing: string;
   mtimes: Map<string, number | undefined>;
+}
+
+/** How importers can reach one struct, grown while searching for its call sites. */
+interface Aliases {
+  /** Names it can be imported under, whatever the file. */
+  names: Set<string>;
+  /** Files whose default export is the struct, by directoryKey. */
+  defaultFiles: Map<string, string>;
 }
 
 interface Module {
@@ -54,6 +62,9 @@ const SOURCE_SUFFIXES = ['', '.ets', '.ts', '/Index.ets', '/index.ets', '/index.
 const SDK_PREFIXES = ['@ohos.', '@kit.', '@system.', '@arkts.', '@hms.'];
 /** Word-bounded: `constructor` contains `struct`. A @LocalBuilder sits inside a struct. */
 const MAY_USE_COMPONENTS = /\bstruct\b|@Builder\b/;
+const SOURCE_EXTENSION = /\.(?:ets|ts)$/;
+/** An import of a directory's index file that names no directory: `'.'`, `'../'`, `'../..'`. */
+const DOT_DIRECTORY_IMPORT = String.raw`['"/]\.\.?/?['"]`;
 
 function readJson5<T>(path: string): Partial<T> {
   return JSON5.parse(readFileSync(path, 'utf8')) ?? {};
@@ -87,6 +98,16 @@ function isOutside(dir: string, root: string) {
 
 function edgeKey(file: string, struct: string) {
   return `${directoryKey(file)}#${struct}`;
+}
+
+function sameFile(a: string, b: string) {
+  return directoryKey(a) === directoryKey(b);
+}
+
+/** The directory a local dependency (`file:../x` or `../x`) points to, as written. */
+function localDependency(dependency: string | undefined): string | undefined {
+  const path = dependency?.startsWith(FILE_DEPENDENCY) ? dependency.slice(FILE_DEPENDENCY.length) : dependency;
+  return path?.startsWith('.') ? path : undefined;
 }
 
 function memo<K, V>(cache: Map<K, V>, key: K, compute: () => V): V {
@@ -163,10 +184,17 @@ export class ProjectIndex implements Project {
   /** Reused by later checks while nothing the scan looked at has changed. */
   private readonly completeScans = new Map<string, EdgeScan>();
 
-  constructor(private readonly extractor: FactExtractor = new EtsExtractor()) {}
+  /** This check's search for each struct's call sites. */
+  private readonly searches = new Map<string, Promise<CallSites>>();
+
+  constructor(
+    private readonly extractor: FactExtractor = new EtsExtractor(),
+    private readonly search: TextSearch = new FileSearch(),
+  ) {}
 
   refresh(): void {
     this.scans.clear();
+    this.searches.clear();
     this.mtimes.clear();
     this.roots.clear();
     this.moduleLists.clear();
@@ -223,7 +251,185 @@ export class ProjectIndex implements Project {
 
   /** unreadable: collects the directories the listing could not read. */
   private projectFiles(dirs: string[], unreadable: string[]): string[] {
-    return [...new Set(dirs.flatMap((dir) => etsFiles(dir, new Set(), unreadable)))];
+    return listEtsFiles(dirs, unreadable);
+  }
+
+  /**
+   * The same sites as callSites without reading the whole project: a text search finds the files that mention the
+   * struct under any name it is exported as, only those are parsed, and each use is resolved as in callSites. Sites are
+   * ordered by file path. unscanned counts the declaring file and matching files with syntax errors, unreadable ones,
+   * those left when budgetMs ran out, and directories the search could not read. The search is shared by the calls of
+   * one check; a refresh while it runs is harmless, and files parsed after it are read as they are then.
+   */
+  searchCallSites(
+    decl: Declaration,
+    options: { budgetMs?: number; workspace?: string } = {},
+  ): Promise<CallSites | undefined> {
+    const dirs = this.projectDirs(decl.facts.file, options.workspace);
+    if (dirs.length === 0) {
+      return Promise.resolve(undefined);
+    }
+    const deadline = performance.now() + (options.budgetMs ?? Number.POSITIVE_INFINITY);
+    const key = `${directoryKey(dirs[0])}#${edgeKey(decl.facts.file, decl.name)}`;
+    return memo(this.searches, key, () => this.findSites(decl, dirs, deadline));
+  }
+
+  private async findSites(decl: Declaration, dirs: string[], deadline: number): Promise<CallSites> {
+    if (!decl.facts.components.some((c) => c.name === decl.name)) {
+      return { sites: [], unscanned: 0 };
+    }
+    const aliases: Aliases = { names: new Set([decl.name]), defaultFiles: new Map() };
+    const declaring = directoryKey(resolve(decl.facts.file));
+    const candidates = new Map([[declaring, decl.facts]]);
+    // The scan counts this file too; the seed never reaches the loop's parse check.
+    const unusable = new Set<string>(decl.facts.parseErrors ? [declaring] : []);
+    const searched = new Set<string>();
+    for (;;) {
+      const terms = this.newTerms(decl, dirs, candidates, aliases, searched);
+      if (terms.words.length + terms.patterns.length === 0) {
+        break;
+      }
+      const found = await this.search.search(dirs, terms);
+      for (const path of found.unreadable) {
+        unusable.add(directoryKey(path));
+      }
+      for (const file of found.files) {
+        const key = directoryKey(file);
+        if (candidates.has(key) || unusable.has(key)) {
+          continue;
+        }
+        const facts = performance.now() < deadline ? this.parsed.get(file) : undefined;
+        if (!facts || facts.parseErrors) {
+          unusable.add(key);
+        }
+        if (facts) {
+          candidates.set(key, facts);
+        }
+      }
+    }
+    const sites = [...candidates.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .flatMap(([, facts]) => {
+        const locals = this.localNames(facts, decl, aliases);
+        return facts.componentUses.filter((use) => locals.has(use.child)).map((use) => ({ ...use, file: facts.file }));
+      });
+    return { sites, unscanned: unusable.size };
+  }
+
+  /** Brings the aliases up to date with the candidates, and returns the search terms they add. */
+  private newTerms(
+    decl: Declaration,
+    dirs: string[],
+    candidates: Map<string, FileFacts>,
+    aliases: Aliases,
+    searched: Set<string>,
+  ): SearchTerms {
+    // A name one file adds can make another candidate export the struct too.
+    let known: number;
+    do {
+      known = aliases.names.size + aliases.defaultFiles.size;
+      for (const facts of candidates.values()) {
+        this.addExports(facts, decl, aliases);
+      }
+    } while (known !== aliases.names.size + aliases.defaultFiles.size);
+    const words = [...aliases.names];
+    const patterns: string[] = [];
+    if (aliases.defaultFiles.size > 0) {
+      const entryNames = this.entryNames(dirs);
+      for (const [key, file] of aliases.defaultFiles) {
+        const stem = basename(file).replace(SOURCE_EXTENSION, '');
+        words.push(stem, ...(entryNames.get(key) ?? []));
+        if (stem.toLowerCase() === 'index') {
+          words.push(basename(dirname(file)));
+          patterns.push(DOT_DIRECTORY_IMPORT);
+        }
+      }
+    }
+    const unsearched = (terms: string[]) => [...new Set(terms)].filter((term) => !searched.has(term));
+    const terms = { words: unsearched(words), patterns: unsearched(patterns) };
+    for (const term of [...terms.words, ...terms.patterns]) {
+      searched.add(term);
+    }
+    return terms;
+  }
+
+  /** Adds the names under which importers of the file reach the struct, and the file when its default export does. */
+  private addExports(facts: FileFacts, decl: Declaration, aliases: Aliases): void {
+    const locals = this.localNames(facts, decl, aliases);
+    // An import's local name is left out: declaration() follows it from another file, but ArkTS can't import it.
+    const exported: string[] = [];
+    for (const r of facts.reexports) {
+      const mayReach =
+        r.source === undefined
+          ? locals.has(r.imported)
+          : this.mayImport({ imported: r.imported, source: r.source }, facts, aliases);
+      if (mayReach && this.reaches(r.exported, facts, decl)) {
+        exported.push(r.exported);
+      }
+    }
+    // Without a default export of its own, declaration() looks for `default` through `export *` too.
+    const defaultReaches =
+      facts.defaultExport !== undefined
+        ? locals.has(facts.defaultExport)
+        : facts.exportAll.some((source) => this.mayImport({ imported: 'default', source }, facts, aliases)) &&
+          this.reaches('default', facts, decl);
+    if (defaultReaches) {
+      exported.push('default');
+    }
+    for (const name of exported) {
+      if (name === 'default') {
+        aliases.defaultFiles.set(directoryKey(facts.file), facts.file);
+      } else {
+        aliases.names.add(name);
+      }
+    }
+  }
+
+  /** The names that stand for the struct inside the file: its own declaration, and imports that resolve to it. */
+  private localNames(facts: FileFacts, decl: Declaration, aliases: Aliases): Set<string> {
+    const locals = new Set(sameFile(facts.file, decl.facts.file) ? [decl.name] : []);
+    for (const i of facts.imports) {
+      if (this.mayImport(i, facts, aliases) && this.reaches(i.local, facts, decl)) {
+        locals.add(i.local);
+      }
+    }
+    return locals;
+  }
+
+  /** A cheap test before resolving: the import takes a known alias, or the default of a file known to export it. */
+  private mayImport(i: { imported: string; source: string }, from: FileFacts, aliases: Aliases): boolean {
+    if (i.imported !== 'default') {
+      return aliases.names.has(i.imported);
+    }
+    const file = this.resolveImport(i.source, from.file);
+    return file !== undefined && aliases.defaultFiles.has(directoryKey(file));
+  }
+
+  private reaches(name: string, from: FileFacts, decl: Declaration): boolean {
+    const target = this.declaration(name, from);
+    return target !== undefined && target.name === decl.name && sameFile(target.facts.file, decl.facts.file);
+  }
+
+  /** What importers can write for each package entry file (by directoryKey): module names, package names, dependency keys. */
+  private entryNames(dirs: string[]): Map<string, string[]> {
+    const modules = this.moduleList(dirs[0]);
+    const named: [string, string][] = [...(modules?.dirByName ?? [])];
+    for (const dir of new Set([...dirs, ...(modules?.dirs.values() ?? [])])) {
+      for (const [name, dependency] of Object.entries(this.packages.get(join(dir, OH_PACKAGE))?.dependencies ?? {})) {
+        const path = localDependency(dependency);
+        if (path !== undefined) {
+          named.push([name, resolve(dir, path)]);
+        }
+      }
+    }
+    const names = new Map<string, string[]>();
+    for (const [name, dir] of named) {
+      const entry = this.sourceFile(join(dir, this.packages.get(join(dir, OH_PACKAGE))?.main || DEFAULT_ENTRY));
+      if (entry !== undefined) {
+        memo(names, directoryKey(entry), () => []).push(name);
+      }
+    }
+    return names;
   }
 
   /** The build-profile root and the module directories outside it; without a profile, the closest package directory. */
@@ -346,9 +552,8 @@ export class ProjectIndex implements Project {
   private packageDir(name: string, fromFile: string): string | undefined {
     const moduleDir = this.moduleDir(fromFile);
     if (moduleDir !== undefined) {
-      const dependency = this.packages.get(join(moduleDir, OH_PACKAGE))?.dependencies?.[name];
-      const path = dependency?.startsWith(FILE_DEPENDENCY) ? dependency.slice(FILE_DEPENDENCY.length) : dependency;
-      if (path?.startsWith('.')) {
+      const path = localDependency(this.packages.get(join(moduleDir, OH_PACKAGE))?.dependencies?.[name]);
+      if (path !== undefined) {
         const dir = resolve(moduleDir, path);
         return this.stat(join(dir, OH_PACKAGE)) === undefined ? undefined : dir;
       }

@@ -257,9 +257,9 @@ export class ProjectIndex implements Project {
   /**
    * The same sites as callSites without reading the whole project: a text search finds the files that mention the
    * struct under any name it is exported as, only those are parsed, and each use is resolved as in callSites. Sites are
-   * ordered by file path. unscanned counts the matching files with syntax errors, unreadable ones, those left when
-   * budgetMs ran out, and directories the search could not read. The search is shared by the calls of one check; a
-   * refresh while it runs is harmless, and files parsed after it are read as they are then.
+   * ordered by file path. unscanned counts the declaring file and matching files with syntax errors, unreadable ones,
+   * those left when budgetMs ran out, and directories the search could not read. The search is shared by the calls of
+   * one check; a refresh while it runs is harmless, and files parsed after it are read as they are then.
    */
   searchCallSites(
     decl: Declaration,
@@ -279,8 +279,10 @@ export class ProjectIndex implements Project {
       return { sites: [], unscanned: 0 };
     }
     const aliases: Aliases = { names: new Set([decl.name]), defaultFiles: new Map() };
-    const candidates = new Map([[directoryKey(resolve(decl.facts.file)), decl.facts]]);
-    const unusable = new Set<string>();
+    const declaring = directoryKey(resolve(decl.facts.file));
+    const candidates = new Map([[declaring, decl.facts]]);
+    // The scan counts this file too; the seed never reaches the loop's parse check.
+    const unusable = new Set<string>(decl.facts.parseErrors ? [declaring] : []);
     const searched = new Set<string>();
     for (;;) {
       const terms = this.newTerms(decl, dirs, candidates, aliases, searched);

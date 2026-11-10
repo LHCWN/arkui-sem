@@ -1,7 +1,7 @@
 // Call-site edges: component uses in one file, then resolved across the project on test/fixtures/project.
 
 import assert from 'node:assert/strict';
-import { chmodSync, rmSync, symlinkSync } from 'node:fs';
+import { chmodSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { type CallSite, etsFiles, type FactExtractor, type FileFacts } from '../src/analysis.js';
@@ -59,6 +59,18 @@ function counting(parsed: string[]): FactExtractor {
 
 const page = (name: string, imports: string, body: string) =>
   `${imports}\n@Component\nstruct ${name} {\n  @State n: number = 0\n  build() {\n    ${body}\n  }\n}\n`;
+
+test('a broken declaring file counts as unscanned in the search too', async () => {
+  const root = project();
+  const row = join(root, COMPONENTS, 'ItemRow.ets');
+  put(row, `${readFileSync(row, 'utf8')}\nconst x = ;\n`);
+  const index = new ProjectIndex(undefined, NODE_ONLY());
+  const decl = { facts: index.facts(row), name: 'ItemRow' };
+  const scan = edges(index, decl);
+  const found = await index.searchCallSites(decl);
+  assert.deepEqual([found?.unscanned, scan.unscanned], [1, 1]);
+  assert.deepEqual(byPlace(found?.sites), byPlace(scan.sites));
+});
 
 test('every argument form', () => {
   const facts = extract(`

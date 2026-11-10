@@ -10,7 +10,7 @@
 - The judge fallback chain is decided but not implemented (`docs/design-docs/decisions.md`).
 - The fact extractor reads one file's syntax tree, with no type checker: types come from annotations and `new X(…)` initializers, and writes through an alias (`const self = this; self.x = …`) are missed. Typed values from the ohos-typescript checker are planned (`docs/exec-plans/active/cross-file-facts.md`, PR 2b); aliasing needs dataflow.
 - The project index caches facts by mtime only (an edit within the same mtime tick, or a tool that keeps mtimes, serves
-  stale facts), and cached `FileFacts` are mutable and shared across checks and `arkui_facts`; size + mtime keys and
+  stale facts), and cached `FileFacts` are mutable and shared across checks; size + mtime keys and
   `readonly` fact types would close both.
 - `analysis.ts` mixes the fact model, derived queries, file utilities and rules; splitting it would let `src/ets/` import
   only the model.
@@ -29,13 +29,7 @@
   `oh-package.json5` alone was not enough, nor was the server's own `--projectPath` mode). The rules resolve them through
   the project index (`src/project.ts`); the LSP records come from the same lookup (cross-file-facts PR 3). R3 releases in
   helpers and R4 writers across modules are still missing.
-- Review whether the `arkui_facts` tool is useful at all, and remove it (or trim it) if it isn't. Only the coding agent
-  reads it, on request: the skill and the tool description suggest calling it before changing state flow, but the
-  post-edit check, the gate and the judge never use it. Whether agents call it, or act on what it shows, is untested; the
-  design doc plans an on/off ablation (`docs/design-docs/agentic-plugin.md`). The call-site edges behind it stay: R2
-  needs them.
 - Call-site edges (`ProjectIndex.callSites`):
-  - `arkui_facts` shows the first 30 sites (by file, then line) and `callSitesTotal`; there is no paging.
   - The time budget stops the scan between files, but listing the project can't be interrupted: on a cold OS file cache
     the listing alone can exceed the budget.
   - A scan cut short lists fewer sites and reports `unscanned`, so it can't support an absence claim (R2 waits for complete

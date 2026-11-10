@@ -61,7 +61,7 @@ if (doctor) process.exit(report() ? 1 : 0);
 if (!existsSync(BIOME)) step("npm ci (arkui-sem)", "npm", ["ci"], LINTER);
 step("enable pre-commit hook", "git", ["config", "core.hooksPath", ".githooks"]);
 step("build arkui-sem", "npm", ["run", "build"], LINTER);
-step("install plugin + skill into sandbox/demo", process.execPath, [join(LINTER, "scripts/install.mjs"), PROJECT]);
+step("install plugin into sandbox/demo", process.execPath, [join(LINTER, "scripts/install.mjs"), PROJECT]);
 if (existsSync(BENCH_SETUP)) step("bench datasets", process.execPath, [BENCH_SETUP, ...benchArgs]);
 
 console.log("\n--- doctor");

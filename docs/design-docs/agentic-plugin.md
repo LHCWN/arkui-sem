@@ -31,10 +31,8 @@ flowchart LR
   end
 
   subgraph PLUGIN["arkui-sem plugin (in the opencode server process)"]
-    SK["Skill: arkui-state-management"]
     TA["tool.execute.after"]
     EV["event: session.idle (gate)"]
-    T1["tool arkui_facts"]
     T2["tool arkui_check"]
     MEM[("Session state, in memory<br/>touched · reported · gate key · follow-ups")]
   end
@@ -51,12 +49,9 @@ flowchart LR
 
   CA[("Judgment cache<br/>~/.cache/arkui-sem")]
 
-  SK -. "loaded when relevant" .-> LLM
   ED --> TA --> FX
   ID --> EV --> FX
-  LLM <-- "tool calls" --> T1
   LLM <-- "tool calls" --> T2
-  T1 --> FX
   T2 --> FX
   FM -- "appended to the edit result" --> LLM
   FM -- "promptAsync follow-up (once)" --> LLM
@@ -145,7 +140,7 @@ Start with S2, which is the cheapest. Pilot it to estimate variance before sizin
    One set of agent runs serves every backend and threshold.
 3. **A2/A3 — Live A/B harness on `opencode serve` + `@opencode-ai/sdk`.**
    - **Workspace:** a fresh git worktree of the task's base revision per run.
-   - **Arm setup** with `scripts/install.mjs`: full plugin, `--skill-only`, or nothing. The no-plugin arm can also use `opencode --pure`, which runs without external plugins; check that it also skips local plugin files, or simply don't install the shim.
+   - **Arm setup** with `scripts/install.mjs`: full plugin or nothing. The no-plugin arm can also use `opencode --pure`, which runs without external plugins; check that it also skips local plugin files, or simply don't install the shim.
    - **Driving the run:**
      - start `opencode serve --port …` in the worktree;
      - via the SDK, create a session and send the task prompt;
@@ -159,11 +154,10 @@ Start with S2, which is the cheapest. Pilot it to estimate variance before sizin
 | Arm | What it isolates |
 |---|---|
 | No plugin | Baseline |
-| **Skill only** (`--skill-only`) | Knowledge without feedback. **The critical control**: if it captures most of the gain, the hooks/judge add little. |
-| Skill + post-edit feedback (`ARKUI_SEM_GATE=false`) | Value of per-edit feedback |
+| Post-edit feedback only (`ARKUI_SEM_GATE=false`) | Value of per-edit feedback |
 | + idle gate (default) | Value of the gate (and its overhead) |
 | LSP channel instead of `tool.execute.after` (P-A4) | Channel effect |
-| Tools on/off (`arkui_facts`, `arkui_check`) | Value of agent-queryable facts |
+| Tool on/off (`arkui_check`) | Value of the agent-queryable check |
 | Backend: heuristic / Jev / Clef-flash / Laya-FT / DeepSeek (structured) | Does the decision model matter *in the loop*? |
 | Intent-aware on/off (P-A5) | Value of task context |
 | Agent model: 2–3 models you use in opencode | Cheaper agents may benefit more [H] |
@@ -177,14 +171,14 @@ Start with S2, which is the cheapest. Pilot it to estimate variance before sizin
 
 ### 6.6 Go / no-go
 
-The plugin is worth keeping if, versus the **skill-only** arm:
+The plugin is worth keeping if, versus the **no-plugin** arm:
 - semantic defects introduced fall by ≥ 30%, **or** task success rises by ≥ 5 pts, with the CI excluding 0;
 - the harmful-edit rate is no worse than +1 pt;
 - overhead is ≤ +15% wall time and ≤ +10% tokens;
 - there are zero loop incidents;
 - per-edit check p95 is ≤ 1.5 s.
 
-If skill-only ≈ the full plugin, ship the skill and keep the linter for CI.
+If the plugin ≈ no plugin, keep the linter for CI.
 
 ### 6.7 Cost and environment
 
@@ -204,5 +198,4 @@ If skill-only ≈ the full plugin, ship the skill and keep the linter for CI.
 | The gate's follow-up is lost under `opencode run` | Run gate experiments through `opencode serve` + SDK and wait for the follow-up turn [I] |
 | Latency on big projects | Warm in-process analysis (D11), two tiers (D9) |
 | The edit result format changes across opencode versions | We only *append* to `output.output`; pin the opencode version per experiment |
-| Skill alone is enough | That's a legitimate result; the skill-only arm detects it |
 | Backend data exposure | Offline default; backend per org; task context opt-in (D8) |

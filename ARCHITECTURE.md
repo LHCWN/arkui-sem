@@ -14,7 +14,7 @@ in `docs/` (map: `AGENTS.md`).
 ```
 
 The opencode plugin runs this after each edit tool call, gates the session once on idle while findings remain, and
-gives the agent `arkui_check` and `arkui_facts`. The skill `arkui-state-management` teaches the agent the decorators.
+gives the agent the `arkui_check` tool.
 
 ## Layout
 
@@ -36,7 +36,7 @@ sandbox/demo/                            the demo project (opencode): R1 pages i
 sandbox/*                                everything else is local scratch (ignored), e.g. a DevEco Code copy of the demo
 arkui-sem/                               the linter (opencode plugin, package arkui-sem 0.2.0, ESM, TypeScript)
   README.md, AGENTS.md
-  src/opencode.ts      plugin: tool.execute.after feedback, session.idle gate, tools arkui_check / arkui_facts
+  src/opencode.ts      plugin: tool.execute.after feedback, session.idle gate, tool arkui_check
   src/analysis.ts      fact types, .ets discovery,
                        rules R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware), R3 unreleased-resource
   src/ets/parse.ts     ArkTS parser: ohos-typescript with the SDK ets-loader options (bundled copy: src/ets/options.json,
@@ -62,7 +62,7 @@ arkui-sem/                               the linter (opencode plugin, package ar
                        per module (config, engine, deepseek, openrouter, opencode, lsp, project), helpers.ts; test/fixtures/:
                        Counter, Feed, Profile (R1), Ticker (R3), fake-ace-server.mjs (both LSP protocols), project/
                        (two-module DevEco project: entry imports common by package name)
-  skills/arkui-state-management/SKILL.md, scripts/install.mjs
+  scripts/install.mjs
   backends `or-clef` / `or-clef-flash`: Clef via OpenRouter Decisions API (POST https://openrouter.ai/api/alpha/decisions; OPENROUTER_API_KEY or openrouter.apiKey; openrouter.baseUrl)
   backend `laya`: local TypeSafe-compatible server (default http://127.0.0.1:8080; laya.baseUrl / LAYA_BASE_URL);
     state limit ~424 tokens, so slices are trimmed on 422; zero-shot it scores the fixture bugs 0.13–0.27 (unusable before fine-tuning)

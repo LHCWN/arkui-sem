@@ -18,14 +18,14 @@ npm test          # typechecks, then runs test/**/*.test.ts from src/ (offline, 
 ## Use in opencode
 
 ```sh
-node scripts/install.mjs <project-dir>     # .opencode/plugins/arkui-sem.ts + the arkui-state-management skill
-node scripts/install.mjs --global          # ~/.config/opencode/
+node scripts/install.mjs <project-dir>     # .opencode/plugins/arkui-sem.ts
+node scripts/install.mjs --global          # ~/.config/opencode/plugins/
 node scripts/install.mjs <project-dir> --uninstall
 ```
 
 The plugin re-exports this checkout's `dist/opencode.js`: rebuild, then restart opencode. It reviews `.ets`
-edits after each tool call, gates the session once on idle while findings remain open, and adds the tools
-`arkui_check` and `arkui_facts`.
+edits after each tool call, gates the session once on idle while findings remain open, and adds the tool
+`arkui_check`.
 
 ## CLI
 

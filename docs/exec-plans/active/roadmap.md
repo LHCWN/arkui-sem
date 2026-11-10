@@ -123,7 +123,7 @@ Each phase starts only after an explicit go.
 
 #### Phase 2: cross-file facts
 - [x] Cross-file class resolution: a project index (`src/project.ts`) passed to the rules, in the plugin and the bench alike; the LSP adds `references` later (cross-file-facts PR 3)
-- [x] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback), from our own walk and the project index (no R2 candidate yet)
+- [x] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback), from our own walk and the project index (no R2 candidate yet); for one struct without parsing the project: `searchCallSites` (text search, then a parse of the matching files)
 - [ ] Parent-side facts: decorator of `x`, writes after init, readers (parent, siblings)
 - [ ] Child-side facts: writes to `f` with context, invoked callbacks/`@Event`s, `@CustomDialog`/controller
 - [ ] String-key index: storage keys, `@Provide`/`@Consume` aliases, `@Watch`/`@Monitor` targets

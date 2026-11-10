@@ -2,7 +2,7 @@
 
 Roadmap phase 2, plus two items of phase 3 (`docs/exec-plans/active/roadmap.md`, Plan). One branch per PR, from `main`.
 
-**Status:** PR 1 merged (#18: project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PR 2 is split: 2a (facts from the ohos-typescript syntax tree, judge features as slice fields; `bench/docs/plans/ts-extractor.md`) merged (#19); 2b (call-site edges, index only: `ProjectIndex.callSites`) merged (#22; scan timings and comparison: `bench/docs/plans/index-baseline.md`); typed values from the checker are a separate later item. PR 3 open. Project index performance fixes merged (#21).
+**Status:** PR 1 merged (#18: project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PR 2 is split: 2a (facts from the ohos-typescript syntax tree, judge features as slice fields; `bench/docs/plans/ts-extractor.md`) merged (#19); 2b (call-site edges, index only: `ProjectIndex.callSites`) merged (#22; scan timings and comparison: `bench/docs/plans/index-baseline.md`); typed values from the checker are a separate later item. Lazy call sites done (`ProjectIndex.searchCallSites`; see its Result below). PR 3 open. Project index performance fixes merged (#21).
 
 ## Goal
 
@@ -71,7 +71,7 @@ Three PRs, in order. Each adds one visible change, is testable on its own and up
 
 ## Order after 2b
 
-2b, then lazy call sites, then PR 3, then a disk cache if still needed, then checker types and R2 candidates. A scan cut short can't support an absence claim ("no call site passes `onX`"), so R2 waits until the plugin gets complete edges on large projects, from the lazy path or the disk cache.
+2b, then lazy call sites (done), then PR 3, then checker types and R2 candidates. The disk cache is dropped (Result below). A scan cut short can't support an absence claim ("no call site passes `onX`"), so R2 takes its edges from the lazy path, which is complete for the struct asked about.
 
 **In 2b** (whole-project scan, index only):
 
@@ -81,7 +81,7 @@ Three PRs, in order. Each adds one visible change, is testable on its own and up
 - A time budget stops the scan early and reports the files left as `unscanned`. The bench runs without a budget, so its results stay deterministic.
 - Directory link cycles end the listing instead of recursing.
 
-**Lazy call sites** (the next PR, plugin path only). Work follows how often the asked-about struct is used, not project size:
+**Lazy call sites** (done, plugin path only). Work follows how often the asked-about struct is used, not project size:
 
 1. Search the project text for the struct's name, word-bounded, in the directories the scan covers.
 2. Parse only the matching files, through the file cache.
@@ -95,6 +95,24 @@ Parents further up are found by repeating this on demand. The search is asynchro
 - First measure the search on a large project, warm and with a cold OS file cache: ripgrep (needs a fallback when the binary is missing) against reading from Node (keeping each file's capitalized identifiers in memory, refreshed by mtime).
 - Exit criterion: on a large project, the edges for a sample of structs match the full scan exactly.
 - Whole-project runs (`arkui_check .`, the bench) still parse everything. Decide on the disk cache after the measurement.
+
+**Result (lazy call sites).** `ProjectIndex.searchCallSites(decl)` next to `callSites(decl)`, which stays as the reference; `src/search.ts` holds the search. Decisions and their reasons: `docs/design-docs/decisions.md`; gaps: the tracker.
+
+- Exit criterion: met. `arkui-sem/scripts/compare-callsites.mjs` compares the two on a project or on one it generates. On a generated project of 10,020 files the 200 sampled structs (400 sites) were equal, with ripgrep and from Node. The tests compare both paths on every project fixture.
+- Search, generated project, Windows 11, 12 threads, SSD (one word, median of the warm runs):
+
+  | | warm | file data dropped from the OS cache |
+  |---|---|---|
+  | ripgrep | 0.38 s | 0.67 s |
+  | Node, files read 64 at a time | 0.77 s | 0.87–1.06 s |
+  | Node, files read one by one | 0.90 s | 2.96 s |
+  | Node, capitalized identifiers kept in memory | 0.45 s after a 1.5 s first pass | not measured |
+
+  A fully cold cache (directory entries too) needs administrator rights on Windows and was not measured.
+- One struct end to end, on a fresh index: median 0.51 s, p95 1.0 s with ripgrep; median 0.82 s, p95 1.6 s from Node. The whole-project scan took 21–22 s.
+- Chosen: ripgrep, with Node reading the files 64 at a time as the fallback. The in-memory identifier index was dropped: no faster than ripgrep, it still stats every file per check and holds every identifier.
+- Disk cache: not needed for this path. The scan is left to whole-project runs, which parse everything anyway.
+- Differs from the plan: an import's local name is not searched as an alias (step 3). `declaration()` follows `import { X } from './G'` when `G` only imports `X`, which ArkTS rejects; following it cost every aliased import a second search.
 
 ## Bench
 

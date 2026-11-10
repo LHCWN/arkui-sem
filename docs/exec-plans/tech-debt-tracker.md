@@ -32,8 +32,8 @@
 - Call-site edges (`ProjectIndex.callSites`):
   - The time budget stops the scan between files, but listing the project can't be interrupted: on a cold OS file cache
     the listing alone can exceed the budget.
-  - A scan cut short lists fewer sites and reports `unscanned`, so it can't support an absence claim (R2 waits for complete
-    edges on large projects).
+  - A scan cut short lists fewer sites and reports `unscanned`, so it can't support an absence claim. For one struct,
+    `searchCallSites` gives complete edges without the scan (below).
   - A file with parser errors counts as `unscanned`. What the parser recovered is still listed, and sites may be missing
     or wrong: an unclosed object or string can swallow later calls as arguments, and a stray `}` can lose a builder. Some
     valid ArkTS reports an error too (`.attr()` after the closure of `Child() { … }`).
@@ -44,6 +44,23 @@
   - The budget is checked between files, so resolving one file's uses can overrun it by the files those imports parse.
   - No signal catches a half-typed line that still parses: `this.` above `Child()` reads as `this.Child()`, so the site is
     lost with no parser error.
+- Call sites of one struct from a text search (`ProjectIndex.searchCallSites`, `src/search.ts`):
+  - Nothing in the plugin calls it yet: R2 candidates are its first user.
+  - The work follows how many files mention the name. A struct with a common name (`Index`, a word used in many files)
+    parses all of them; `budgetMs` stops the parsing and counts the rest as `unscanned`.
+  - Each check searches again (the result is kept for one check only), and a default export searches at least twice.
+  - A default import is found by the file name, directory name or package name in its path, matched with the letter
+    case of the file system entry. An import written in another case resolves on Windows and macOS, so the scan lists
+    it and the search does not.
+  - Package names come from the project's modules, their `oh-package.json5` names and the dependency keys of the
+    modules and scanned roots. A key declared only in a nested package that is no module is not searched for.
+  - The Node fallback lists the project synchronously before it reads files, so it blocks for the listing.
+  - The ripgrep run has no timeout, and the budget does not cover the search itself.
+  - A refresh while a search runs is not detected: files parsed after it are read in their newer state.
+  - Sites are ordered by file path, the scan's by directory listing.
+  - `declaration()` follows `import { X } from './G'` when `G` only imports `X` and doesn't export it, which ArkTS
+    rejects. The scan lists such a site; the search doesn't look for `G`'s local names.
+  - CI runs the ripgrep path only if the runner has `rg` on `PATH`; otherwise only the Node fallback is tested there.
 - On legacy ace-server (DevEco 6.x) `references` and `callers` see usages in open files only (queried and edited ones), so
   usages in other files are missed; the standard server (DevEco 26+) searches the whole project.
 - No licence yet: the owner picks one before the repo goes public.

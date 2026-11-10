@@ -38,3 +38,7 @@
 - **History** (2026-10-08): both repos start from one commit. Run records made earlier name commits from before that.
 - **Docs layout** (2026-10-08): `AGENTS.md` is a short map; knowledge lives in `docs/` (design docs, exec plans), the
   bench's in `bench/docs/` (results, dataset plans, evaluation method, costs); the `jev_arkts_` file prefix was dropped.
+- **Removed the `arkui_facts` tool and the `arkui-state-management` skill** (2026-11-10).
+  - Why: no linting step used the tool, and nothing showed agents call it or act on it. The skill's only job beyond decorator guidance was to point the agent at the tool.
+  - Consequence: the plugin has one agent tool, `arkui_check`. The evaluation's skill-only arm is gone: the control is the no-plugin arm (`docs/design-docs/agentic-plugin.md`).
+  - Kept: the call-site edges in the project index (`ProjectIndex.callSites`), which R2 needs. A `facts` subcommand in the CLI for looking at extracted facts is possible later.

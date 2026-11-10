@@ -10,7 +10,7 @@ questions. It ships as an [opencode](https://opencode.ai) plugin and a CLI. **Pr
 
 ```sh
 node scripts/setup.mjs                          # build the linter, install it into the demo project sandbox/demo
-node arkui-sem/scripts/install.mjs <your-project>   # or install the plugin + skill into your own opencode project
+node arkui-sem/scripts/install.mjs <your-project>   # or install the plugin into your own opencode project
 node arkui-sem/dist/cli.js check <file.ets> --backend heuristic   # offline check from the shell
 ```
 
@@ -21,7 +21,7 @@ Details: [`arkui-sem/README.md`](arkui-sem/README.md).
 
 | Path | What |
 |---|---|
-| [`arkui-sem/`](arkui-sem/) | the linter: opencode plugin, CLI, skill, tests |
+| [`arkui-sem/`](arkui-sem/) | the linter: opencode plugin, CLI, tests |
 | [`sandbox/demo/`](sandbox/demo/) | an opencode demo project with buggy pages, and the demo guide for opencode and DevEco Code |
 | [`docs/`](docs/) | design notes, decisions, roadmap |
 | `bench/` | the evaluation bench: a private submodule, not needed to build or use the linter |

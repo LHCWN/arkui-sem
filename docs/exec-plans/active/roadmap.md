@@ -9,7 +9,7 @@ The linter lives in `arkui-sem/` (package `arkui-sem` 0.2.0); see `ARCHITECTURE.
 **Status:**
 - Rules: R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware, V1/V2), R3 unreleased-resource. R2 has a judge slice (used by the bench) but is not emitted yet.
 - Backends: Jev, Clef, Clef-flash (also through OpenRouter: `or-clef`, `or-clef-flash`), DeepSeek flash (structured output), heuristic, Laya. The fallback chain is not implemented.
-- Tests: `npm test` (offline). Plugin tools `arkui_check` / `arkui_facts` and the skill load in opencode 1.18.30 and in DevEco Code 0.2.1 (an opencode fork; plugin and skill under `.deveco/`).
+- Tests: `npm test` (offline). The plugin and its `arkui_check` tool load in opencode 1.18.30 and in DevEco Code 0.2.1 (an opencode fork; plugin under `.deveco/`).
 - DevEco demo (2026-10-08, `sandbox/demo/DEMO.md`): Clef flagged the agent's nested write, the idle gate re-sent it for the old button, and the agent fixed both. The DevEco TUI hides tool output, so the demo prompt asks the agent to quote findings verbatim.
 - Live opencode runs 1–4 (logs removed 2026-10-08; run 4 called DeepSeek and found the @Observed-only false negative that led to the depth-aware rule).
 
@@ -25,7 +25,7 @@ P-A2…P-A4 (intent tool, cross-file facts, LSP) are broken down further under R
 
 | Step | Deliverable | Effort | Exit criterion |
 |---|---|---|---|
-| **P-A1** ✓ | opencode plugin vertical slice: post-edit feedback, idle gate, `arkui_check`, `arkui_facts`, skill, installer, tests | done | tests pass; tools and skill registered in opencode |
+| **P-A1** ✓ | opencode plugin vertical slice: post-edit feedback, idle gate, `arkui_check`, installer, tests | done | tests pass; tool registered in opencode |
 | **P-A2** | Label log (fixes, dismissals with reasons) + `arkui_explain(id)` + `arkui_ownership_intent(component, field)` tools | 1–2 d | Labels written for every gate/finding outcome in a session |
 | **P-A3** | The fact extractor (behind `FactExtractor`: ours on the ohos-typescript tree, with checker types; ArkAnalyzer only if it proves suitable) kept warm in the plugin process; incremental updates on edit; cross-file, including across modules via a package index; parent→child edges → **R2** | 4–5 d | p95 ≤ 1.5 s per edit on the big project; E0 fact-precision ≥ 0.95 |
 | **P-A4** | LSP channel: an `arkui-sem` LSP server registered via `opencode.json` `lsp` for `.ets`, optionally alongside the community ArkTS language server for L0 | 3 d | A/B vs the `tool.execute.after` channel; no duplicate reports |
@@ -123,7 +123,7 @@ Each phase starts only after an explicit go.
 
 #### Phase 2: cross-file facts
 - [x] Cross-file class resolution: a project index (`src/project.ts`) passed to the rules, in the plugin and the bench alike; the LSP adds `references` later (cross-file-facts PR 3)
-- [x] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback), from our own walk and the project index; exposed in `arkui_facts` (no R2 candidate yet)
+- [x] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback), from our own walk and the project index (no R2 candidate yet)
 - [ ] Parent-side facts: decorator of `x`, writes after init, readers (parent, siblings)
 - [ ] Child-side facts: writes to `f` with context, invoked callbacks/`@Event`s, `@CustomDialog`/controller
 - [ ] String-key index: storage keys, `@Provide`/`@Consume` aliases, `@Watch`/`@Monitor` targets
@@ -140,7 +140,6 @@ Each phase starts only after an explicit go.
 - [ ] Engine mapping intent × V1/V2 × current decorator → finding / question / silent (0.8 / 0.5)
 - [ ] `arkui_ownership_intent(component, field, intent)` tool; intents stored as in-code annotations (`// arkui-sem: intent …`) or in a label log (choice open)
 - [ ] Questions to the agent phrased as intent, not decorator; listed once at `session.idle`
-- [ ] Skill `arkui-state-management`: declare intent before writing a child component
 
 #### Phase 5: R2 evaluation
 - [x] MDP labels as intent proxies (only fields with a call-site edge); child-only vs + call site, evaluated in the bench (2026-10-08):

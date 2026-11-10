@@ -6,7 +6,7 @@ Its fix (adding `@Observed` to the classes) was still wrong, and the linter of t
 
 ## The project
 
-`sandbox/demo/` is a minimal opencode project. Its pages in `entry/src/main/ets/pages/` are the committed baselines. `Shelf.ets` is clean and uses the child in `entry/src/main/ets/components/ShelfRow.ets`, so `arkui_facts` on `ShelfRow.ets` shows a call site. The others each have an R1 bug (a state change the UI never sees):
+`sandbox/demo/` is a minimal opencode project. Its pages in `entry/src/main/ets/pages/` are the committed baselines. `Shelf.ets` is clean and uses the child in `entry/src/main/ets/components/ShelfRow.ets`. The others each have an R1 bug (a state change the UI never sees):
 
 - `Profile.ets`: the main demo. The `Move` button writes `this.user.address.city`, two levels below the `@State` field, so ArkUI never re-renders. A new button written the same way has the same bug.
 - `Counter.ets`: a simpler backup demo. `count` has no state decorator, so the counter never updates on screen.
@@ -17,7 +17,7 @@ Everything else in `sandbox/` is local scratch and git-ignored.
 
 ## Setup
 
-1. `node scripts/setup.mjs` builds the linter and installs the plugin and the skill into `sandbox/demo/.opencode/` (ignored). The plugin loads `arkui-sem/dist/`, so rebuild after linter changes.
+1. `node scripts/setup.mjs` builds the linter and installs the plugin into `sandbox/demo/.opencode/` (ignored). The plugin loads `arkui-sem/dist/`, so rebuild after linter changes.
 2. Reset the pages before each take: `git checkout -- sandbox/demo/entry`.
 3. Choose the judge. Clef is the default backend, and its keys come from your arkui-sem config. To be explicit: `$env:ARKUI_SEM_BACKEND = "clef"` (PowerShell).
 4. Start opencode in `sandbox/demo`. Run 4 used the model `opencode/big-pickle`.
@@ -63,16 +63,16 @@ Checked on 2026-10-08 with the CLI, no agent:
 
 ## DevEco Code (the opencode fork)
 
-DevEco Code loads plugins and skills from `.deveco/` instead of `.opencode/`. Set it up in the demo project (both folders are ignored):
+DevEco Code loads plugins from `.deveco/` instead of `.opencode/`. Set it up in the demo project (both folders are ignored):
 
 ```powershell
 node arkui-sem/scripts/install.mjs sandbox/demo
 mkdir sandbox/demo/.deveco
-Copy-Item -Recurse sandbox/demo/.opencode/plugins, sandbox/demo/.opencode/skills sandbox/demo/.deveco/
+Copy-Item -Recurse sandbox/demo/.opencode/plugins sandbox/demo/.deveco/
 Set-Content sandbox/demo/.opencode/arkui-sem.json '{"backend": "clef"}'
 ```
 
-The last line pins the judge; without it the user config's backend applies. Checked on 2026-10-08 with DevEco Code 0.2.1, without a model call: `deveco debug config` lists the plugin, `deveco debug skill` lists the skill, and `deveco debug agent build` shows `arkui_check` and `arkui_facts` registered.
+The last line pins the judge; without it the user config's backend applies. Checked on 2026-10-08 with DevEco Code 0.2.1, without a model call: `deveco debug config` lists the plugin, and `deveco debug agent build` shows `arkui_check` registered.
 
 Run `deveco` in `sandbox/demo` and paste this prompt. The DevEco TUI hides tool output, so the last sentence makes the findings visible in chat:
 

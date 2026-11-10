@@ -2,7 +2,7 @@
 
 Roadmap phase 2, plus two items of phase 3 (`docs/exec-plans/active/roadmap.md`, Plan). One branch per PR, from `main`.
 
-**Status:** PR 1 merged (#18: project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PR 2 is split: 2a (facts from the ohos-typescript syntax tree, judge features as slice fields; `bench/docs/plans/ts-extractor.md`) merged (#19); 2b (call-site edges, index only: `ProjectIndex.callSites`, exposed in `arkui_facts`) merged (#22; scan timings and comparison: `bench/docs/plans/index-baseline.md`); typed values from the checker are a separate later item. PR 3 open. Project index performance fixes merged (#21).
+**Status:** PR 1 merged (#18: project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PR 2 is split: 2a (facts from the ohos-typescript syntax tree, judge features as slice fields; `bench/docs/plans/ts-extractor.md`) merged (#19); 2b (call-site edges, index only: `ProjectIndex.callSites`) merged (#22; scan timings and comparison: `bench/docs/plans/index-baseline.md`); typed values from the checker are a separate later item. PR 3 open. Project index performance fixes merged (#21).
 
 ## Goal
 
@@ -29,7 +29,7 @@ Rules today see one file. Give them facts from the files a component imports, an
 3. **Call-site edges** (phase 2): for each struct, its call sites (`Child({ f: <expr> })`), with parent, child, field and the expression form (`this.x` / `$x` / `this.x.y` / literal / callback).
    - Index first: scan the project for the struct name, then our parse of the object literal.
    - LSP `references` on the struct when a server is running, to confirm or add sites.
-   - Exposed in `arkui_facts`. No R2 candidate is emitted (phase 4).
+   - No R2 candidate is emitted (phase 4).
 4. **LSP in the plugin.** Start ace-server lazily on the first `.ets` edit, keep it warm for the session, stop it on dispose.
    After each edit call `open(file, text)` before any query (tech-debt tracker). A missing server, a start failure or a
    timeout falls back to the index silently: post-edit feedback must never wait on the LSP beyond a small budget.
@@ -63,7 +63,7 @@ Three PRs, in order. Each adds one visible change, is testable on its own and up
 1. **Project index + cross-file R1 nested write.** Goal items 1–2: the index (package lookup from `oh-package.json5`
    and `build-profile.json5`), file cache, the rule changes, their fixtures and tests, the bench re-run below.
 2. **Call-site edges, index only.** Goal item 3 without the LSP: struct-name scan, object-literal parse, expression forms,
-   `arkui_facts` output.
+   tests.
 3. **LSP in the plugin.** Goal item 4: lifecycle, `open` before query, fallback, the `lsp` switch, `references` adding to
    PR 2's edges (with the legacy open-files workaround), hvigor's dependency map as the module source when fresh (see Goal 1), dependency records at
    `initialize` from that lookup, the timing
@@ -112,7 +112,7 @@ Parents further up are found by repeating this on demand. The search is asynchro
 ## Done when
 
 - The three rule tests above pass, and the plugin test passes with the fake server.
-- `arkui_facts` shows call-site edges for the demo project (`sandbox/demo`).
+- Call-site edges are covered by `test/callsites.test.ts`.
 - The bench re-run is reported, with the cross-file cases from that plan's Result section accounted for.
 - Docs: roadmap phase 2 boxes and the two phase 3 items updated; the tracker lines on single-file `@ObjectLink`, the
   unwired LSP client and package imports updated or removed; `ARCHITECTURE.md` lists new files; this plan moves to

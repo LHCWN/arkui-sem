@@ -88,17 +88,11 @@ Three PRs, in order. Each adds one visible change, is testable on its own and up
 3. Follow aliases until none are new: a candidate's `export { Child as Kid }` adds `Kid`; for a default export, also search import paths for the declaring file's name, and for the package name when a package entry re-exports it.
 4. Resolve each call with `declaration()`, so a name that only matches as text is dropped.
 
-`ProjectIndex` keeps one scan per project and refresh, so this path must key its results by struct and pass the declaration to the function that lists files.
-
-Parents further up are found by repeating this on demand. The search is asynchronous; only the small parse step blocks.
-
-- First measure the search on a large project, warm and with a cold OS file cache: ripgrep (needs a fallback when the binary is missing) against reading from Node (keeping each file's capitalized identifiers in memory, refreshed by mtime).
-- Exit criterion: on a large project, the edges for a sample of structs match the full scan exactly.
-- Whole-project runs (`arkui_check .`, the bench) still parse everything. Decide on the disk cache after the measurement.
+Results are kept per struct for one check. Parents further up are found by repeating this on demand. The search is asynchronous; only the parse step blocks. Whole-project runs (`arkui_check .`, the bench) still parse everything.
 
 **Result (lazy call sites).** `ProjectIndex.searchCallSites(decl)` next to `callSites(decl)`, which stays as the reference; `src/search.ts` holds the search. Decisions and their reasons: `docs/design-docs/decisions.md`; gaps: the tracker.
 
-- Exit criterion: met. `arkui-sem/scripts/compare-callsites.mjs` compares the two on a project or on one it generates. On a generated project of 10,020 files the 200 sampled structs (400 sites) were equal with ripgrep, and 100 of them from Node. The tests compare both paths on every project fixture.
+- Exit criterion: met. `arkui-sem/scripts/compare-callsites.mjs` compares the two on a project or on one it generates. On a generated project of 10,020 files the 200 sampled structs (400 sites) were equal with ripgrep, and 100 of them from Node. The project tests that list a struct's sites compare both paths.
 - Search, generated project, Windows 11, 12 threads, SSD (one word, median of the warm runs):
 
   | | warm | file data dropped from the OS cache |
@@ -113,6 +107,15 @@ Parents further up are found by repeating this on demand. The search is asynchro
 - Chosen: ripgrep, with Node reading the files 64 at a time as the fallback. The in-memory identifier index was dropped: no faster than ripgrep, it still stats every file per check and holds every identifier.
 - Disk cache: not needed for this path. The scan is left to whole-project runs, which parse everything anyway.
 - Differs from the plan: an import's local name is not searched as an alias (step 3). `declaration()` follows `import { X } from './G'` when `G` only imports `X`, which ArkTS rejects; following it cost every aliased import a second search.
+
+**Next: R2 in the plugin** (roadmap phase 4; not part of this handoff). Nothing calls `searchCallSites` yet. Its first user is the R2 candidate step, after PR 3 and the checker types:
+
+- Child side: when the edited file declares a struct with passed-in fields, call `searchCallSites` with the session directory as `workspace` and a budget.
+- Parent side: when the edited file instantiates a child, resolve the child and read its fields; this needs no search.
+- Absence claims ("no call site passes `onX`") only when `unscanned` is 0.
+- Slice: pass the call-site facts into the judge slice and emit the R2 candidate.
+- Timing: check the post-edit path against the 1.5 s p95 target (P-A3); one search is about 0.5 s on 10,000 files.
+- Open: a check that asks about many structs with common names may cost more than one whole-project scan, which is shared and reused across checks. Measure before choosing per struct or per check.
 
 ## Bench
 

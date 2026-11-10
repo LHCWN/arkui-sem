@@ -136,7 +136,7 @@ Each phase starts only after an explicit go.
 - [ ] R2-f multiple parents
 
 #### Phase 4: R2 with intent
-- [ ] Emit R2-a / R2-b / R2-c candidates with fact-summary slices (fit the Laya ~424-token limit)
+- [ ] Emit R2-a / R2-b / R2-c candidates with fact-summary slices (fit the Laya ~424-token limit); call sites in the plugin come from `searchCallSites` (steps: `cross-file-facts.md`, Next: R2 in the plugin)
 - [ ] Engine mapping intent × V1/V2 × current decorator → finding / question / silent (0.8 / 0.5)
 - [ ] `arkui_ownership_intent(component, field, intent)` tool; intents stored as in-code annotations (`// arkui-sem: intent …`) or in a label log (choice open)
 - [ ] Questions to the agent phrased as intent, not decorator; listed once at `session.idle`

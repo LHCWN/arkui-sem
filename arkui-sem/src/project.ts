@@ -278,7 +278,7 @@ export class ProjectIndex implements Project {
     if (!decl.facts.components.some((c) => c.name === decl.name)) {
       return { sites: [], unscanned: 0 };
     }
-    const aliases: Aliases = { names: new Set(), defaultFiles: new Map() };
+    const aliases: Aliases = { names: new Set([decl.name]), defaultFiles: new Map() };
     const candidates = new Map([[directoryKey(resolve(decl.facts.file)), decl.facts]]);
     const unusable = new Set<string>();
     const searched = new Set<string>();
@@ -354,8 +354,8 @@ export class ProjectIndex implements Project {
   /** Adds the names under which importers of the file reach the struct, and the file when its default export does. */
   private addExports(facts: FileFacts, decl: Declaration, aliases: Aliases): void {
     const locals = this.localNames(facts, decl, aliases);
-    // declaration() follows an import's local name even when the file doesn't export it.
-    const exported = [...locals];
+    // An import's local name is left out: declaration() follows it from another file, but ArkTS can't import it.
+    const exported: string[] = [];
     for (const r of facts.reexports) {
       const mayReach =
         r.source === undefined

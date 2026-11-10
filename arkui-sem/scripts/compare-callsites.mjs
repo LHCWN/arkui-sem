@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Checks that the searched call sites of a sample of structs equal the whole-project scan's, and times both:
 //   node scripts/compare-callsites.mjs <project> [--sample <n>] [--all] [--no-rg]
-//   node scripts/compare-callsites.mjs --generate <files> [--sample <n>] [--no-rg]   (a synthetic project in a temp dir)
-// <project>: a directory with build-profile.json5. --all compares every struct; --no-rg searches from Node only.
+//   node scripts/compare-callsites.mjs --generate <files> [--keep] [--sample <n>] [--no-rg]   (a synthetic project in a temp dir)
+// <project>: a directory with build-profile.json5. --all compares every struct; --no-rg searches from Node only;
+// --keep leaves the generated project in place and prints its path.
 // Needs `npm run build`. Exits with 1 when a struct's sites differ.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -56,7 +57,7 @@ function generate(files) {
       exports.push(
         isDefault
           ? `export { default as ${struct}Alias } from './src/main/ets/${struct}'`
-          : i % 2 === 0
+          : i % 25 !== 1
             ? `export { ${struct} } from './src/main/ets/${struct}'`
             : `export * from './src/main/ets/${struct}'`,
       );
@@ -132,7 +133,9 @@ try {
   console.log(different === 0 ? 'all equal' : `${different} structs differ`);
   process.exitCode = different === 0 ? 0 : 1;
 } finally {
-  if (generated) {
+  if (generated && args.includes('--keep')) {
+    console.log(`kept: ${root}`);
+  } else if (generated) {
     rmSync(root, { recursive: true, force: true });
   }
 }

@@ -24,13 +24,10 @@ if (!global && !project) {
 
 const base = global ? join(homedir(), '.config', 'opencode') : join(resolve(project), '.opencode');
 const pluginFile = join(base, 'plugins', 'arkui-sem.ts');
-// An installed copy would tell the agent to call a tool that no longer exists.
-const staleSkillDir = join(base, 'skills', 'arkui-state-management');
 const entry = join(root, 'dist', 'opencode.js');
 
 if (uninstall) {
   rmSync(pluginFile, { force: true });
-  rmSync(staleSkillDir, { recursive: true, force: true });
   console.log(`removed arkui-sem from ${base}`);
   process.exit(0);
 }
@@ -40,7 +37,6 @@ if (!existsSync(entry)) {
   process.exit(1);
 }
 
-rmSync(staleSkillDir, { recursive: true, force: true });
 mkdirSync(dirname(pluginFile), { recursive: true });
 writeFileSync(
   pluginFile,

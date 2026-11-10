@@ -98,7 +98,7 @@ Parents further up are found by repeating this on demand. The search is asynchro
 
 **Result (lazy call sites).** `ProjectIndex.searchCallSites(decl)` next to `callSites(decl)`, which stays as the reference; `src/search.ts` holds the search. Decisions and their reasons: `docs/design-docs/decisions.md`; gaps: the tracker.
 
-- Exit criterion: met. `arkui-sem/scripts/compare-callsites.mjs` compares the two on a project or on one it generates. On a generated project of 10,020 files the 200 sampled structs (400 sites) were equal, with ripgrep and from Node. The tests compare both paths on every project fixture.
+- Exit criterion: met. `arkui-sem/scripts/compare-callsites.mjs` compares the two on a project or on one it generates. On a generated project of 10,020 files the 200 sampled structs (400 sites) were equal with ripgrep, and 100 of them from Node. The tests compare both paths on every project fixture.
 - Search, generated project, Windows 11, 12 threads, SSD (one word, median of the warm runs):
 
   | | warm | file data dropped from the OS cache |

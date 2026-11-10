@@ -207,12 +207,13 @@ export class ProjectIndex implements Project {
     const deadline = performance.now() + budgetMs;
     const key = directoryKey(dirs[0]);
     return memo(this.scans, key, () => {
-      const files = this.projectFiles(dirs);
+      const unreadable: string[] = [];
+      const files = this.projectFiles(dirs, unreadable);
       const previous = this.completeScans.get(key);
       if (previous && this.isCurrent(previous, files)) {
         return previous;
       }
-      const scan = this.scan(files, deadline);
+      const scan = this.scan(files, deadline, unreadable.length);
       if (scan.complete) {
         this.completeScans.set(key, scan);
       }
@@ -220,8 +221,9 @@ export class ProjectIndex implements Project {
     });
   }
 
-  private projectFiles(dirs: string[]): string[] {
-    return [...new Set(dirs.flatMap((dir) => etsFiles(dir)))];
+  /** unreadable: collects the directories the listing could not read. */
+  private projectFiles(dirs: string[], unreadable: string[]): string[] {
+    return [...new Set(dirs.flatMap((dir) => etsFiles(dir, new Set(), unreadable)))];
   }
 
   /** The build-profile root and the module directories outside it; without a profile, the closest package directory. */
@@ -247,9 +249,10 @@ export class ProjectIndex implements Project {
     return scan.listing === files.join('\n') && [...scan.mtimes].every(([path, m]) => this.stat(path) === m);
   }
 
-  private scan(files: string[], deadline: number): EdgeScan {
+  /** unreadable: directories the listing skipped; each counts as unscanned, and the scan is never reused as complete. */
+  private scan(files: string[], deadline: number, unreadable: number): EdgeScan {
     const edges = new Map<string, CallSite[]>();
-    let unscanned = 0;
+    let unscanned = unreadable;
     let done = 0;
     for (; done < files.length && performance.now() < deadline; done++) {
       const file = files[done];
@@ -267,7 +270,7 @@ export class ProjectIndex implements Project {
     return {
       edges,
       unscanned: unscanned + files.length - done,
-      complete: done === files.length,
+      complete: done === files.length && unreadable === 0,
       listing: files.join('\n'),
       mtimes: new Map(this.mtimes),
     };

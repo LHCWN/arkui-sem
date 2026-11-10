@@ -1,4 +1,5 @@
-// A component (an @Component / @ComponentV2 struct): its fields, where build() reads them, where methods write them.
+// A component (an @Component / @ComponentV2 / @CustomDialog struct): its fields, where build() reads them, where methods
+// write them.
 import type { BuildRead, ComponentFact, FieldFact, PathSegment, WriteContext, WriteFact } from '../analysis.js';
 import { LIFECYCLE } from './lifecycle.js';
 import { ts } from './parse.js';
@@ -17,6 +18,9 @@ import {
   unwrap,
 } from './syntax.js';
 import { declaredType, objectLiteral } from './types.js';
+
+/** A dialog is usually declared with @CustomDialog alone. */
+const COMPONENT_DECORATORS = ['@Component', '@ComponentV2', '@CustomDialog'];
 
 const MUTATING_CALLS = new Set([
   'push',
@@ -58,7 +62,7 @@ export interface MethodScan {
 
 export function component(s: ts.StructDeclaration, scan: FileScan): ComponentFact | undefined {
   const decorators = decoratorNames(s);
-  if (!s.name || (!decorators.includes('@Component') && !decorators.includes('@ComponentV2'))) {
+  if (!s.name || !COMPONENT_DECORATORS.some((d) => decorators.includes(d))) {
     return undefined;
   }
   const fields = s.members.flatMap((m) => {

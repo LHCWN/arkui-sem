@@ -2,6 +2,7 @@ import { relative } from 'node:path';
 import { type Plugin, tool } from '@opencode-ai/plugin';
 import {
   absolute,
+  type CallSite,
   type CallSites,
   classesWith,
   editedFiles,
@@ -20,19 +21,37 @@ const MAX_GATE_FOLLOWUPS = 3;
 /** The scan blocks opencode while it runs. */
 const CALL_SITE_BUDGET_MS = 15_000;
 const MAX_ARGUMENT_TEXT = 200;
+/** Only the coding agent reads call sites, on request: a widely used component must not fill its context. */
+const MAX_CALL_SITES = 30;
 
-/** By component. Undefined when the search failed: a failed project listing must not cost the file's own facts. */
+/**
+ * By component. Undefined when the search failed (reported to onError): a failed search must not cost the file's own
+ * facts.
+ */
 function callSitesOf(
   project: ProjectIndex,
   facts: FileFacts,
   workspace: string,
+  onError: (e: Error) => void,
 ): Map<string, CallSites | undefined> | undefined {
   const options = { budgetMs: CALL_SITE_BUDGET_MS, workspace };
   try {
     return new Map(facts.components.map((c) => [c.name, project.callSites({ facts, name: c.name }, options)]));
-  } catch {
+  } catch (e) {
+    onError(e as Error);
     return undefined;
   }
+}
+
+/** The first MAX_CALL_SITES sites by file and line, so the same question gives the same sites. Null: no search. */
+function firstSites(sites: CallSite[] | undefined, directory: string) {
+  return (
+    sites
+      ?.map((s) => ({ ...s, file: relative(directory, s.file) }))
+      .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
+      .slice(0, MAX_CALL_SITES)
+      .map((s) => ({ ...s, args: s.args.map((a) => ({ ...a, text: shortened(a.text) })) })) ?? null
+  );
 }
 
 function shortened(text: string): string {
@@ -176,13 +195,15 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
 
       arkui_facts: tool({
         description:
-          "Show ArkUI state-ownership facts for one .ets file: each component's fields with decorators, where each is read in build() and where it is written (event handler, async callback, lifecycle), listeners/timers with their release status, and where the component is used (parent, arguments and how each is written). unscanned above 0 means call sites may be missing or wrong; callSites and unscanned null mean none could be searched (for example, the file is in no project). Use before changing state decorators or how data flows between components.",
+          "Show ArkUI state-ownership facts for one .ets file: each component's fields with decorators, where each is read in build() and where it is written (event handler, async callback, lifecycle), listeners/timers with their release status, and where the component is used (parent, arguments and how each is written; the first 30 sites, callSitesTotal says how many exist). unscanned above 0 means call sites may be missing or wrong; callSites and unscanned null mean none could be searched (for example, the file is in no project). Use before changing state decorators or how data flows between components.",
         args: { file: tool.schema.string().describe('Path to a .ets file') },
         async execute(args, ctx) {
           const file = absolute(args.file, ctx.directory);
           project.refresh();
           const facts = project.facts(file);
-          const uses = callSitesOf(project, facts, ctx.directory);
+          const uses = callSitesOf(project, facts, ctx.directory, (e) => {
+            void log('warn', `call-site search failed for ${relative(ctx.directory, file)}: ${e.message}`);
+          });
           return JSON.stringify(
             {
               file: relative(ctx.directory, file),
@@ -201,12 +222,8 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
                   writes: f.writes.map(({ path, ...w }) => ({ ...w, nestedPath: pathText(path) || undefined })),
                 })),
                 resources: c.resources,
-                callSites:
-                  uses?.get(c.name)?.sites.map((s) => ({
-                    ...s,
-                    file: relative(ctx.directory, s.file),
-                    args: s.args.map((a) => ({ ...a, text: shortened(a.text) })),
-                  })) ?? null,
+                callSitesTotal: uses?.get(c.name)?.sites.length ?? null,
+                callSites: firstSites(uses?.get(c.name)?.sites, ctx.directory),
               })),
             },
             null,

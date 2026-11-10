@@ -135,8 +135,11 @@ export interface FileFacts {
   lines: string[];
 }
 
-/** How an argument's value is written, after casts, parentheses and `!`. `this.x.y`: a deeper property or index path. */
-export type ArgumentForm = 'this.x' | '$x' | 'this.x.y' | 'literal' | 'callback' | 'other';
+/**
+ * How an argument's value is written, after casts, parentheses and `!`. `this.x.y`: a deeper property or index path.
+ * `this.x!!` is V2 two-way binding: the child can write the parent's state, like `$x` in V1.
+ */
+export type ArgumentForm = 'this.x' | 'this.x!!' | '$x' | 'this.x.y' | 'literal' | 'callback' | 'other';
 
 export interface ComponentArgument {
   field: string;
@@ -167,7 +170,10 @@ export interface CallSite extends ComponentUse {
 
 export interface CallSites {
   sites: CallSite[];
-  /** Files whose sites may be missing or wrong: left when the budget ran out, unreadable, or with syntax errors. */
+  /**
+   * Files whose sites may be missing or wrong: left when the budget ran out, unreadable, or with syntax errors. A
+   * directory the listing can't read counts as one.
+   */
   unscanned: number;
 }
 
@@ -265,24 +271,39 @@ export function absolute(p: string, base: string) {
   return isAbsolute(p) ? p : resolve(base, p);
 }
 
-/** followed: real paths of the listing's root and of directories behind links, each listed once so link cycles end. */
-export function etsFiles(path: string, followed = new Set<string>()): string[] {
-  if (!existsSync(path)) {
-    return [];
+/**
+ * followed: real paths of the listing's root and of directories behind links, each listed once so link cycles end.
+ * unreadable: when given, a path the listing can't read is added to it and skipped; otherwise the error is thrown.
+ */
+export function etsFiles(path: string, followed = new Set<string>(), unreadable?: string[]): string[] {
+  try {
+    if (!existsSync(path)) {
+      return [];
+    }
+    if (statSync(path).isFile()) {
+      return path.endsWith('.ets') ? [path] : [];
+    }
+    const real = realpathSync(path);
+    if (followed.has(real)) {
+      return [];
+    }
+    followed.add(real);
+    return etsFilesIn(path, followed, unreadable);
+  } catch (e) {
+    return skipped(path, e, unreadable);
   }
-  if (statSync(path).isFile()) {
-    return path.endsWith('.ets') ? [path] : [];
+}
+
+function skipped<T>(path: string, e: unknown, unreadable?: string[]): T[] {
+  if (!unreadable) {
+    throw e;
   }
-  const real = realpathSync(path);
-  if (followed.has(real)) {
-    return [];
-  }
-  followed.add(real);
-  return etsFilesIn(path, followed);
+  unreadable.push(path);
+  return [];
 }
 
 /** Empty when the directory has gone since its parent was listed. */
-function entriesOf(dir: string): Dirent[] {
+function entriesOf(dir: string, unreadable?: string[]): Dirent[] {
   try {
     return readdirSync(dir, { withFileTypes: true });
   } catch (e) {
@@ -290,24 +311,24 @@ function entriesOf(dir: string): Dirent[] {
     if (code === 'ENOENT' || code === 'ENOTDIR') {
       return [];
     }
-    throw e;
+    return skipped(dir, e, unreadable);
   }
 }
 
 /** Directory entries carry their type, so only links and entries of unknown type cost a stat. */
-export function etsFilesIn(dir: string, followed = new Set<string>()): string[] {
-  return entriesOf(dir).flatMap((e) => {
+export function etsFilesIn(dir: string, followed = new Set<string>(), unreadable?: string[]): string[] {
+  return entriesOf(dir, unreadable).flatMap((e) => {
     if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) {
       return [];
     }
     const path = join(dir, e.name);
     if (e.isDirectory()) {
-      return etsFilesIn(path, followed);
+      return etsFilesIn(path, followed, unreadable);
     }
     if (e.isFile()) {
       return e.name.endsWith('.ets') ? [path] : [];
     }
-    return etsFiles(path, followed);
+    return etsFiles(path, followed, unreadable);
   });
 }
 

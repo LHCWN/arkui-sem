@@ -101,9 +101,20 @@ function formOf(value: ts.Expression, methods: Set<string>): ArgumentForm {
   }
   const member = thisMember(e);
   if (member !== undefined) {
-    return methods.has(member) ? 'callback' : 'this.x';
+    if (methods.has(member)) {
+      return 'callback';
+    }
+    return isTwoWay(value) ? 'this.x!!' : 'this.x';
   }
   return isPathBelowThis(e) ? 'this.x.y' : 'other';
+}
+
+/** `x!!`, under any parentheses: V2 two-way binding sugar. */
+function isTwoWay(value: ts.Expression): boolean {
+  const skipParens = (e: ts.Expression): ts.Expression =>
+    ts.isParenthesizedExpression(e) ? skipParens(e.expression) : e;
+  const outer = skipParens(value);
+  return ts.isNonNullExpression(outer) && ts.isNonNullExpression(skipParens(outer.expression));
 }
 
 function isLiteral(e: ts.Expression): boolean {

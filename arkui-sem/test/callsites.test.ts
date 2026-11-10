@@ -1,7 +1,7 @@
 // Call-site edges: component uses in one file, then resolved across the project on test/fixtures/project.
 
 import assert from 'node:assert/strict';
-import { rmSync, symlinkSync } from 'node:fs';
+import { chmodSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { etsFiles, type FactExtractor, type FileFacts } from '../src/analysis.js';
@@ -50,7 +50,7 @@ struct P {
   const [use] = facts.componentUses;
   assert.deepEqual(Object.fromEntries(use.args.map((a) => [a.field, a.form])), {
     a: 'this.x',
-    b: 'this.x',
+    b: 'this.x!!',
     c: '$x',
     d: 'this.x.y',
     e: 'this.x.y',
@@ -310,6 +310,63 @@ struct P {
   build() {}
 }`).componentUses;
   assert.deepEqual([use.parent, use.child, use.method, use.args[0].form], ['P', 'Dlg', 'ctrl', 'literal']);
+});
+
+test('a plain @CustomDialog struct, with or without @Component, is found from its controller builder', () => {
+  for (const decorators of ['@CustomDialog', '@CustomDialog\n@Component']) {
+    const root = tempDir();
+    put(join(root, 'oh-package.json5'), {});
+    const dialog = put(join(root, 'Dlg.ets'), `${decorators}\nexport struct Dlg {\n  build() {}\n}`);
+    put(
+      join(root, 'P.ets'),
+      "import { Dlg } from './Dlg'\n@Component\nstruct P {\n  ctrl: CustomDialogController = new CustomDialogController({ builder: Dlg() })\n  build() {}\n}",
+    );
+    const { parents, unscanned } = usedFrom(new ProjectIndex(), dialog, 'Dlg');
+    assert.deepEqual([parents, unscanned], [['P:Dlg'], 0], decorators);
+  }
+});
+
+test('two-way !! is its own form, also under parentheses; one ! and a deeper path are not', () => {
+  const [use] = extract(`
+import { Child } from './Child'
+@ComponentV2
+struct P {
+  @Local x: number = 0
+  @Local o: Info = new Info()
+  build() {
+    Child({ a: this.x!!, b: (this.x!!), c: this.x!, d: this.o.y!! })
+  }
+}`).componentUses;
+  assert.deepEqual(
+    use.args.map((a) => [a.field, a.form]),
+    [
+      ['a', 'this.x!!'],
+      ['b', 'this.x!!'],
+      ['c', 'this.x'],
+      ['d', 'this.x.y'],
+    ],
+  );
+});
+
+test('an unreadable directory is skipped and counted as unscanned; the rest of the project still answers', (t) => {
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    t.skip('needs a directory the process cannot read');
+    return;
+  }
+  const root = tempDir();
+  put(join(root, 'oh-package.json5'), {});
+  const declared = put(join(root, 'Child.ets'), child);
+  put(join(root, 'P.ets'), page('P', "import { Child } from './Child'", 'Child()'));
+  const locked = join(root, 'locked');
+  put(join(locked, 'Other.ets'), '');
+  chmodSync(locked, 0o000);
+  try {
+    const index = new ProjectIndex();
+    assert.deepEqual(usedFrom(index, declared, 'Child'), { parents: ['P:Child'], unscanned: 1 });
+    assert.throws(() => etsFiles(root), /EACCES/);
+  } finally {
+    chmodSync(locked, 0o755);
+  }
 });
 
 test('directory link cycles end the listing', () => {

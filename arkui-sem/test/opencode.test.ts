@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { ArkuiSemPlugin } from '../src/opencode.js';
+import { ProjectIndex } from '../src/project.js';
 import { put, ROOT, tempDir } from './helpers.js';
 
 const data = tempDir();
@@ -128,12 +129,54 @@ test('arkui_facts shows where a component is used, with long argument text cut',
   assert.ok(site.args[1].text.endsWith('...'));
 });
 
+test('arkui_facts lists the first 30 call sites by file and line, with the total', async () => {
+  const dir = tempDir();
+  put(join(dir, 'oh-package.json5'), {});
+  const child = put(join(dir, 'Child.ets'), '@Component\nexport struct Child {\n  build() {}\n}');
+  for (let i = 12; i >= 0; i--) {
+    put(
+      join(dir, `P${i}.ets`),
+      `import { Child } from './Child'\n@Component\nstruct P${i} {\n  build() {\n    Child()\n    Child()\n    Child()\n  }\n}`,
+    );
+  }
+  const facts = JSON.parse(await hooks.tool.arkui_facts.execute({ file: child }, ctx));
+  const [c] = facts.components;
+  assert.equal(c.callSitesTotal, 39);
+  assert.equal(c.callSites.length, 30);
+  assert.deepEqual(
+    c.callSites.slice(0, 4).map((s: any) => `${s.file.split(/[\\/]/).pop()}:${s.line}`),
+    ['P0.ets:5', 'P0.ets:6', 'P0.ets:7', 'P1.ets:5'],
+  );
+});
+
 test('arkui_facts shows callSites null for a file in no project', async () => {
   const dir = tempDir();
   const child = put(join(dir, 'Child.ets'), '@Component\nexport struct Child {\n  build() {}\n}');
   const facts = JSON.parse(await hooks.tool.arkui_facts.execute({ file: child }, ctx));
   assert.equal(facts.components[0].callSites, null);
   assert.equal(facts.unscanned, null);
+});
+
+test('arkui_facts logs a failed call-site search and still returns the file facts with null', async (t) => {
+  const dir = tempDir();
+  put(join(dir, 'oh-package.json5'), {});
+  const file = put(
+    join(dir, 'Child.ets'),
+    '@Component\nexport struct Child {\n  @State n: number = 0\n  build() {}\n}',
+  );
+  const logged: any[] = [];
+  const log = t.mock.method(client.app, 'log', async (opts: unknown) => {
+    logged.push(opts);
+  });
+  t.mock.method(ProjectIndex.prototype, 'callSites', () => {
+    throw new Error('EACCES: permission denied');
+  });
+  const facts = JSON.parse(await hooks.tool.arkui_facts.execute({ file }, ctx));
+  assert.equal(facts.components[0].fields[0].name, 'n');
+  assert.equal(facts.components[0].callSites, null);
+  assert.equal(facts.unscanned, null);
+  assert.equal(log.mock.callCount(), 1);
+  assert.match(logged[0].body.message, /call-site search failed for .*Child\.ets: EACCES/);
 });
 
 test('arkui_facts lists only classes declared in the file, by their source names', async () => {

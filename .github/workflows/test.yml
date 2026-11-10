@@ -26,6 +26,12 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: arkui-sem/package-lock.json
+      # The call-site search uses ripgrep when it is on PATH; without it the tests cover the Node fallback only.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - if: runner.os == 'Windows'
+        run: choco install ripgrep -y --no-progress
+      - run: rg --version
       - run: npm ci
         working-directory: arkui-sem
       - run: npm run lint

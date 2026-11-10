@@ -60,7 +60,6 @@
   - Sites are ordered by file path, the scan's by directory listing.
   - `declaration()` follows `import { X } from './G'` when `G` only imports `X` and doesn't export it, which ArkTS
     rejects. The scan lists such a site; the search doesn't look for `G`'s local names.
-  - CI runs the ripgrep path only if the runner has `rg` on `PATH`; otherwise only the Node fallback is tested there.
 - On legacy ace-server (DevEco 6.x) `references` and `callers` see usages in open files only (queried and edited ones), so
   usages in other files are missed; the standard server (DevEco 26+) searches the whole project.
 - No licence yet: the owner picks one before the repo goes public.

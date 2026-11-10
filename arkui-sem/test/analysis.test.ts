@@ -5,6 +5,18 @@ import { test } from 'node:test';
 import { classesWith, readLines } from '../src/analysis.js';
 import { extract } from './helpers.js';
 
+test('a read in a @LocalBuilder counts as rendered', () => {
+  const facts = extract(`@Component
+struct P {
+  count: number = 0
+  @LocalBuilder panel() {
+    Text(this.count.toString())
+  }
+  build() {}
+}`);
+  assert.equal(facts.components[0].fields[0].buildReads.length, 1);
+});
+
 test('a regex literal with an unmatched paren does not hide later members', () => {
   const facts = extract(`@Component
 struct P {

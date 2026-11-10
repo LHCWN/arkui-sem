@@ -112,7 +112,7 @@ Each phase starts only after an explicit go.
 #### Phase 1: LSP spike (decides how much LSP can do)
 - [ ] Pick a headless ArkTS language server
 - [ ] Probe on `sandbox/demo`:
-  - [ ] `references` on a struct
+  - [x] `references` on a struct: works, and `definition` works per call site (ace-server 26 and DevEco 6.1.1). Call hierarchy doesn't list struct calls in either direction, so call sites come from our own walk (cross-file-facts PR 2b); `references` and `definition` join in PR 3
   - [ ] `references` on a child field: does it return the call-site property? (**decisive probe**)
   - [ ] `documentHighlight` Write kinds
   - [ ] `typeDefinition` across files
@@ -123,7 +123,7 @@ Each phase starts only after an explicit go.
 
 #### Phase 2: cross-file facts
 - [x] Cross-file class resolution: a project index (`src/project.ts`) passed to the rules, in the plugin and the bench alike; the LSP adds `references` later (cross-file-facts PR 3)
-- [ ] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback)
+- [x] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback), from our own walk and the project index; exposed in `arkui_facts` (no R2 candidate yet)
 - [ ] Parent-side facts: decorator of `x`, writes after init, readers (parent, siblings)
 - [ ] Child-side facts: writes to `f` with context, invoked callbacks/`@Event`s, `@CustomDialog`/controller
 - [ ] String-key index: storage keys, `@Provide`/`@Consume` aliases, `@Watch`/`@Monitor` targets

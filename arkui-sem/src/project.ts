@@ -1,9 +1,31 @@
-// Project index: finds the file that declares a name used in an .ets file, across imports, module packages and re-exports.
+// Project index: finds the file that declares a name used in an .ets file, across imports, module packages and re-exports,
+// and where each struct is used.
 import { readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import JSON5 from 'json5';
-import { type Declaration, declares, type FactExtractor, type FileFacts, type Project } from './analysis.js';
+import {
+  type CallSite,
+  type CallSites,
+  type Declaration,
+  declares,
+  etsFiles,
+  type FactExtractor,
+  type FileFacts,
+  type Project,
+} from './analysis.js';
 import { EtsExtractor } from './ets/extract.js';
+
+/** A whole-project pass over call sites. */
+interface EdgeScan {
+  /** By edgeKey of the declaring struct. */
+  edges: Map<string, CallSite[]>;
+  unscanned: number;
+  /** The scan reached the last file. */
+  complete: boolean;
+  /** What the edges were built from: the listing, and every path looked at (absent ones as undefined). */
+  listing: string;
+  mtimes: Map<string, number | undefined>;
+}
 
 interface Module {
   name: string;
@@ -30,6 +52,8 @@ const FILE_DEPENDENCY = 'file:';
 /** ArkTS imports omit the extension. */
 const SOURCE_SUFFIXES = ['', '.ets', '.ts', '/Index.ets', '/index.ets', '/index.ts'];
 const SDK_PREFIXES = ['@ohos.', '@kit.', '@system.', '@arkts.', '@hms.'];
+/** Word-bounded: `constructor` contains `struct`. A @LocalBuilder sits inside a struct. */
+const MAY_USE_COMPONENTS = /\bstruct\b|@Builder\b/;
 
 function readJson5<T>(path: string): Partial<T> {
   return JSON5.parse(readFileSync(path, 'utf8')) ?? {};
@@ -54,6 +78,15 @@ function mtime(path: string): number | undefined {
 /** Windows paths compare without case, as in path.relative. */
 function directoryKey(dir: string) {
   return process.platform === 'win32' ? dir.toLowerCase() : dir;
+}
+
+function isOutside(dir: string, root: string) {
+  const path = relative(root, dir);
+  return path.startsWith('..') || isAbsolute(path);
+}
+
+function edgeKey(file: string, struct: string) {
+  return `${directoryKey(file)}#${struct}`;
 }
 
 function memo<K, V>(cache: Map<K, V>, key: K, compute: () => V): V {
@@ -124,10 +157,16 @@ export class ProjectIndex implements Project {
   private readonly lookups = new Map<string, Declaration | undefined>();
   /** The answer depends on the importing directory, not the file: its module, and the base of relative specifiers. */
   private readonly imports = new Map<string, string | undefined>();
+  private readonly mayUseComponents = new FileCache(this.stat, (p) => MAY_USE_COMPONENTS.test(readFileSync(p, 'utf8')));
+  /** This check's scan of each project, complete or not: one scan and one clock per check. */
+  private readonly scans = new Map<string, EdgeScan>();
+  /** Reused by later checks while nothing the scan looked at has changed. */
+  private readonly completeScans = new Map<string, EdgeScan>();
 
   constructor(private readonly extractor: FactExtractor = new EtsExtractor()) {}
 
   refresh(): void {
+    this.scans.clear();
     this.mtimes.clear();
     this.roots.clear();
     this.moduleLists.clear();
@@ -147,6 +186,103 @@ export class ProjectIndex implements Project {
 
   declaration(name: string, from: FileFacts): Declaration | undefined {
     return memo(this.lookups, `${from.file}#${name}`, () => this.find(name, from, new Set()));
+  }
+
+  /**
+   * Where a struct is used across its project. budgetMs stops the scan between files and counts the rest as unscanned,
+   * so sites may be missing; it applies to the first call after refresh, whose scan later calls share. Without a budget
+   * the scan reads the whole project. Undefined when the file belongs to no project, so nothing was searched.
+   * Synchronous by design: a check must not see a refresh of this index mid-scan.
+   */
+  callSites(decl: Declaration, options: { budgetMs?: number; workspace?: string } = {}): CallSites | undefined {
+    const dirs = this.projectDirs(decl.facts.file, options.workspace);
+    if (dirs.length === 0) {
+      return undefined;
+    }
+    const scan = this.scanOf(dirs, options.budgetMs ?? Number.POSITIVE_INFINITY);
+    return { sites: scan.edges.get(edgeKey(decl.facts.file, decl.name)) ?? [], unscanned: scan.unscanned };
+  }
+
+  private scanOf(dirs: string[], budgetMs: number): EdgeScan {
+    const deadline = performance.now() + budgetMs;
+    const key = directoryKey(dirs[0]);
+    return memo(this.scans, key, () => {
+      const unreadable: string[] = [];
+      const files = this.projectFiles(dirs, unreadable);
+      const previous = this.completeScans.get(key);
+      if (previous && this.isCurrent(previous, files)) {
+        return previous;
+      }
+      const scan = this.scan(files, deadline, unreadable.length);
+      if (scan.complete) {
+        this.completeScans.set(key, scan);
+      }
+      return scan;
+    });
+  }
+
+  /** unreadable: collects the directories the listing could not read. */
+  private projectFiles(dirs: string[], unreadable: string[]): string[] {
+    return [...new Set(dirs.flatMap((dir) => etsFiles(dir, new Set(), unreadable)))];
+  }
+
+  /** The build-profile root and the module directories outside it; without a profile, the closest package directory. */
+  private projectDirs(file: string, workspace?: string): string[] {
+    const root = this.projectRoot(file) ?? (workspace === undefined ? undefined : this.rootListing(file, workspace));
+    if (root !== undefined) {
+      const modules = [...(this.moduleList(root)?.dirs.values() ?? [])];
+      return [root, ...modules.filter((dir) => isOutside(dir, root))];
+    }
+    const packageDir = this.moduleDir(file);
+    return packageDir === undefined ? [] : [packageDir];
+  }
+
+  /** The workspace's project, when it lists the file's module: a module outside the root has no profile above it. */
+  private rootListing(file: string, workspace: string): string | undefined {
+    const root = this.projectRoot(join(workspace, OH_PACKAGE));
+    const dirs = root === undefined ? undefined : this.moduleList(root)?.dirs;
+    const listed = dirs && this.closestDir(dirname(resolve(file)), (dir) => dirs.has(directoryKey(dir)));
+    return listed === undefined ? undefined : root;
+  }
+
+  private isCurrent(scan: EdgeScan, files: string[]): boolean {
+    return scan.listing === files.join('\n') && [...scan.mtimes].every(([path, m]) => this.stat(path) === m);
+  }
+
+  /** unreadable: directories the listing skipped; each counts as unscanned, and the scan is never reused as complete. */
+  private scan(files: string[], deadline: number, unreadable: number): EdgeScan {
+    const edges = new Map<string, CallSite[]>();
+    let unscanned = unreadable;
+    let done = 0;
+    for (; done < files.length && performance.now() < deadline; done++) {
+      const file = files[done];
+      if (this.mayUseComponents.get(file) === false) {
+        continue;
+      }
+      const facts = this.parsed.get(file);
+      if (!facts || facts.parseErrors) {
+        unscanned++;
+      }
+      if (facts) {
+        this.addEdges(facts, edges);
+      }
+    }
+    return {
+      edges,
+      unscanned: unscanned + files.length - done,
+      complete: done === files.length && unreadable === 0,
+      listing: files.join('\n'),
+      mtimes: new Map(this.mtimes),
+    };
+  }
+
+  private addEdges(facts: FileFacts, edges: Map<string, CallSite[]>): void {
+    for (const use of facts.componentUses) {
+      const target = this.declaration(use.child, facts);
+      if (target?.facts.components.some((c) => c.name === target.name)) {
+        memo(edges, edgeKey(target.facts.file, target.name), () => []).push({ ...use, file: facts.file });
+      }
+    }
   }
 
   /** The file an import specifier points to: a relative path, a package entry or a file inside a package. */

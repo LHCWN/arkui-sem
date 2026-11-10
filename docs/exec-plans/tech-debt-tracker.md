@@ -27,8 +27,29 @@
 - The LSP client sends no package dependency records at `initialize`: modules come from a folder scan (up to four
   levels below the project root), so the server doesn't resolve imports by package name (listing modules from
   `oh-package.json5` alone was not enough, nor was the server's own `--projectPath` mode). The rules resolve them through
-  the project index (`src/project.ts`); the LSP records come from the same lookup (cross-file-facts PR 3). R2 call sites,
-  R3 releases in helpers and R4 writers across modules are still missing.
+  the project index (`src/project.ts`); the LSP records come from the same lookup (cross-file-facts PR 3). R3 releases in
+  helpers and R4 writers across modules are still missing.
+- Review whether the `arkui_facts` tool is useful at all, and remove it (or trim it) if it isn't. Only the coding agent
+  reads it, on request: the skill and the tool description suggest calling it before changing state flow, but the
+  post-edit check, the gate and the judge never use it. Whether agents call it, or act on what it shows, is untested; the
+  design doc plans an on/off ablation (`docs/design-docs/agentic-plugin.md`). The call-site edges behind it stay: R2
+  needs them.
+- Call-site edges (`ProjectIndex.callSites`):
+  - `arkui_facts` shows the first 30 sites (by file, then line) and `callSitesTotal`; there is no paging.
+  - The time budget stops the scan between files, but listing the project can't be interrupted: on a cold OS file cache
+    the listing alone can exceed the budget.
+  - A scan cut short lists fewer sites and reports `unscanned`, so it can't support an absence claim (R2 waits for complete
+    edges on large projects).
+  - A file with parser errors counts as `unscanned`. What the parser recovered is still listed, and sites may be missing
+    or wrong: an unclosed object or string can swallow later calls as arguments, and a stray `}` can lose a builder. Some
+    valid ArkTS reports an error too (`.attr()` after the closure of `Child() { … }`).
+  - A module outside the build-profile root is tied to its project through the session's directory. Opened from anywhere
+    else, the scan covers that module alone.
+  - A directory link to a folder the listing also walks directly lists its files twice, so their sites appear twice. Only
+    cycles are cut.
+  - The budget is checked between files, so resolving one file's uses can overrun it by the files those imports parse.
+  - No signal catches a half-typed line that still parses: `this.` above `Child()` reads as `this.Child()`, so the site is
+    lost with no parser error.
 - On legacy ace-server (DevEco 6.x) `references` and `callers` see usages in open files only (queried and edited ones), so
   usages in other files are missed; the standard server (DevEco 26+) searches the whole project.
 - No licence yet: the owner picks one before the repo goes public.

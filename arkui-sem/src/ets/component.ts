@@ -1,4 +1,5 @@
-// A component (an @Component / @ComponentV2 struct): its fields, where build() reads them, where methods write them.
+// A component (an @Component / @ComponentV2 / @CustomDialog struct): its fields, where build() reads them, where methods
+// write them.
 import type { BuildRead, ComponentFact, FieldFact, PathSegment, WriteContext, WriteFact } from '../analysis.js';
 import { LIFECYCLE } from './lifecycle.js';
 import { ts } from './parse.js';
@@ -18,6 +19,9 @@ import {
 } from './syntax.js';
 import { declaredType, objectLiteral } from './types.js';
 
+/** A dialog is usually declared with @CustomDialog alone. */
+const COMPONENT_DECORATORS = ['@Component', '@ComponentV2', '@CustomDialog'];
+
 const MUTATING_CALLS = new Set([
   'push',
   'pop',
@@ -36,6 +40,7 @@ const DEFERRING_CALLS = new Set(['then', 'catch', 'finally', 'setTimeout', 'setI
 const CLOCKS = new Set(['Date.now', 'performance.now']);
 const TIMERS = new Set(['setTimeout', 'setInterval']);
 const LOOPS = new Set(['ForEach', 'LazyForEach', 'Repeat']);
+const UI_BUILDERS = new Set(['@Builder', '@LocalBuilder']);
 
 /** Code the component runs: a method, or a field holding a function (a handler, `onTap = () => { … }`). */
 export interface Method {
@@ -57,26 +62,14 @@ export interface MethodScan {
 
 export function component(s: ts.StructDeclaration, scan: FileScan): ComponentFact | undefined {
   const decorators = decoratorNames(s);
-  if (!s.name || (!decorators.includes('@Component') && !decorators.includes('@ComponentV2'))) {
+  if (!s.name || !COMPONENT_DECORATORS.some((d) => decorators.includes(d))) {
     return undefined;
   }
-  const fields: FieldFact[] = [];
-  const methods: Method[] = [];
-  for (const m of s.members) {
+  const fields = s.members.flatMap((m) => {
     const name = memberName(m.name);
-    if (name === undefined) {
-      continue;
-    }
-    if (ts.isPropertyDeclaration(m)) {
-      fields.push(fieldFact(m, name, scan));
-      const init = m.initializer && unwrap(m.initializer);
-      if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) {
-        methods.push({ kind: 'handler', name, decorators: [], body: init });
-      }
-    } else if (ts.isMethodDeclaration(m) && m.body) {
-      methods.push({ kind: 'method', name, decorators: decoratorNames(m), body: m.body });
-    }
-  }
+    return ts.isPropertyDeclaration(m) && name !== undefined ? [fieldFact(m, name, scan)] : [];
+  });
+  const methods = methodsOf(s);
   const byName = new Map(fields.map((f) => [f.name, f]));
   const names = new Set(methods.map((m) => m.name));
   const scans = methods.map((m) => scanMethod(m, byName, names, scan));
@@ -94,6 +87,24 @@ export function component(s: ts.StructDeclaration, scan: FileScan): ComponentFac
     fields,
     resources: resources(scans, scan),
   };
+}
+
+export function methodsOf(s: ts.StructDeclaration): Method[] {
+  return s.members.flatMap((m): Method[] => {
+    const name = memberName(m.name);
+    if (name === undefined) {
+      return [];
+    }
+    if (ts.isMethodDeclaration(m) && m.body) {
+      return [{ kind: 'method', name, decorators: decoratorNames(m), body: m.body }];
+    }
+    const init = ts.isPropertyDeclaration(m) && m.initializer ? unwrap(m.initializer) : undefined;
+    return init && isFunction(init) ? [{ kind: 'handler', name, decorators: [], body: init }] : [];
+  });
+}
+
+export function rendersUi(m: Method): boolean {
+  return m.name === 'build' || m.decorators.some((d) => UI_BUILDERS.has(d));
 }
 
 function fieldFact(m: ts.PropertyDeclaration, name: string, scan: FileScan): FieldFact {
@@ -147,7 +158,7 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
     }
   };
   visit(m.body);
-  const context = { method: m, awaits, scan, isBuild: m.name === 'build' || m.decorators.includes('@Builder') };
+  const context = { method: m, awaits, scan, isBuild: rendersUi(m) };
   for (const base of accesses) {
     const field = fields.get(base.name.text);
     if (field) {
@@ -336,10 +347,7 @@ function externalMethods(scans: MethodScan[]): Set<string> {
       .map((s) => s.method)
       .filter(f)
       .map((m) => m.name);
-  const fromBuild = reach(
-    roots((m) => m.name === 'build' || m.decorators.includes('@Builder')),
-    true,
-  );
+  const fromBuild = reach(roots(rendersUi), true);
   const fromLifecycle = reach(
     roots((m) => LIFECYCLE.has(m.name)),
     false,

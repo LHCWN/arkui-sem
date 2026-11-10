@@ -1,5 +1,5 @@
 // .ets source → program facts → rule candidates. Deterministic; no model calls.
-import { type Dirent, existsSync, readdirSync, statSync } from 'node:fs';
+import { type Dirent, existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 // --- Facts ---
@@ -129,7 +129,52 @@ export interface FileFacts {
   exportAll: string[];
   /** Name of the class or struct behind `export default`. */
   defaultExport?: string;
+  componentUses: ComponentUse[];
+  /** The parser reported syntax errors; some valid ArkTS does too (`.attr()` after the closure of `Child() { … }`). */
+  parseErrors: boolean;
   lines: string[];
+}
+
+/**
+ * How an argument's value is written, after casts, parentheses and `!`. `this.x.y`: a deeper property or index path.
+ * `this.x!!` is V2 two-way binding: the child can write the parent's state, like `$x` in V1.
+ */
+export type ArgumentForm = 'this.x' | 'this.x!!' | '$x' | 'this.x.y' | 'literal' | 'callback' | 'other';
+
+export interface ComponentArgument {
+  field: string;
+  line: number;
+  form: ArgumentForm;
+  /** The expression as written, on one line. */
+  text: string;
+}
+
+/** `Child({ … })` in a build(), @Builder or @LocalBuilder body, or a field initializer (a dialog controller's builder). */
+export interface ComponentUse {
+  /** As written in the file, an alias included. */
+  child: string;
+  /** Absent in a file-level @Builder. */
+  parent?: string;
+  /** `build`, a builder's or field's name, or `@Builder foo` for a file-level builder. */
+  method: string;
+  line: number;
+  args: ComponentArgument[];
+  /** `Child(opts)` or a spread: fields may be passed that args doesn't list. */
+  opaqueArgs?: boolean;
+}
+
+/** A component use, resolved to the struct it instantiates. */
+export interface CallSite extends ComponentUse {
+  file: string;
+}
+
+export interface CallSites {
+  sites: CallSite[];
+  /**
+   * Files whose sites may be missing or wrong: left when the budget ran out, unreadable, or with syntax errors. A
+   * directory the listing can't read counts as one.
+   */
+  unscanned: number;
 }
 
 export interface ImportFact {
@@ -137,8 +182,6 @@ export interface ImportFact {
   /** Name in the source module; "default" for a default import. */
   imported: string;
   source: string;
-  /** The file calls `local(…)` somewhere outside the import. */
-  called: boolean;
 }
 
 export interface ReexportFact {
@@ -156,12 +199,12 @@ export interface Declaration {
 /** Finds where a name used in a file is declared, across files; the project index implements it. */
 export interface ClassResolver {
   declaration(name: string, from: FileFacts): Declaration | undefined;
-  /** Called once per check, before any lookup: drop what may have changed since the last one. */
-  refresh?(): void;
 }
 
 /** A project's files: the facts of each, by normalized path (`resolve`), and where the names they use are declared. */
 export interface Project extends ClassResolver {
+  /** Called once per check, before any lookup: drop what may have changed since the last one. */
+  refresh(): void;
   /** Throws when the file can't be read or parsed. */
   facts(file: string): FileFacts;
 }
@@ -228,18 +271,39 @@ export function absolute(p: string, base: string) {
   return isAbsolute(p) ? p : resolve(base, p);
 }
 
-export function etsFiles(path: string): string[] {
-  if (!existsSync(path)) {
-    return [];
+/**
+ * followed: real paths of the listing's root and of directories behind links, each listed once so link cycles end.
+ * unreadable: when given, a path the listing can't read is added to it and skipped; otherwise the error is thrown.
+ */
+export function etsFiles(path: string, followed = new Set<string>(), unreadable?: string[]): string[] {
+  try {
+    if (!existsSync(path)) {
+      return [];
+    }
+    if (statSync(path).isFile()) {
+      return path.endsWith('.ets') ? [path] : [];
+    }
+    const real = realpathSync(path);
+    if (followed.has(real)) {
+      return [];
+    }
+    followed.add(real);
+    return etsFilesIn(path, followed, unreadable);
+  } catch (e) {
+    return skipped(path, e, unreadable);
   }
-  if (statSync(path).isFile()) {
-    return path.endsWith('.ets') ? [path] : [];
+}
+
+function skipped<T>(path: string, e: unknown, unreadable?: string[]): T[] {
+  if (!unreadable) {
+    throw e;
   }
-  return etsFilesIn(path);
+  unreadable.push(path);
+  return [];
 }
 
 /** Empty when the directory has gone since its parent was listed. */
-function entriesOf(dir: string): Dirent[] {
+function entriesOf(dir: string, unreadable?: string[]): Dirent[] {
   try {
     return readdirSync(dir, { withFileTypes: true });
   } catch (e) {
@@ -247,24 +311,24 @@ function entriesOf(dir: string): Dirent[] {
     if (code === 'ENOENT' || code === 'ENOTDIR') {
       return [];
     }
-    throw e;
+    return skipped(dir, e, unreadable);
   }
 }
 
 /** Directory entries carry their type, so only links and entries of unknown type cost a stat. */
-export function etsFilesIn(dir: string): string[] {
-  return entriesOf(dir).flatMap((e) => {
+export function etsFilesIn(dir: string, followed = new Set<string>(), unreadable?: string[]): string[] {
+  return entriesOf(dir, unreadable).flatMap((e) => {
     if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) {
       return [];
     }
     const path = join(dir, e.name);
     if (e.isDirectory()) {
-      return etsFilesIn(path);
+      return etsFilesIn(path, followed, unreadable);
     }
     if (e.isFile()) {
       return e.name.endsWith('.ets') ? [path] : [];
     }
-    return etsFiles(path);
+    return etsFiles(path, followed, unreadable);
   });
 }
 
@@ -634,8 +698,9 @@ function linkTypesInScope(facts: FileFacts, resolver?: ClassResolver): { name: s
   if (!resolver) {
     return local;
   }
+  const used = new Set(facts.componentUses.map((u) => u.child));
   const imported = facts.imports
-    .filter((i) => i.called)
+    .filter((i) => used.has(i.local))
     .flatMap((i) => {
       const decl = resolver.declaration(i.local, facts);
       const child = decl?.facts.components.find((c) => c.name === decl.name);

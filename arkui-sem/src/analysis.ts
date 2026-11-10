@@ -265,7 +265,7 @@ export function objectLinkTypes(facts: FileFacts): string[] {
 
 // --- Files ---
 
-const SKIP_DIRS = new Set(['node_modules', 'oh_modules', 'build', 'dist']);
+export const SKIP_DIRS = new Set(['node_modules', 'oh_modules', 'build', 'dist']);
 
 export function absolute(p: string, base: string) {
   return isAbsolute(p) ? p : resolve(base, p);

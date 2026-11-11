@@ -2,7 +2,7 @@
 
 Roadmap phase 2, plus two items of phase 3 (`docs/exec-plans/active/roadmap.md`, Plan). One branch per PR, from `main`.
 
-**Status:** PR 1 merged (#18: project index, cross-file R1 nested write, bench re-run: `bench/docs/plans/r1-nested.md`, Result). PR 2 is split: 2a (facts from the ohos-typescript syntax tree, judge features as slice fields; `bench/docs/plans/ts-extractor.md`) merged (#19); 2b (call-site edges, index only: `ProjectIndex.callSites`) merged (#22; scan timings and comparison: `bench/docs/plans/index-baseline.md`); typed values from the checker are a separate later item. Lazy call sites done (`ProjectIndex.searchCallSites`; see its Result below). PR 3 open. Project index performance fixes merged (#21).
+**Status:** done. PR 1 (#18), 2a (#19), 2b (#22), index performance (#21), lazy call sites (#25), R2 event unwired, and PR 3 (the language server's lifecycle in the plugin; Result at the end). The text below is the plan as written; where a Result differs from it, the Result holds. What is left moved to the roadmap: checker types, the other R2 shapes, V2 owners in other files.
 
 ## Goal
 
@@ -28,7 +28,7 @@ Rules today see one file. Give them facts from the files a component imports, an
    - V2: owners declared in other files stay skipped (#12); they are to be resolved through ace-server `definition` (#14).
 3. **Call-site edges** (phase 2): for each struct, its call sites (`Child({ f: <expr> })`), with parent, child, field and the expression form (`this.x` / `$x` / `this.x.y` / literal / callback).
    - Index first: scan the project for the struct name, then our parse of the object literal.
-   - LSP `references` on the struct when a server is running, to confirm or add sites.
+   - Call sites come from the index only. The LSP doesn't look them up (decisions.md: no overlapping call-site sources).
    - No R2 candidate is emitted (phase 4).
 4. **LSP in the plugin.** Start ace-server lazily on the first `.ets` edit, keep it warm for the session, stop it on dispose.
    After each edit call `open(file, text)` before any query (tech-debt tracker). A missing server, a start failure or a
@@ -38,10 +38,8 @@ Rules today see one file. Give them facts from the files a component imports, an
 
 - Keep `FileFacts` per file. Add a project-level layer (for example `ProjectFacts` / a resolver passed to `candidates()`),
   not a bigger `FileFacts`. The bench uses the same index without an LSP (roadmap: LSP fit).
-- Class lookup goes through the index, not the LSP: it is deterministic and works at bench scale. The LSP adds
-  `references` (call sites, writers), which imports alone can't give.
-- Legacy ace-server (DevEco 6.x) sees references in open files only. On legacy, open the files the index lists as
-  candidate callers before asking, or rely on the index alone. Measure which.
+- Class lookup goes through the index, not the LSP: it is deterministic and works at bench scale. So do call
+  sites. The LSP is used only for facts the index can't give (field writers and readers, phase 4), never to repeat one.
 - Server lookup stays as in `src/lsp/server.ts`: `--ace-server`, then `ARKUI_SEM_ACE_SERVER`, then DevEco. No
   machine-specific search in code. Config gets an `lsp` switch (`auto` default, `off`).
 - The same package lookup also builds the module dependency records sent to ace-server at `initialize` (PR 3), so
@@ -64,8 +62,7 @@ Three PRs, in order. Each adds one visible change, is testable on its own and up
    and `build-profile.json5`), file cache, the rule changes, their fixtures and tests, the bench re-run below.
 2. **Call-site edges, index only.** Goal item 3 without the LSP: struct-name scan, object-literal parse, expression forms,
    tests.
-3. **LSP in the plugin.** Goal item 4: lifecycle, `open` before query, fallback, the `lsp` switch, `references` adding to
-   PR 2's edges (with the legacy open-files workaround), hvigor's dependency map as the module source when fresh (see Goal 1), dependency records at
+3. **LSP in the plugin.** Goal item 4: lifecycle, `open` before query, fallback, the `lsp` switch, hvigor's dependency map as the module source when fresh (see Goal 1), dependency records at
    `initialize` from that lookup, the timing
    check. Moves this plan to `completed/`.
 
@@ -155,3 +152,17 @@ Results are kept per struct for one check. Parents further up are found by repea
 
 - Plan first: post the plan with open decisions, wait for a go.
 - Don't push or open the PR until the user has reviewed the work.
+
+## Result (PR 3: the language server in the plugin)
+
+Decisions: `docs/design-docs/decisions.md` (2026-11-11); gaps: the tracker.
+
+- **Done.** `src/lsp/warm.ts` keeps one ace-server per project: started in the background on the project's first `.ets` edit, sent each edited file (those edited during start-up when it is ready), stopped on the plugin's `dispose`, also mid-start. `ask(file, budgetMs, query)` is the one way to a server: no answer when the project has no server, or it is starting, slow or dead. Setting `lsp`: `auto` (default) or `off`.
+- **No rule asks the server.** Call sites stay with the index, and the facts meant for the server (field writers and readers, V2 owners in other files) are later phases. So the check path is the same with and without it.
+- **Checked** with the fake server (`test/lsp.test.ts`, `test/opencode.test.ts`): edits reach the server before the first answer, a missing, starting or dead server gives none, stop ends a running and a starting server. Live on a synced two-module project with both servers (standard 26, legacy 6.1.1): a `definition` across modules after an edit, no server process left after stop.
+- **Timing** (roadmap P-A3, p95 ≤ 1.5 s per edit): met on one module of a large real project with both servers warm, heuristic backend. The hook doesn't wait for the server, so this measures the file sent to it and the shared processor, not a query. The standard server stayed silent past the client's default start timeout there, so the plugin allows ten minutes. Runs and numbers: `bench/docs/RESULTS.md`.
+- **Differs from the plan:**
+  - No dependency records at `initialize`: they changed no answer on either server. A package import is followed through the `oh_modules` links of a synced project, with or without records, and not without the links.
+  - hvigor's dependency map is not read: when fresh it equals what the index already reads, so it is a second source for the same fact. The map tests of the plan fall away with it.
+  - The module list sent to the server comes from the root `build-profile.json5`, and the project root is the nearest build profile that lists modules (a module's own build profile was taken for the root).
+  - The R1 nested-write bench re-run was done with PR 1 and is not repeated: PR 3 changes no rule.

@@ -42,7 +42,7 @@
   - Why: no linting step used the tool, and nothing showed agents call it or act on it. The skill's only job beyond decorator guidance was to point the agent at the tool.
   - Consequence: the plugin has one agent tool, `arkui_check`. The evaluation's skill-only arm is gone: the control is the no-plugin arm (`docs/design-docs/agentic-plugin.md`).
   - Kept: the call-site edges in the project index (`ProjectIndex.callSites`), which R2 needs. A `facts` subcommand in the CLI for looking at extracted facts is possible later.
-- **R2 event unwired, from facts alone** (2026-11-10; steps in `docs/exec-plans/active/cross-file-facts.md`).
+- **R2 event unwired, from facts alone** (2026-11-10; steps in `docs/exec-plans/completed/cross-file-facts.md`).
   - Done before the LSP work (PR 3): it needs only the call-site edges, and it gives `searchCallSites` its first user.
   - No judge call. The finding carries the backend `facts` and no probability.
   - V1 is included, not only the V2 `@Event`: an undecorated callback field is the same wiring, and most ArkUI code is V1.
@@ -56,7 +56,7 @@
   - Call sites: a search per struct for up to 8 structs, the shared scan above that. The scan pays off only when most of the project is being checked anyway.
   - The plugin waits for call sites 1 s after an edit and 10 s at the idle gate. Why: the search walks the project tree, which on a very large project takes most of a second, and the agent must not wait on it.
   - A dialog controller's `builder: Child({ … })` is a call site in any method, not only in field initializers: dialogs are often created in `aboutToAppear`, and missing those sites would make their callbacks look unwired.
-- **Call sites of one struct from a text search** (2026-11-10; numbers in `docs/exec-plans/active/cross-file-facts.md`, Result).
+- **Call sites of one struct from a text search** (2026-11-10; numbers in `docs/exec-plans/completed/cross-file-facts.md`, Result).
   - An API on the index, `ProjectIndex.searchCallSites(decl)`, and no plugin tool or CLI command: the plugin has no user of the edges until R2, and a tool was just removed for having none. The whole-project scan `callSites` stays as the reference, and tests and `scripts/compare-callsites.mjs` hold the two equal.
   - Search: ripgrep first (`ARKUI_SEM_RG`, `PATH`, then the binary opencode downloads for itself), else Node reading the files 64 at a time. ripgrep was about twice as fast warm and the fallback stays under about a second on 10,000 files, so no binary is bundled. A failed ripgrep run is repeated from Node, which also reports what it could not read.
   - No in-memory identifier index: no faster than ripgrep once built, and it stats every file on each check.
@@ -65,3 +65,10 @@
   - Results live for one check, keyed by struct. A new caller can only be seen by searching again, so nothing is reused across checks.
   - An import's local name is not an alias: only ArkTS that doesn't compile can import it from another file. This is the one place where the scan lists a site the search doesn't.
   - Asynchronous, unlike `callSites`: a refresh during the search is tolerated, not prevented.
+- **No overlapping fact sources: call sites come from the index only** (2026-11-11). LSP `references` on a struct would only confirm what `searchCallSites` already finds (complete for the struct asked about), and on legacy ace-server it would need the open-files workaround. Cross-file-facts PR 3 keeps the LSP for what the index can't give: server lifecycle, dependency records at `initialize`, and later field writers and readers (phase 4).
+- **The language server in the plugin: lifecycle only, no dependency records, no hvigor map** (2026-11-11, cross-file-facts PR 3; details in its Result).
+  - One ace-server per project, started in the background on the project's first `.ets` edit, sent each edited file, stopped on dispose. A check never waits for it: an answer is asked for within a budget and a missing, starting, slow or dead server gives none.
+  - Setting `lsp`: `auto` (default) or `off`. The server is found as before (`ARKUI_SEM_ACE_SERVER`, else DevEco Studio); no new path settings.
+  - No dependency records at `initialize`. Tried on a two-module project with both servers (standard 26, legacy 6.1.1): with the `oh_modules` links of a synced project, `definition` and `references` cross modules with and without the records; without the links the records don't help, as the server resolves a package name through `oh_modules`. A record without `version` also stops the legacy server at `initialize`.
+  - hvigor's dependency map is not read. By its own freshness rule it counts only when it lists the same modules and the same `oh-package.json5` content as the project's files, so it can't change an answer the index gives: a second source for the same fact.
+  - The server's module list comes from the root `build-profile.json5` (the folder scan stays as the fallback for a folder without one), and the project root is the nearest build profile that lists modules: a module's own `build-profile.json5` was taken for the root before.

@@ -216,9 +216,10 @@ function describeUnwired(
   const sites = `${u.sites} call site${u.sites === 1 ? '' : 's'} of ${c.name}`;
   if (u.effect === 'throws') {
     const omit = u.omitted.length === 1 ? "doesn't" : "don't";
+    const opaque = u.opaque > 0 ? ` (the arguments of ${u.opaque} can't be read)` : '';
     return {
       subject,
-      evidence: `${f.name} has no default and is called without a check (${calls}), but ${u.omitted.length} of ${sites} ${omit} pass it: the call throws there`,
+      evidence: `${f.name} has no default and is called without a check (${calls}), but ${u.omitted.length} of ${sites} ${omit} pass it${opaque}: the call throws there`,
       fix: `pass ${f.name} at those call sites; or declare it optional (${f.name}?: …) and call this.${f.name}?.(…).`,
     };
   }

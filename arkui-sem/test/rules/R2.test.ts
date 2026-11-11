@@ -42,6 +42,9 @@ test('V2: an @Event without a default does nothing when unset; one with a defaul
   assert.equal(unset('@ComponentV2', '@Require @Event cb: () => void'), undefined);
   assert.equal(unset('@ComponentV2', '@Event cb: () => void', ''), undefined);
   assert.equal(unset('@ComponentV2', '@Param cb: () => void = () => {}'), undefined);
+  assert.equal(unset('@ComponentV2', '@Event cb?: () => void'), undefined);
+  assert.equal(unset('@ComponentV2', '@Event cb: (() => void) | undefined'), undefined);
+  assert.equal(unset('@ComponentV2', '@Event cb: () => void', 'this.cb?.()'), undefined);
 });
 
 test('V1: a callback without a default throws when called unchecked; an optional one is not asked about', () => {
@@ -180,7 +183,18 @@ export struct Confirm {
   const [finding] = await check('Confirm');
   assert.equal(finding.band, 'finding');
   assert.deepEqual(finding.related, [{ file: path('B'), line: 8 }]);
-  assert.match(finding.evidence, /called without a check \(line 5\), but 1 of 2 call sites of Confirm doesn't pass it/);
+  assert.match(
+    finding.evidence,
+    /called without a check \(line 5\), but 1 of 2 call sites of Confirm doesn't pass it:/,
+  );
+
+  const opaque = setup('Confirm', dialog, { A: '{ onConfirm: () => { this.count++ } }', B: '', C: 'this.options()' });
+  const [withOpaque] = await opaque.check('Confirm');
+  assert.deepEqual(withOpaque.related, [{ file: opaque.path('B'), line: 8 }]);
+  assert.match(
+    withOpaque.evidence,
+    /but 1 of 3 call sites of Confirm doesn't pass it \(the arguments of 1 can't be read\):/,
+  );
 });
 
 test('many structs to look up: the whole-project scan gives the same findings as the searches', async () => {

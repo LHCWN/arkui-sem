@@ -417,6 +417,8 @@ export interface Unwired {
   omitted: CallSite[];
   /** How many call sites create the component. */
   sites: number;
+  /** How many of them pass arguments that can't be read, so may pass the callback. */
+  opaque: number;
 }
 
 /** What calling a callback does when no parent passed it. throws: the field is undefined and called unchecked.
@@ -959,11 +961,11 @@ export function unsetCallback(f: FieldFact, version: StateMgmtVersion): UnsetEff
   if (!supplied || f.calls.length === 0 || f.writes.length > 0 || f.hasInitializer) {
     return undefined;
   }
-  if (version === 'V2') {
-    return 'nothing';
+  const optional = f.optional || (f.typeRef !== undefined && isNullable(f.typeRef)) || f.calls.every((c) => c.checked);
+  if (optional) {
+    return undefined;
   }
-  const mayBeUnset = f.optional || (f.typeRef !== undefined && isNullable(f.typeRef));
-  return !mayBeUnset && f.calls.some((c) => !c.checked) ? 'throws' : undefined;
+  return version === 'V2' ? 'nothing' : 'throws';
 }
 
 /** The callbacks R2 asks the component's call sites about. */
@@ -1007,7 +1009,12 @@ export function unwiredCallbacks(c: ComponentFact, facts: FileFacts, callSites: 
         component: c,
         field: f,
         line: f.line,
-        unwired: { effect, omitted, sites: callSites.sites.length },
+        unwired: {
+          effect,
+          omitted,
+          sites: callSites.sites.length,
+          opaque: callSites.sites.filter((s) => s.opaqueArgs).length,
+        },
         fingerprint: `${facts.file}#${c.name}.${f.name}#R2-unwired`,
       });
     }

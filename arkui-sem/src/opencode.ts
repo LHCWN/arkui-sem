@@ -11,6 +11,8 @@ const MAX_GATE_FOLLOWUPS = 3;
 /** The wait for call sites after an edit, which holds the agent up, and at the idle gate, which doesn't. */
 const EDIT_CALL_SITE_BUDGET_MS = 1000;
 const GATE_CALL_SITE_BUDGET_MS = 10_000;
+/** ace-server can index a large project for minutes without a message; the start runs in the background. */
+const LSP_INIT_TIMEOUT_MS = 600_000;
 
 interface SessionState {
   touched: Set<string>;
@@ -38,7 +40,10 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
   }
 
   const project = new ProjectIndex();
-  const lsp = settings.lsp === 'off' ? undefined : new WarmLsp((message) => void log('info', message));
+  const lsp =
+    settings.lsp === 'off'
+      ? undefined
+      : new WarmLsp((message) => void log('info', message), { initTimeoutMs: LSP_INIT_TIMEOUT_MS });
 
   async function run(files: string[], callSiteBudgetMs?: number): Promise<Finding[]> {
     backend ??= await createBackend(settings.backend, settings.credentials);

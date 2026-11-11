@@ -7,6 +7,9 @@ import { ProjectIndex } from './project.js';
 
 const EDIT_TOOLS = new Set(['edit', 'write', 'multiedit', 'patch', 'apply_patch']);
 const MAX_GATE_FOLLOWUPS = 3;
+/** The wait for call sites after an edit, which holds the agent up, and at the idle gate, which doesn't. */
+const EDIT_CALL_SITE_BUDGET_MS = 1000;
+const GATE_CALL_SITE_BUDGET_MS = 10_000;
 
 interface SessionState {
   touched: Set<string>;
@@ -35,7 +38,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
 
   const project = new ProjectIndex();
 
-  async function run(files: string[]): Promise<Finding[]> {
+  async function run(files: string[], callSiteBudgetMs?: number): Promise<Finding[]> {
     backend ??= await createBackend(settings.backend, settings.credentials);
     const { findings, errors } = await checkFiles(files, {
       backend,
@@ -43,6 +46,8 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
       cachePath: cachePath(settings),
       judgeTimeoutMs: settings.judgeTimeoutMs,
       project,
+      workspace: directory,
+      callSiteBudgetMs,
     });
     if (errors.length) {
       await log('warn', errors.join('; '));
@@ -72,7 +77,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
         for (const f of files) {
           s.touched.add(f);
         }
-        const fresh = (await run(files)).filter((f) => !s.reported.has(f.fingerprint));
+        const fresh = (await run(files, EDIT_CALL_SITE_BUDGET_MS)).filter((f) => !s.reported.has(f.fingerprint));
         for (const f of fresh) {
           s.reported.add(f.fingerprint);
         }
@@ -95,7 +100,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
         return;
       }
       try {
-        const confident = (await run([...s.touched])).filter((f) => f.band === 'finding');
+        const confident = (await run([...s.touched], GATE_CALL_SITE_BUDGET_MS)).filter((f) => f.band === 'finding');
         const key = confident
           .map((f) => f.fingerprint)
           .sort()
@@ -129,7 +134,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
     tool: {
       arkui_check: tool({
         description:
-          "Check ArkTS/ArkUI .ets files for state-management and lifecycle defects: state that won't re-render the UI, nested mutation of unobserved classes, listeners and timers that are never released. Pass files or directories; defaults to the project.",
+          "Check ArkTS/ArkUI .ets files for state-management and lifecycle defects: state that won't re-render the UI, nested mutation of unobserved classes, callbacks and @Event a child calls that no parent passes, listeners and timers that are never released. Pass files or directories; defaults to the project.",
         args: {
           paths: tool.schema
             .array(tool.schema.string())

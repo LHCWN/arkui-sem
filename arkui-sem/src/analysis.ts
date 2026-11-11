@@ -53,16 +53,24 @@ export interface FieldFact {
   type?: string;
   typeRef?: TypeRef;
   hasInitializer: boolean;
+  /** Declared `f?: T`. */
+  optional?: true;
   /** An object-literal initializer. */
   literal?: ObjectLiteralFact;
   buildReads: BuildRead[];
   writes: WriteFact[];
-  /** The component calls the field as a function (`this.f(…)`): a callback it invokes. */
-  invoked: boolean;
+  /** Where the component calls the field as a function (`this.f(…)`): a callback it invokes. */
+  calls: CallbackCall[];
   /** timer: the initializer or an assigned value is a timer id (`setTimeout(…)`, `setInterval(…)`); clock: one reads a
    *  clock (`Date.now()`, `performance.now()`, `new Date()`) or starts a timer inside a larger expression. */
   timeValue?: 'timer' | 'clock';
   disabledRules: string[];
+}
+
+export interface CallbackCall {
+  line: number;
+  /** Called through `?.`, or the calling method also reads the field without calling it (a test of it). */
+  checked: boolean;
 }
 
 /** A read of the field in build()/@Builder. */
@@ -94,6 +102,8 @@ export interface ComponentFact {
   name: string;
   file: string;
   line: number;
+  /** Declared with `export`; an export list or `export default X` is in the file's facts instead. */
+  exported?: true;
   version: StateMgmtVersion;
   fields: FieldFact[];
   resources: ResourceFact[];
@@ -149,7 +159,8 @@ export interface ComponentArgument {
   text: string;
 }
 
-/** `Child({ … })` in a build(), @Builder or @LocalBuilder body, or a field initializer (a dialog controller's builder). */
+/** `Child({ … })` in a build(), @Builder or @LocalBuilder body or a field initializer, and a dialog controller's
+ *  `builder: Child({ … })` in any method. */
 export interface ComponentUse {
   /** As written in the file, an alias included. */
   child: string;
@@ -201,8 +212,23 @@ export interface ClassResolver {
   declaration(name: string, from: FileFacts): Declaration | undefined;
 }
 
+export interface CallSiteOptions {
+  /** Stops parsing when it runs out; the files left count as unscanned. */
+  budgetMs?: number;
+  /** The directory the agent works in: ties a module outside the project root to its project. */
+  workspace?: string;
+}
+
+/** Where a struct is instantiated. Undefined when its file belongs to no project, so nothing was looked at. */
+export interface CallSiteIndex {
+  /** From one pass over the whole project, shared by the calls of a check. */
+  callSites(decl: Declaration, options?: CallSiteOptions): CallSites | undefined;
+  /** For one struct, from a text search: the work follows how many files mention it. */
+  searchCallSites(decl: Declaration, options?: CallSiteOptions): Promise<CallSites | undefined>;
+}
+
 /** A project's files: the facts of each, by normalized path (`resolve`), and where the names they use are declared. */
-export interface Project extends ClassResolver {
+export interface Project extends ClassResolver, CallSiteIndex {
   /** Called once per check, before any lookup: drop what may have changed since the last one. */
   refresh(): void;
   /** Throws when the file can't be read or parsed. */
@@ -353,6 +379,7 @@ export type CandidateKind =
   | 'undecorated-mutated-rendered' // R1: plain member written after init and read in build()
   | 'nested-write-unobserved' // R1: in-place write deeper than the state decorator observes
   | 'ownership-intent' // R2: passed-in field; candidates() does not emit it (callers build it)
+  | 'event-unwired' // R2: a callback the component calls and its call sites don't pass (unwiredCallbacks)
   | 'unreleased-resource'; // R3: acquired in a lifecycle hook, no matching release
 
 /** A field candidate (R1, R2) or a resource candidate (R3). */
@@ -378,9 +405,23 @@ interface CandidateBase {
   writes?: WriteFact[];
   /** V2 nested-write: why V2 misses the writes, one entry per distinct gap. */
   gaps?: V2Gap[];
+  /** Event-unwired: what the call sites show. */
+  unwired?: Unwired;
   /** Stable across runs: dedupe, cache, dismissals. */
   fingerprint: string;
 }
+
+export interface Unwired {
+  effect: UnsetEffect;
+  /** The call sites that don't pass the callback. */
+  omitted: CallSite[];
+  /** How many call sites create the component. */
+  sites: number;
+}
+
+/** What calling a callback does when no parent passed it. throws: the field is undefined and called unchecked.
+ *  nothing: a V2 @Event without a default, which is an empty function. */
+export type UnsetEffect = 'throws' | 'nothing';
 
 const REACTIVE_V1 = new Set([
   '@State',
@@ -426,12 +467,20 @@ export function nestedDepth(path?: PathSegment[]) {
   return path?.length ?? 0;
 }
 
+function isNullType(t: TypeRef): boolean {
+  return t.kind === 'keyword' && (t.name === 'null' || t.name === 'undefined');
+}
+
 function nonNull(t: TypeRef): TypeRef {
   if (t.kind !== 'union') {
     return t;
   }
-  const kept = t.members.filter((m) => !(m.kind === 'keyword' && (m.name === 'null' || m.name === 'undefined')));
+  const kept = t.members.filter((m) => !isNullType(m));
   return kept.length === 1 ? kept[0] : { kind: 'union', members: kept };
+}
+
+function isNullable(t: TypeRef): boolean {
+  return t.kind === 'union' && t.members.some(isNullType);
 }
 
 /** The name a type refers to, without null or undefined; undefined for anything but a named type. */
@@ -892,6 +941,74 @@ export function candidates(facts: FileFacts, resolver?: ClassResolver): Candidat
         resource: r,
         line: r.acquireLine,
         fingerprint: `${facts.file}#${c.name}#R3-${r.key}`,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * A callback the component calls and only a parent can supply, with what the call does when none did. V2: an @Event; one
+ * that isn't passed and has no default is an empty function (OpenHarmony @Event docs). V1: an undecorated field.
+ * Undefined for anything else: a field the component assigns, @Require (the compiler enforces it), and a callback the
+ * component lets a parent leave out (a default, `f?:`, a nullable type, a check around each call).
+ */
+export function unsetCallback(f: FieldFact, version: StateMgmtVersion): UnsetEffect | undefined {
+  const supplied =
+    version === 'V2' ? f.decorators.length === 1 && f.decorators[0] === '@Event' : f.decorators.length === 0;
+  if (!supplied || f.calls.length === 0 || f.writes.length > 0 || f.hasInitializer) {
+    return undefined;
+  }
+  if (version === 'V2') {
+    return 'nothing';
+  }
+  const mayBeUnset = f.optional || (f.typeRef !== undefined && isNullable(f.typeRef));
+  return !mayBeUnset && f.calls.some((c) => !c.checked) ? 'throws' : undefined;
+}
+
+/** The callbacks R2 asks the component's call sites about. */
+function askedCallbacks(c: ComponentFact): { field: FieldFact; effect: UnsetEffect }[] {
+  return c.fields.flatMap((field) => {
+    const effect = field.disabledRules.includes('R2') ? undefined : unsetCallback(field, c.version);
+    return effect ? [{ field, effect }] : [];
+  });
+}
+
+export function hasUnsetCallbacks(c: ComponentFact): boolean {
+  return askedCallbacks(c).length > 0;
+}
+
+/** The use is known to leave the field out. */
+function omits(use: ComponentUse, f: FieldFact): boolean {
+  return !use.opaqueArgs && !use.args.some((a) => a.field === f.name);
+}
+
+/** Whether a use of the component leaves out a callback R2 asks about: without one, this use rules out a candidate
+ *  that needs every site to omit it, and adds no site to one that throws. */
+export function omitsCallback(c: ComponentFact, use: ComponentUse): boolean {
+  return askedCallbacks(c).some(({ field }) => omits(use, field));
+}
+
+/**
+ * R2 event unwired: callbacks of a component that its call sites don't pass. A call that throws is reported for each
+ * site that omits the callback. One that does nothing is reported only when no site passes it and every site is known:
+ * a parent that leaves an event out on purpose is common when another passes it.
+ */
+export function unwiredCallbacks(c: ComponentFact, facts: FileFacts, callSites: CallSites): Candidate[] {
+  const out: Candidate[] = [];
+  for (const { field: f, effect } of askedCallbacks(c)) {
+    const omitted = callSites.sites.filter((s) => omits(s, f));
+    const everySiteKnown = callSites.unscanned === 0 && omitted.length === callSites.sites.length;
+    if (omitted.length > 0 && (effect === 'throws' || everySiteKnown)) {
+      out.push({
+        rule: 'R2',
+        kind: 'event-unwired',
+        file: facts.file,
+        component: c,
+        field: f,
+        line: f.line,
+        unwired: { effect, omitted, sites: callSites.sites.length },
+        fingerprint: `${facts.file}#${c.name}.${f.name}#R2-unwired`,
       });
     }
   }

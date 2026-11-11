@@ -1,6 +1,14 @@
 // A component (an @Component / @ComponentV2 / @CustomDialog struct): its fields, where build() reads them, where methods
 // write them.
-import type { BuildRead, ComponentFact, FieldFact, PathSegment, WriteContext, WriteFact } from '../analysis.js';
+import type {
+  BuildRead,
+  CallbackCall,
+  ComponentFact,
+  FieldFact,
+  PathSegment,
+  WriteContext,
+  WriteFact,
+} from '../analysis.js';
 import { LIFECYCLE } from './lifecycle.js';
 import { ts } from './parse.js';
 import { resources } from './resources.js';
@@ -10,6 +18,7 @@ import {
   calleeName,
   decoratorNames,
   expressionName,
+  hasModifier,
   isAssignment,
   isFunction,
   memberName,
@@ -83,6 +92,7 @@ export function component(s: ts.StructDeclaration, scan: FileScan): ComponentFac
     name: s.name.text,
     file: scan.file,
     line: scan.line(s.name),
+    ...(hasModifier(s, ts.SyntaxKind.ExportKeyword) ? { exported: true as const } : {}),
     version: decorators.includes('@ComponentV2') ? 'V2' : 'V1',
     fields,
     resources: resources(scans, scan),
@@ -115,10 +125,11 @@ function fieldFact(m: ts.PropertyDeclaration, name: string, scan: FileScan): Fie
     decorators: decoratorNames(m),
     ...declaredType(m.type, m.initializer, scan.sf),
     hasInitializer: m.initializer !== undefined,
+    ...(m.questionToken ? { optional: true as const } : {}),
     literal: objectLiteral(m.initializer),
     buildReads: [],
     writes: [],
-    invoked: false,
+    calls: [],
     timeValue: timeValue(m.initializer),
     // The disable comment may sit above the decorators or directly above the field name.
     disabledRules: [...new Set([...scan.disabledAt(line), ...scan.disabledAt(scan.line(m))])],
@@ -158,12 +169,15 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
     }
   };
   visit(m.body);
-  const context = { method: m, awaits, scan, isBuild: rendersUi(m) };
+  const context: AccessContext = { method: m, awaits, scan, isBuild: rendersUi(m), calls: [], tested: new Set() };
   for (const base of accesses) {
     const field = fields.get(base.name.text);
     if (field) {
       access(base, field, context);
     }
+  }
+  for (const { field, call } of context.calls) {
+    field.calls.push({ ...call, checked: call.checked || context.tested.has(field) });
   }
   return out;
 }
@@ -173,6 +187,9 @@ interface AccessContext {
   awaits: Map<ts.Node, number[]>;
   scan: FileScan;
   isBuild: boolean;
+  /** The method's calls of fields, and the fields it reads without calling or writing them. */
+  calls: { field: FieldFact; call: CallbackCall }[];
+  tested: Set<FieldFact>;
 }
 
 /** One `this.<field>…` access: the path below the field, then whether it writes (assignment, update, mutating call). */
@@ -204,7 +221,9 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken);
   const line = ctx.scan.line(base);
   if (segments.length === 0 && called) {
-    field.invoked = true;
+    ctx.calls.push({ field, call: { line, checked: parent.questionDotToken !== undefined } });
+  } else if (segments.length === 0 && !assignment) {
+    ctx.tested.add(field);
   }
   const assignedTime = assignment && timeValue(assignment.right);
   if (assignedTime && field.timeValue !== 'timer') {

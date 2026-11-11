@@ -6,6 +6,7 @@ import JSON5 from 'json5';
 import {
   type CallSite,
   type CallSites,
+  type ComponentFact,
   type Declaration,
   declares,
   type FactExtractor,
@@ -98,6 +99,14 @@ function isOutside(dir: string, root: string) {
 
 function edgeKey(file: string, struct: string) {
   return `${directoryKey(file)}#${struct}`;
+}
+
+function isExported(c: ComponentFact, facts: FileFacts): boolean {
+  return (
+    c.exported === true ||
+    facts.defaultExport === c.name ||
+    facts.reexports.some((r) => r.source === undefined && r.imported === c.name)
+  );
 }
 
 function sameFile(a: string, b: string) {
@@ -275,7 +284,8 @@ export class ProjectIndex implements Project {
   }
 
   private async findSites(decl: Declaration, dirs: string[], deadline: number): Promise<CallSites> {
-    if (!decl.facts.components.some((c) => c.name === decl.name)) {
+    const component = decl.facts.components.find((c) => c.name === decl.name);
+    if (!component) {
       return { sites: [], unscanned: 0 };
     }
     const aliases: Aliases = { names: new Set([decl.name]), defaultFiles: new Map() };
@@ -284,7 +294,8 @@ export class ProjectIndex implements Project {
     // The scan counts this file too; the seed never reaches the loop's parse check.
     const unusable = new Set<string>(decl.facts.parseErrors ? [declaring] : []);
     const searched = new Set<string>();
-    for (;;) {
+    // A struct its file doesn't export is used in that file alone: nothing to search for.
+    while (isExported(component, decl.facts)) {
       const terms = this.newTerms(decl, dirs, candidates, aliases, searched);
       if (terms.words.length + terms.patterns.length === 0) {
         break;

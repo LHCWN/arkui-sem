@@ -301,8 +301,8 @@ struct P {
   }
 }`);
   const [onDone, text] = facts.components[0].fields;
-  assert.equal(onDone.invoked, true);
-  assert.equal(text.invoked, false);
+  assert.equal(onDone.calls.length, 1);
+  assert.equal(text.calls.length, 0);
   assert.equal(text.writes.length, 1);
   assert.equal(text.buildReads.length, 1);
 });

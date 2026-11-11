@@ -1,19 +1,27 @@
-// Where a file instantiates components: `Child({ … })` in build(), @Builder and @LocalBuilder bodies and field initializers.
+// Where a file instantiates components: `Child({ … })` in build(), @Builder and @LocalBuilder bodies and field initializers,
+// and a dialog controller's builder in any method.
 import type { ArgumentForm, ComponentArgument, ComponentUse } from '../analysis.js';
 import { methodsOf, rendersUi } from './component.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
 import { decoratorNames, isFunction, isThis, isWrapper, memberName, thisMember, unwrap } from './syntax.js';
 
+const DIALOG_BUILDER = 'builder';
+
 type Site = Pick<ComponentUse, 'parent' | 'method'>;
 
 /** Calls of the names in `callable`, the file's components and imports, which leaves out system components. */
 export function componentUses(scan: FileScan, callable: Set<string>): ComponentUse[] {
   const out: ComponentUse[] = [];
-  const collect = (body: ts.Node, site: Site, methods: Set<string>) => {
+  const collect = (
+    body: ts.Node,
+    site: Site,
+    methods: Set<string>,
+    counts: (call: ts.Node) => boolean = () => true,
+  ) => {
     const visit = (n: ts.Node) => {
       if ((ts.isCallExpression(n) || ts.isEtsComponentExpression(n)) && ts.isIdentifier(n.expression)) {
-        if (callable.has(n.expression.text)) {
+        if (callable.has(n.expression.text) && counts(n)) {
           out.push(use(n, n.expression.text, site, methods, scan));
         }
       }
@@ -26,8 +34,8 @@ export function componentUses(scan: FileScan, callable: Set<string>): ComponentU
       const parent = st.name.text;
       const methods = methodsOf(st);
       const names = new Set(methods.map((m) => m.name));
-      for (const m of methods.filter(rendersUi)) {
-        collect(m.body, { parent, method: m.name }, names);
+      for (const m of methods.filter((m) => m.kind === 'method')) {
+        collect(m.body, { parent, method: m.name }, names, rendersUi(m) ? undefined : isDialogBuilder);
       }
       for (const m of st.members) {
         const field = memberName(m.name);
@@ -40,6 +48,12 @@ export function componentUses(scan: FileScan, callable: Set<string>): ComponentU
     }
   }
   return out;
+}
+
+/** `builder: Child({ … })`: the dialog a CustomDialogController shows, which any method may create. */
+function isDialogBuilder(call: ts.Node): boolean {
+  const p = call.parent;
+  return ts.isPropertyAssignment(p) && p.initializer === call && memberName(p.name) === DIALOG_BUILDER;
 }
 
 function use(

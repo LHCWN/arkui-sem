@@ -8,7 +8,7 @@ in `docs/` (map: `AGENTS.md`).
 
 ```
 .ets edit ──► fact extractor ──► rule candidates ──► slice + question ──► System One judge ──► p
- (agent tool)   (analysis.ts)      R1 / R3 (R2 planned)   (judge.ts)          (Jev, Clef, ...)      │
+ (agent tool)   (analysis.ts)      R1 / R2-d / R3          (judge.ts)          (Jev, Clef, ...)      │
                                                                                                     ▼
                          agent feedback ◄── findings (p ≥ 0.8) / questions (0.5 ≤ p < 0.8)  (engine.ts)
 ```

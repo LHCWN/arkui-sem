@@ -4,13 +4,22 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, relative } from 'node:path';
 import type { Questions } from '@typesafe-ai/sdk';
 import {
+  type CallSiteOptions,
+  type CallSites,
   type Candidate,
+  type ComponentFact,
   candidates,
+  type Declaration,
+  type FieldFact,
   type FileFacts,
+  hasUnsetCallbacks,
   nestedDepth,
+  omitsCallback,
   type Project,
   pathText,
   readLines,
+  type Unwired,
+  unwiredCallbacks,
   type V2Gap,
 } from './analysis.js';
 import { buildSlice, Q_R1, Q_R2, Q_R3, type SystemOneBackend } from './judge.js';
@@ -18,8 +27,24 @@ import { ProjectIndex } from './project.js';
 
 // --- Formatting ---
 
-function pct(p: number | null) {
-  return p === null ? 'judge unavailable' : `p=${p.toFixed(2)}`;
+/** The backend of a finding the facts decide alone. */
+export const FACTS = 'facts';
+const MAX_RELATED_SHOWN = 3;
+
+function source(f: Finding) {
+  if (f.backend === FACTS) {
+    return FACTS;
+  }
+  return `${f.p === null ? 'judge unavailable' : `p=${f.p.toFixed(2)}`}, ${f.backend}`;
+}
+
+function relatedLine(f: Finding, cwd: string): string[] {
+  if (!f.related?.length) {
+    return [];
+  }
+  const shown = f.related.slice(0, MAX_RELATED_SHOWN).map((r) => `${relative(cwd, r.file)}:${r.line}`);
+  const more = f.related.length - shown.length;
+  return [`  at: ${shown.join(', ')}${more > 0 ? ` and ${more} more` : ''}`];
 }
 
 export function formatForAgent(findings: Finding[], cwd = process.cwd()): string {
@@ -32,12 +57,12 @@ export function formatForAgent(findings: Finding[], cwd = process.cwd()): string
   out.push(`arkui-sem: ${confident.length} finding(s), ${questions.length} question(s) about ArkUI state semantics.`);
 
   for (const f of confident) {
-    out.push(`- [${f.rule} ${f.kind}] ${relative(cwd, f.file)}:${f.line} ${f.subject} (${pct(f.p)}, ${f.backend})`);
-    out.push(`  why: ${f.evidence}`);
+    out.push(`- [${f.rule} ${f.kind}] ${relative(cwd, f.file)}:${f.line} ${f.subject} (${source(f)})`);
+    out.push(`  why: ${f.evidence}`, ...relatedLine(f, cwd));
     out.push(`  fix: ${f.fix}`);
   }
   for (const f of questions) {
-    out.push(`- [${f.rule}?] ${relative(cwd, f.file)}:${f.line} ${f.subject} (${pct(f.p)}, ${f.backend})`);
+    out.push(`- [${f.rule}?] ${relative(cwd, f.file)}:${f.line} ${f.subject} (${source(f)})`);
     out.push(`  ${f.evidence}. Is this intended? If it should behave reactively/be released: ${f.fix}`);
     const where =
       f.kind === 'nested-write-unobserved'
@@ -62,12 +87,14 @@ export interface Finding {
   line: number;
   component: string;
   subject: string;
-  /** P(violation); null when the judge failed. */
+  /** P(violation); null when the judge failed, and for a finding the facts decide alone (backend FACTS). */
   p: number | null;
   band: Band;
   backend: string;
   evidence: string;
   fix: string;
+  /** Other places the finding is about: the call sites that don't pass an unwired callback. */
+  related?: { file: string; line: number }[];
 }
 
 export interface EngineOptions {
@@ -80,7 +107,14 @@ export interface EngineOptions {
   /** The checked files' facts and cross-file lookups; a fresh project index when absent. Long-lived callers pass one to
    *  keep its cache. */
   project?: Project;
+  /** Passed to the call-site lookup (see CallSiteOptions). */
+  workspace?: string;
+  /** How long the check waits for call sites; candidates that need them are dropped when it runs out. */
+  callSiteBudgetMs?: number;
 }
+
+/** Above this many structs to look up, one pass over the project replaces a search for each. */
+const MAX_SEARCHES = 8;
 
 const QUESTIONS: Record<Candidate['rule'], Questions> = { R1: Q_R1, R2: Q_R2, R3: Q_R3 };
 const VIOLATION_LABEL: Record<Candidate['rule'], string> = {
@@ -115,6 +149,18 @@ class JudgmentCache {
     mkdirSync(dirname(this.path), { recursive: true });
     writeFileSync(this.path, JSON.stringify(this.entries));
   }
+}
+
+/** The promise's value, or `late` when it takes longer than ms. */
+function within<T>(p: Promise<T>, ms: number | undefined, late: () => T): Promise<T> {
+  if (ms === undefined) {
+    return p;
+  }
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(late()), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -160,6 +206,31 @@ function gapFix(g: V2Gap): string {
   }
 }
 
+function describeUnwired(
+  c: ComponentFact,
+  f: FieldFact,
+  u: Unwired,
+): { subject: string; evidence: string; fix: string } {
+  const subject = `${c.name}.${f.name}`;
+  const calls = lineList([...new Set(f.calls.map((call) => call.line))]);
+  const sites = `${u.sites} call site${u.sites === 1 ? '' : 's'} of ${c.name}`;
+  if (u.effect === 'throws') {
+    const omit = u.omitted.length === 1 ? "doesn't" : "don't";
+    return {
+      subject,
+      evidence: `${f.name} has no default and is called without a check (${calls}), but ${u.omitted.length} of ${sites} ${omit} pass it: the call throws there`,
+      fix: `pass ${f.name} at those call sites; or declare it optional (${f.name}?: …) and call this.${f.name}?.(…).`,
+    };
+  }
+  const name = [...f.decorators, f.name].join(' ');
+  const pass = u.sites === 1 ? `the only call site of ${c.name} doesn't pass` : `none of the ${sites} pass`;
+  return {
+    subject,
+    evidence: `${name} is called (${calls}), but ${pass} it: an @Event the parent doesn't pass is an empty function, so the call does nothing`,
+    fix: `pass ${f.name} where ${c.name} is created, with a handler that updates the parent's state; or remove the callback and its calls if nothing should handle it.`,
+  };
+}
+
 function describe(c: Candidate): { subject: string; evidence: string; fix: string } {
   const v2 = c.component.version === 'V2';
   if (c.resource) {
@@ -172,6 +243,9 @@ function describe(c: Candidate): { subject: string; evidence: string; fix: strin
     };
   }
   const f = c.field;
+  if (c.unwired) {
+    return describeUnwired(c.component, f, c.unwired);
+  }
   const writes = f.writes
     .slice(0, 2)
     .map((w) => `${w.context} in ${w.method}() line ${w.line}`)
@@ -206,6 +280,62 @@ function describe(c: Candidate): { subject: string; evidence: string; fix: strin
   };
 }
 
+interface Struct {
+  decl: Declaration;
+  component: ComponentFact;
+}
+
+/** The structs whose call sites decide a candidate: those the files declare that call a callback only a parent can
+ *  supply, and those they instantiate without passing one. */
+function callbackOwners(files: FileFacts[], project: Project): Struct[] {
+  const owners = new Map<string, Struct>();
+  const add = (decl: Declaration, component: ComponentFact) =>
+    owners.set(`${decl.facts.file}#${decl.name}`, { decl, component });
+  for (const facts of files) {
+    for (const c of facts.components.filter(hasUnsetCallbacks)) {
+      add({ facts, name: c.name }, c);
+    }
+    for (const use of facts.componentUses) {
+      const decl = project.declaration(use.child, facts);
+      const component = decl?.facts.components.find((c) => c.name === decl.name);
+      if (decl && component && omitsCallback(component, use)) {
+        add(decl, component);
+      }
+    }
+  }
+  return [...owners.values()];
+}
+
+/**
+ * A struct's call sites: from a search for it, or from the pass over the project that the structs of a check share.
+ * One unusable file anywhere leaves that pass incomplete for every struct, so a struct that would have a candidate
+ * without it is then searched for alone.
+ */
+function sitesOf(
+  o: Struct,
+  shared: boolean,
+  project: Project,
+  options: CallSiteOptions,
+): Promise<CallSites | undefined> {
+  if (!shared) {
+    return project.searchCallSites(o.decl, options);
+  }
+  const sites = project.callSites(o.decl, options);
+  const count = (s: CallSites) => unwiredCallbacks(o.component, o.decl.facts, s).length;
+  const heldBack = sites !== undefined && sites.unscanned > 0 && count({ ...sites, unscanned: 0 }) > count(sites);
+  return heldBack ? project.searchCallSites(o.decl, options) : Promise.resolve(sites);
+}
+
+/** R2 event-unwired candidates. Every lookup starts before the first await, so a later refresh of the index can't
+ *  change which structs are asked about. */
+async function unwiredIn(files: FileFacts[], project: Project, opts: EngineOptions): Promise<Candidate[]> {
+  const owners = callbackOwners(files, project);
+  const options = { budgetMs: opts.callSiteBudgetMs, workspace: opts.workspace };
+  const shared = owners.length > MAX_SEARCHES;
+  const found = await Promise.all(owners.map((o) => sitesOf(o, shared, project, options)));
+  return found.flatMap((sites, i) => (sites ? unwiredCallbacks(owners[i].component, owners[i].decl.facts, sites) : []));
+}
+
 export async function checkFiles(
   files: string[],
   opts: EngineOptions,
@@ -229,6 +359,24 @@ export async function checkFiles(
       errors.push(`${file}: ${(e as Error).message}`);
     }
   }
+
+  const unwired = within(
+    unwiredIn(
+      found.map((f) => f.facts),
+      project,
+      opts,
+    ).catch((e: Error): Candidate[] => {
+      errors.push(`call sites: ${e.message}`);
+      return [];
+    }),
+    opts.callSiteBudgetMs,
+    () => {
+      errors.push(
+        `call sites: not found within ${opts.callSiteBudgetMs} ms; callbacks no parent passes were not checked`,
+      );
+      return [];
+    },
+  );
 
   for (const { file, facts, candidates: fileCandidates } of found) {
     for (const c of fileCandidates) {
@@ -275,6 +423,21 @@ export async function checkFiles(
         ...describe(c),
       });
     }
+  }
+  for (const c of await unwired) {
+    findings.push({
+      fingerprint: c.fingerprint,
+      rule: c.rule,
+      kind: c.kind,
+      file: c.file,
+      line: c.line,
+      component: c.component.name,
+      p: null,
+      band: 'finding',
+      backend: FACTS,
+      ...describe(c),
+      related: c.unwired?.omitted.map((s) => ({ file: s.file, line: s.line })),
+    });
   }
   cache.save();
   return { findings, errors };

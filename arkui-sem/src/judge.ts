@@ -340,7 +340,9 @@ function excerpt(facts: FileFacts, line: number): string {
 /** Function-typed fields of the component that it invokes as this.name(...): the callbacks the child calls back on. */
 function invokedCallbacks(c: Candidate): string[] {
   return c.component.fields
-    .filter((f) => f.name !== c.field?.name && f.invoked && f.typeRef !== undefined && holdsFunction(f.typeRef))
+    .filter(
+      (f) => f.name !== c.field?.name && f.calls.length > 0 && f.typeRef !== undefined && holdsFunction(f.typeRef),
+    )
     .map((f) => `${f.name}: ${f.type}`)
     .slice(0, 5);
 }

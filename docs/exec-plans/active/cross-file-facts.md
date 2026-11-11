@@ -108,14 +108,19 @@ Results are kept per struct for one check. Parents further up are found by repea
 - Disk cache: not needed for this path. The scan is left to whole-project runs, which parse everything anyway.
 - Differs from the plan: an import's local name is not searched as an alias (step 3). `declaration()` follows `import { X } from './G'` when `G` only imports `X`, which ArkTS rejects; following it cost every aliased import a second search.
 
-**Next: R2 in the plugin** (roadmap phase 4; not part of this handoff). Nothing calls `searchCallSites` yet. Its first user is the R2 candidate step, after PR 3 and the checker types:
+**R2 event unwired** (done, ahead of PR 3; roadmap phase 3). The first user of `searchCallSites`. Decisions: `docs/design-docs/decisions.md`; gaps: the tracker.
 
-- Child side: when the edited file declares a struct with passed-in fields, call `searchCallSites` with the session directory as `workspace` and a budget.
-- Parent side: when the edited file instantiates a child, resolve the child and read its fields; this needs no search.
-- Absence claims ("no call site passes `onX`") only when `unscanned` is 0.
-- Slice: pass the call-site facts into the judge slice and emit the R2 candidate.
-- Timing: check the post-edit path against the 1.5 s p95 target (P-A3); one search is about 0.5 s on 10,000 files.
-- Open: a check that asks about many structs with common names may cost more than one whole-project scan, which is shared and reused across checks. Measure before choosing per struct or per check.
+- Child side: a checked file that declares a struct with a callback only a parent can supply asks for that struct's call sites.
+- Parent side: a checked file that creates such a struct asks only when its own call leaves a callback out. A call that passes them all rules the candidate out, so most parent edits need no lookup.
+- A struct its file doesn't export is used in that file alone and is looked up without a search.
+- Absence claims ("no call site passes `onX`") only when `unscanned` is 0. A callback that throws needs no absence claim: each site that omits it is reported.
+- Per struct or per check: up to 8 structs are searched for one by one, more use the shared scan. A scan left incomplete by an unusable file elsewhere falls back to a search for the structs it holds back.
+- Timing: the search is almost all of a lookup; parsing the matching files is small next to it. The plugin waits 1 s for call sites after an edit and 10 s at the idle gate; a lookup that takes longer is dropped from that check and logged.
+
+**Next: the other R2 shapes in the plugin** (roadmap phase 4; not part of this handoff), after PR 3 and the checker types:
+
+- Parent-side facts: the decorator of the passed field, its writes after init, its readers.
+- Slice: pass the call-site facts into the judge slice and emit the R2-a/b/c candidates.
 
 ## Bench
 

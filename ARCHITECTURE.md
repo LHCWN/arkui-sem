@@ -22,6 +22,8 @@ gives the agent the `arkui_check` tool.
 README.md, AGENTS.md, CLAUDE.md (@AGENTS.md), CONTRIBUTING.md, ARCHITECTURE.md
 .gitignore, .gitattributes                LF line endings everywhere; ignores refs/, sandbox scratch, the local setup notes
 docs/                                    see AGENTS.md for the map
+docs/demo/rules.html                     one static page that animates each rule's recorded demo session (edit, breakage, judge, report, fix)
+docs/demo/rules.zh.html                  the same page in Simplified Chinese (session text stays in English, as recorded)
 scripts/setup.mjs [--doctor]             build the linter, install the plugin into sandbox/demo, enable .githooks; runs bench/setup.mjs when present
 .githooks/pre-commit                     Biome check of staged arkui-sem/ files, typecheck when TypeScript is staged
 .github/workflows/test.yml               CI: npm ci + npm run lint + npm test in arkui-sem/ on Linux and Windows (ripgrep installed for the call-site search), every PR and push to main

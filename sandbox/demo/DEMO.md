@@ -15,6 +15,8 @@ Its fix (adding `@Observed` to the classes) was still wrong, and the linter of t
 
 Everything else in `sandbox/` is local scratch and git-ignored.
 
+`docs/demo/rules.html` animates one recorded session per rule (Profile R1 a, Counter R1 b, Volume R2, Clock R3): the edit, what breaks, the judge's score, the report, the fix. Open it from disk; `docs/demo/rules.zh.html` is the same page in Chinese. Its sessions used Clef and ran from a copy of this project outside the repo, without this file.
+
 ## Setup
 
 1. `node scripts/setup.mjs` builds the linter and installs the plugin into `sandbox/demo/.opencode/` (ignored). The plugin loads `arkui-sem/dist/`, so rebuild after linter changes.

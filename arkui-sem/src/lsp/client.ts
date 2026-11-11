@@ -55,6 +55,8 @@ export interface StartOptions extends LspPathOptions {
   /** Per request; legacy servers: without any server message, at most five times this in all. */
   requestTimeoutMs?: number;
   maxOldSpaceMb?: number;
+  /** Aborting ends a start still in progress; a started server is ended with `stop()`. */
+  signal?: AbortSignal;
   /** Server stderr and notifications, for debugging. */
   log?: (line: string) => void;
 }
@@ -75,7 +77,10 @@ export async function startArktsLsp(projectRoot: string, options: StartOptions =
   // A build without `standardIndex` falls back to the legacy protocol; say which one runs.
   opts.log?.(`[start] ${paths.server.protocol} ${paths.server.entry} (node ${paths.node})`);
   const params = initializeParams(projectRoot, paths, workDir());
+  opts.signal?.throwIfAborted();
   const child = spawnServer(paths, opts.maxOldSpaceMb);
+  const abort = () => child.kill();
+  opts.signal?.addEventListener('abort', abort, { once: true });
   child.stderr.setEncoding('utf8').on('data', (s: string) => opts.log?.(`[stderr] ${s.trimEnd()}`));
   const rpc = new JsonRpc(child);
   const log = opts.log;
@@ -89,6 +94,8 @@ export async function startArktsLsp(projectRoot: string, options: StartOptions =
   } catch (e) {
     await session.stop();
     throw e;
+  } finally {
+    opts.signal?.removeEventListener('abort', abort);
   }
   return session;
 }

@@ -23,14 +23,19 @@ export interface Settings {
   gate: boolean;
   thresholds: { finding: number; question: number };
   judgeTimeoutMs: number;
+  /** auto: the plugin starts ace-server on the first .ets edit when one is installed; off: never. */
+  lsp: LspMode;
   dataDir: string;
   credentials: Credentials;
   sources: string[];
   warnings: string[];
 }
 
+export type LspMode = 'auto' | 'off';
+
 export interface ConfigFile {
   backend?: string;
+  lsp?: string;
   gate?: boolean;
   findingThreshold?: number;
   questionThreshold?: number;
@@ -50,6 +55,7 @@ const SCHEMA: Record<string, 'string' | 'boolean' | 'number' | Record<string, 's
   findingThreshold: 'number',
   questionThreshold: 'number',
   judgeTimeoutMs: 'number',
+  lsp: 'string',
   dataDir: 'string',
   deepseek: { apiKey: 'string', baseUrl: 'string' },
   typesafe: { apiKey: 'string' },
@@ -150,6 +156,10 @@ export function loadSettings(options: Record<string, unknown> = {}, projectDir: 
   const user = read(userConfigPath(), 'user');
   const project = read(projectConfigPath(projectDir), 'project');
   const o = options as ConfigFile;
+  const lsp = first(o.lsp, env('ARKUI_SEM_LSP'), project.lsp, user.lsp) ?? 'auto';
+  if (lsp !== 'auto' && lsp !== 'off') {
+    warnings.push(`lsp should be "auto" or "off", not "${lsp}"; using "auto"`);
+  }
 
   return {
     backend: first(o.backend, env('ARKUI_SEM_BACKEND'), project.backend, user.backend) ?? 'clef',
@@ -177,6 +187,7 @@ export function loadSettings(options: Record<string, unknown> = {}, projectDir: 
         project.judgeTimeoutMs,
         user.judgeTimeoutMs,
       ) ?? 8000,
+    lsp: lsp === 'off' ? 'off' : 'auto',
     dataDir:
       first(o.dataDir, env('ARKUI_SEM_DATA_DIR'), project.dataDir, user.dataDir) ??
       join(homedir(), '.cache', 'arkui-sem'),
@@ -247,6 +258,7 @@ export function describeSettings(s: Settings): Record<string, unknown> {
     gate: s.gate,
     thresholds: s.thresholds,
     judgeTimeoutMs: s.judgeTimeoutMs,
+    lsp: s.lsp,
     dataDir: s.dataDir,
     credentials: {
       deepseekApiKey: mask(c.deepseekApiKey),

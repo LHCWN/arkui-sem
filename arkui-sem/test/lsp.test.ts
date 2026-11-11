@@ -6,10 +6,11 @@ import { spawn } from 'node:child_process';
 import { copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { locations, startArktsLsp } from '../src/lsp/client.js';
+import { type ArktsLsp, locations, startArktsLsp } from '../src/lsp/client.js';
 import { JsonRpc } from '../src/lsp/jsonrpc.js';
-import { findModuleDirs, projectRootFor, toFileUri } from '../src/lsp/project.js';
+import { findModuleDirs, initializeParams, projectRootFor, toFileUri } from '../src/lsp/project.js';
 import { defaultNode, locateServer, resolvePaths } from '../src/lsp/server.js';
+import { WarmLsp } from '../src/lsp/warm.js';
 import { put, ROOT, tempDir } from './helpers.js';
 
 const tmp = tempDir();
@@ -34,8 +35,20 @@ test('modules are the */src/main/ets dirs; the project root is above them', () =
   put(at('proj/features/lib/src/main/ets/A.ets'), 'P()');
   assert.deepEqual(findModuleDirs(at('proj')).sort(), [at('proj/entry'), at('proj/features/lib')]);
   assert.equal(projectRootFor(page), at('proj'));
-  put(at('proj2/build-profile.json5'), '{}');
+  put(at('proj2/build-profile.json5'), "{ modules: [{ name: 'entry', srcPath: './entry' }] }");
+  put(at('proj2/entry/build-profile.json5'), "{ apiType: 'stageMode' }");
   assert.equal(projectRootFor(put(at('proj2/entry/src/main/ets/B.ets'), '')), at('proj2'));
+});
+
+test('the server is told the modules of the build profile, else the scanned ones', () => {
+  const paths = resolvePaths({ aceServer: at('clt'), sdk: at('sdk'), node: process.execPath }, {});
+  const names = (root: string) =>
+    initializeParams(root, paths, at('work')).initializationOptions.modules.map((m) => m.moduleName);
+  assert.deepEqual(names(at('proj')).sort(), ['entry', 'lib']);
+  put(at('proj3/build-profile.json5'), "{ modules: [{ name: 'feature_lib', srcPath: './features/lib' }] }");
+  put(at('proj3/features/lib/Index.ets'), '');
+  put(at('proj3/unlisted/src/main/ets/A.ets'), '');
+  assert.deepEqual(names(at('proj3')), ['feature_lib']);
 });
 
 test('file URIs use the upper-case drive form and round-trip through locations', () => {
@@ -147,3 +160,65 @@ for (const [protocol, server] of [
     assert.ok(Date.now() - started < 1000, 'a query after stop fails at once');
   });
 }
+
+const definitionLine = (lsp: ArktsLsp) =>
+  lsp.definition(page, { line: 1, character: 8 }).then((l) => l[0].range.start.line);
+
+test('warm server: edits made while it starts reach it before the first answer, later ones as they come', async () => {
+  const logs: string[] = [];
+  const warm = new WarmLsp((m) => logs.push(m), { ...base, aceServer: at('clt') });
+  try {
+    assert.equal(await warm.ask(page, 10_000, definitionLine), undefined, 'no edit, no server');
+    warm.edited(page);
+    assert.equal(await warm.ask(page, 10_000, definitionLine), 1);
+    warm.edited(page);
+    assert.equal(await warm.ask(page, 10_000, definitionLine), 2);
+    assert.match(logs.join(' '), /language server ready .*standard/);
+  } finally {
+    await warm.stop();
+  }
+});
+
+test('warm server: a missing, slow or dead server gives no answer and never throws', async () => {
+  const logs: string[] = [];
+  const missing = new WarmLsp((m) => logs.push(m), { ...base, aceServer: at('nothing') });
+  missing.edited(page);
+  assert.equal(await missing.ask(page, 10_000, definitionLine), undefined);
+  assert.match(logs.join(' '), /no language server for .*no ace-server entry/);
+  await missing.stop();
+
+  const warm = new WarmLsp(() => undefined, { ...base, aceServer: at('studio') });
+  try {
+    warm.edited(page);
+    const started = Date.now();
+    assert.equal(await warm.ask(page, 1, definitionLine), undefined, 'still starting');
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(await warm.ask(page, 10_000, definitionLine), 1);
+    await warm.ask(page, 10_000, (lsp) => lsp.stop());
+    assert.equal(await warm.ask(page, 10_000, definitionLine), undefined, 'dead');
+    warm.edited(page);
+    warm.edited(at('missing.ets'));
+  } finally {
+    await warm.stop();
+  }
+});
+
+test('warm server: stop ends a running server and one still starting, and later edits start none', async () => {
+  const starts: Promise<ArktsLsp>[] = [];
+  const warm = new WarmLsp(
+    () => undefined,
+    { ...base, aceServer: at('clt') },
+    (root, options) => {
+      starts.push(startArktsLsp(root, options));
+      return starts[starts.length - 1];
+    },
+  );
+  warm.edited(page);
+  const running = await starts[0];
+  warm.edited(put(at('proj2/entry/src/main/ets/C.ets'), ''));
+  await warm.stop();
+  await assert.rejects(() => running.definition(page, { line: 0, character: 0 }), /not running/);
+  await assert.rejects(starts[1], /exited|not running|aborted/i);
+  warm.edited(page);
+  assert.equal(starts.length, 2);
+});

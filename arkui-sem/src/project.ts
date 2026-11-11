@@ -36,7 +36,8 @@ interface Aliases {
   defaultFiles: Map<string, string>;
 }
 
-interface Module {
+/** A module as the root build-profile.json5 lists it. */
+export interface ProjectModule {
   name: string;
   dir: string;
 }
@@ -71,11 +72,20 @@ function readJson5<T>(path: string): Partial<T> {
   return JSON5.parse(readFileSync(path, 'utf8')) ?? {};
 }
 
-function readProfileModules(path: string): Module[] | undefined {
+function readProfileModules(path: string): ProjectModule[] | undefined {
   return readJson5<{ modules: { name: string; srcPath: string }[] }>(path).modules?.map((m) => ({
     name: m.name,
     dir: resolve(dirname(path), m.srcPath),
   }));
+}
+
+/** The modules a project root's build-profile.json5 lists; undefined without a readable profile. */
+export function profileModules(root: string): ProjectModule[] | undefined {
+  try {
+    return readProfileModules(join(root, BUILD_PROFILE));
+  } catch {
+    return undefined;
+  }
 }
 
 function mtime(path: string): number | undefined {

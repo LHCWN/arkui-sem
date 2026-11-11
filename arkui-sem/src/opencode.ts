@@ -3,6 +3,7 @@ import { absolute, editedFiles, etsFiles } from './analysis.js';
 import { cachePath, loadSettings } from './config.js';
 import { checkFiles, type Finding, formatForAgent } from './engine.js';
 import { createBackend, type SystemOneBackend } from './judge.js';
+import { WarmLsp } from './lsp/warm.js';
 import { ProjectIndex } from './project.js';
 
 const EDIT_TOOLS = new Set(['edit', 'write', 'multiedit', 'patch', 'apply_patch']);
@@ -37,6 +38,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
   }
 
   const project = new ProjectIndex();
+  const lsp = settings.lsp === 'off' ? undefined : new WarmLsp((message) => void log('info', message));
 
   async function run(files: string[], callSiteBudgetMs?: number): Promise<Finding[]> {
     backend ??= await createBackend(settings.backend, settings.credentials);
@@ -57,7 +59,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
 
   await log(
     'info',
-    `loaded (backend=${settings.backend}, gate=${settings.gate}, config=${settings.sources.join(', ') || 'none'})`,
+    `loaded (backend=${settings.backend}, gate=${settings.gate}, lsp=${settings.lsp}, config=${settings.sources.join(', ') || 'none'})`,
   );
   for (const w of settings.warnings) {
     await log('warn', w);
@@ -76,6 +78,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
         const s = session(input.sessionID);
         for (const f of files) {
           s.touched.add(f);
+          lsp?.edited(f);
         }
         const fresh = (await run(files, EDIT_CALL_SITE_BUDGET_MS)).filter((f) => !s.reported.has(f.fingerprint));
         for (const f of fresh) {
@@ -129,6 +132,10 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
       } catch (e) {
         await log('error', `end-of-turn gate failed: ${(e as Error).message}`);
       }
+    },
+
+    dispose: async () => {
+      await lsp?.stop();
     },
 
     tool: {

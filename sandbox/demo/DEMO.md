@@ -80,7 +80,7 @@ Each baseline page has the bug, so any edit of the page brings the finding up.
 
 Checked on 2026-11-11 with the CLI: both baselines give their finding (R3: heuristic p 0.80, Clef p 0.93). And in opencode 1.18.30 with Clef and `opencode/big-pickle`, one session each:
 
-- `Volume.ets`: the finding came with the agent's edit; the agent called it pre-existing and stopped. The idle gate re-sent it, and the agent passed `changeValue`. `arkui_check` was clean.
+- `Volume.ets`: the finding came with the agent's edit; in the same turn the agent passed `changeValue`. No idle gate fired, and the fix edit's own check appended nothing — the agent did not call `arkui_check`.
 - `Clock.ets`: the agent added the timer with its `clearInterval`; the finding for the listener came with the edit, and the agent moved the handler to a field and added `emitter.off`. `arkui_check` was clean.
 
 An agent that reads this file learns the bugs and the fixes. In a Counter session it read that the bug is the demo's baseline and left it in. For a fair take, tell the agent not to read `DEMO.md`.

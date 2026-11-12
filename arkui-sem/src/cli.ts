@@ -59,6 +59,7 @@ async function check(rest: string[]) {
     thresholds: settings.thresholds,
     cachePath: cachePath(settings),
     judgeTimeoutMs: settings.judgeTimeoutMs,
+    workspace: process.cwd(),
   });
 
   if (format === 'json') {

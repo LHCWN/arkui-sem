@@ -7,14 +7,14 @@ The one forward plan: plugin status and roadmap, rule coverage and phases. Desig
 The linter lives in `arkui-sem/` (package `arkui-sem` 0.2.0); see `ARCHITECTURE.md` for the layout and `arkui-sem/README.md` for install and usage. Coverage by rule, and what is still missing, is tracked under Rule coverage below.
 
 **Status:**
-- Rules: R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware, V1/V2), R3 unreleased-resource. R2 has a judge slice (used by the bench) but is not emitted yet.
+- Rules: R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware, V1/V2), R3 unreleased-resource, R2 event-unwired (shape d, from facts alone, no judge call). The other R2 shapes have a judge slice (used by the bench) but are not emitted yet.
 - Backends: Jev, Clef, Clef-flash (also through OpenRouter: `or-clef`, `or-clef-flash`), DeepSeek flash (structured output), heuristic, Laya. The fallback chain is not implemented.
 - Tests: `npm test` (offline). The plugin and its `arkui_check` tool load in opencode 1.18.30 and in DevEco Code 0.2.1 (an opencode fork; plugin under `.deveco/`).
 - DevEco demo (2026-10-08, `sandbox/demo/DEMO.md`): Clef flagged the agent's nested write, the idle gate re-sent it for the old button, and the agent fixed both. The DevEco TUI hides tool output, so the demo prompt asks the agent to quote findings verbatim.
 - Live opencode runs 1–4 (logs removed 2026-10-08; run 4 called DeepSeek and found the @Observed-only false negative that led to the depth-aware rule).
 
 **Known limits:**
-- **Single-file text analysis.** No aliasing, no cross-component pass edges (so no R2 yet), and class types are resolved only within the file.
+- **Mostly single-file analysis.** No aliasing. Across files: class lookups for the V1 nested write, and call sites for R2 event-unwired; the parent-side facts the other R2 shapes need are missing.
 - **The heuristic judge's probabilities are placeholders.**
 - **The gate under `opencode run`.** The non-interactive run may exit at idle before the follow-up is processed [I]. Use the TUI or `opencode serve` + SDK for gate tests.
 ---
@@ -47,7 +47,7 @@ The localizer (P5) becomes an `arkui_locate(issue_text)` tool.
 
 ## Rule coverage
 
-Status as of 2026-10-13. Scope: ArkEval v1 category 1, "UI state desynchronization" (plus R3 for category 3).
+Status as of 2026-11-10. Scope: ArkEval v1 category 1, "UI state desynchronization" (plus R3 for category 3).
 Background: `docs/design-docs/core-beliefs.md` §3–§4 (rungs, rule families, architecture), `docs/design-docs/agentic-plugin.md`.
 
 ### Rules (RN)
@@ -55,7 +55,7 @@ Background: `docs/design-docs/core-beliefs.md` §3–§4 (rungs, rule families, 
 | Rule | Name | Detects (facts) | Question for the judge or agent | Status |
 |---|---|---|---|---|
 | **R1** | Under-reactive state | A value rendered in `build()` and written after construction with no reactive path. Two kinds: an undecorated field, and a nested write the decorator can't see. | Q_R1: is it UI state or intentionally static? Verdict, severity. | Implemented, single file |
-| **R2** | Ownership mismatch | A child field initialised from parent state, where the sync direction the code gives ≠ the direction needed. | Q_R2: `child_local_copy` / `shared_with_parent` / `parent_display_only`. The engine maps intent × V1/V2 → decorator. | Q_R2 slice + spec cards; evaluated in the bench (`bench/docs/RESULTS.md`); not emitted by the plugin |
+| **R2** | Ownership mismatch | A child field initialised from parent state, where the sync direction the code gives ≠ the direction needed. | Q_R2: `child_local_copy` / `shared_with_parent` / `parent_display_only`. The engine maps intent × V1/V2 → decorator. | Shape d (event unwired) implemented, facts only. Shapes a–c: Q_R2 slice + spec cards, evaluated in the bench (`bench/docs/RESULTS.md`), not emitted by the plugin |
 | **R3** | Lifecycle obligation | A resource acquired with no release in `aboutToDisappear`. | Q_R3: app-lifetime? Released elsewhere? | Implemented (category 3): timers, listeners, constant-event `on`/`off`, register/subscribe pairs, helper-called releases. Evaluated in the bench (`bench/docs/RESULTS.md`) |
 | **R4** | Over-reactive state | Decorated state never written after init, or a large `@State` mutated at high frequency. | Is reactivity needed? Perf severity. | Not started |
 | **R5** | Issue → component mapping | Component list + summaries. | Which component owns the reported behaviour? (Rung 3) | Not started; not part of this plan |
@@ -67,7 +67,7 @@ Background: `docs/design-docs/core-beliefs.md` §3–§4 (rungs, rule families, 
 | **a** R2-down | The parent changes `x` after init, but the child keeps an `@State` or undecorated copy, so the child shows a stale value. | Facts + judge: "is a snapshot intended?" |
 | **b** R2-up | The child writes an `@Prop` (or a local copy), and the parent or a sibling reads `x`. The edit is lost. | Intent (judge or agent) |
 | **c** R2-leak | A `@Link` used for a draft with cancel semantics, so edits leak to the parent. | Intent (judge or agent) |
-| **d** Event unwired | V2: the child calls `this.onX(v)` (`@Event`), but no call site passes `onX`. | Facts only |
+| **d** Event unwired | The child calls `this.onX(v)`, but no call site passes `onX`: for a V2 `@Event` without a default the call does nothing. A V1 callback with no default, called unchecked, throws at each site that omits it. A callback the child makes optional is not reported. | Facts only (implemented) |
 | **e** V2 `@Param` mutated in place | Only visible with `@ObservedV2` + `@Trace`, and it breaks one-way ownership. | Facts + intent for the fix |
 | **f** Multiple parents | The same child gets different sync needs from different parents. | Facts; the fix choice needs a judgment |
 
@@ -85,9 +85,9 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | `@Trace` per property | ⚠️ Same file (mutated + rendered property, inherited `@Trace` included); cross-file through ace-server (follow-up) | ✅ Class (LSP) + property decorator (our parse) | Eval |
 | `@Observed` / `@ObjectLink` children | ✅ Across files: imported children the parent calls (project index) | – | – |
 | `@Track` | ❌ | Class lookup only | Rule design |
-| R2 facts: call-site edges | ❌ | ✅ `references` on struct → call sites; our parse of the object literal | Bench scale needs a one-pass index |
+| R2 facts: call-site edges | ✅ Project index: a scan of the project, or a text search for one struct | `references` adds to them (cross-file-facts PR 3) | – |
 | R2-a | ❌ | ✅ Detected (`references` + `documentHighlight` write kinds) | Judge: snapshot intended? |
-| R2-d | ❌ | ✅ Fully decidable | – |
+| R2-d | ✅ Call sites from the project index, V1 and V2 | – | Positives to measure it on (phase 5 mutations) |
 | R2-f | ❌ | ✅ Facts | Fix choice |
 | R2-b / R2-c | ❌ | Evidence (sibling readers, dialog-ness) | Intent: judge, or agent via `arkui_ownership_intent` |
 | Read/write kind and context | Syntax tree (ohos-typescript) | Read/write kind: `documentHighlight` | Context (handler/`build`/lifecycle/async), reach via `@Builder`/`ForEach`: the fact extractor |
@@ -125,18 +125,20 @@ Each phase starts only after an explicit go.
 - [x] Cross-file class resolution: a project index (`src/project.ts`) passed to the rules, in the plugin and the bench alike; the LSP adds `references` later (cross-file-facts PR 3)
 - [x] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback), from our own walk and the project index (no R2 candidate yet); for one struct without parsing the project: `searchCallSites` (text search, then a parse of the matching files)
 - [ ] Parent-side facts: decorator of `x`, writes after init, readers (parent, siblings)
-- [ ] Child-side facts: writes to `f` with context, invoked callbacks/`@Event`s, `@CustomDialog`/controller
+- [x] Child-side facts for R2-d: each call of a callback field or `@Event` (checked or not), `onX?:`, `export` on the struct; a dialog controller's builder counts as a call site in any method
+- [ ] Child-side facts for R2-a/b/c: writes to `f` with context, `@CustomDialog`/controller
 - [ ] String-key index: storage keys, `@Provide`/`@Consume` aliases, `@Watch`/`@Monitor` targets
 
 #### Phase 3: rules from facts alone
 - [ ] V2 nested write with cross-file `@ObservedV2` classes
 - [ ] `@Trace` per property (mutated + rendered property without `@Trace`); evaluate on the bench's trace items (same-file rule done, rendered properties only)
 - [x] `@Observed` / `@ObjectLink` recognition across files
-- [ ] R2-d event unwired
+- [x] R2-d event unwired (`unwiredCallbacks` in `analysis.ts`; the engine reports it without a judge call). In the plugin the call sites come from `searchCallSites`; a check that asks about more than 8 structs uses the shared scan
 - [ ] R2-f multiple parents
 
 #### Phase 4: R2 with intent
 - [ ] Emit R2-a / R2-b / R2-c candidates with fact-summary slices (fit the Laya ~424-token limit); call sites in the plugin come from `searchCallSites` (steps: `cross-file-facts.md`, Next: R2 in the plugin)
+- [ ] Judge for the optional case of R2-d, in its own PR: an optional callback no call site passes is not reported today, since facts alone can't tell an oversight from an unused option. Add a question and slice for "should a parent handle this callback?" (a rendered `@Prop value` with an unpassed `onValueChange` is likely a bug, an unpassed `onClose` often not), so the judge can report it as a question or a finding. Needs the removed-`onX` mutation positives (phase 5) first, to set thresholds
 - [ ] Engine mapping intent × V1/V2 × current decorator → finding / question / silent (0.8 / 0.5)
 - [ ] `arkui_ownership_intent(component, field, intent)` tool; intents stored as in-code annotations (`// arkui-sem: intent …`) or in a label log (choice open)
 - [ ] Questions to the agent phrased as intent, not decorator; listed once at `session.idle`

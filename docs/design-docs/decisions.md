@@ -42,6 +42,20 @@
   - Why: no linting step used the tool, and nothing showed agents call it or act on it. The skill's only job beyond decorator guidance was to point the agent at the tool.
   - Consequence: the plugin has one agent tool, `arkui_check`. The evaluation's skill-only arm is gone: the control is the no-plugin arm (`docs/design-docs/agentic-plugin.md`).
   - Kept: the call-site edges in the project index (`ProjectIndex.callSites`), which R2 needs. A `facts` subcommand in the CLI for looking at extracted facts is possible later.
+- **R2 event unwired, from facts alone** (2026-11-10; steps in `docs/exec-plans/active/cross-file-facts.md`).
+  - Done before the LSP work (PR 3): it needs only the call-site edges, and it gives `searchCallSites` its first user.
+  - No judge call. The finding carries the backend `facts` and no probability.
+  - V1 is included, not only the V2 `@Event`: an undecorated callback field is the same wiring, and most ArkUI code is V1.
+  - Two findings, by what an unpassed callback does:
+    - It does nothing and the child gives no default (a V2 `@Event` without an initializer): a finding, when no call site passes it.
+    - It throws (V1, no default, called unchecked): a finding for each site that omits it, even when others pass it.
+  - Not reported: a callback the child lets a parent leave out (a default, `onX?:`, a nullable type, a checked call), even when no call site passes it. Facts alone can't tell an oversight from an option nobody uses, and on real projects it was the only kind that fired. A judge for it is a later step (roadmap phase 4).
+  - "No call site passes it" needs every site: at least one site, none with opaque arguments, `unscanned` 0. A parent that leaves an event out while another passes it is taken as intended.
+  - Also skipped: a field the child assigns itself, `@Require` (the compiler enforces it), a struct with no call site (a page, or a library component).
+  - The candidate is anchored on the child's field whichever file was checked, so a check of the child and one of the parent give one fingerprint, and the disable comment goes above the field.
+  - Call sites: a search per struct for up to 8 structs, the shared scan above that. The scan pays off only when most of the project is being checked anyway.
+  - The plugin waits for call sites 1 s after an edit and 10 s at the idle gate. Why: the search walks the project tree, which on a very large project takes most of a second, and the agent must not wait on it.
+  - A dialog controller's `builder: Child({ … })` is a call site in any method, not only in field initializers: dialogs are often created in `aboutToAppear`, and missing those sites would make their callbacks look unwired.
 - **Call sites of one struct from a text search** (2026-11-10; numbers in `docs/exec-plans/active/cross-file-facts.md`, Result).
   - An API on the index, `ProjectIndex.searchCallSites(decl)`, and no plugin tool or CLI command: the plugin has no user of the edges until R2, and a tool was just removed for having none. The whole-project scan `callSites` stays as the reference, and tests and `scripts/compare-callsites.mjs` hold the two equal.
   - Search: ripgrep first (`ARKUI_SEM_RG`, `PATH`, then the binary opencode downloads for itself), else Node reading the files 64 at a time. ripgrep was about twice as fast warm and the fallback stays under about a second on 10,000 files, so no binary is bundled. A failed ripgrep run is repeated from Node, which also reports what it could not read.

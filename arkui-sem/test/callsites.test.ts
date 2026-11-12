@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { type CallSite, etsFiles, type FactExtractor, type FileFacts } from '../src/analysis.js';
 import { EtsExtractor } from '../src/ets/extract.js';
 import { ProjectIndex } from '../src/project.js';
-import { FileSearch } from '../src/search.js';
+import { FileSearch, type TextSearch } from '../src/search.js';
 import { extract, FIXTURE, project, put, tempDir, touch } from './helpers.js';
 
 const COMPONENTS = join('entry', 'src', 'main', 'ets', 'components');
@@ -348,6 +348,25 @@ struct P {
   assert.deepEqual([use.parent, use.child, use.method, use.args[0].form], ['P', 'Dlg', 'ctrl', 'literal']);
 });
 
+test('a dialog builder in a plain method is a use; other calls there are not', () => {
+  const uses = extract(`
+import { Dlg } from './Dlg'
+import { format } from './format'
+@Component
+struct P {
+  ctrl?: CustomDialogController
+  aboutToAppear() {
+    format(1)
+    this.ctrl = new CustomDialogController({ builder: Dlg({ onClose: () => {} }), autoCancel: true })
+  }
+  build() {}
+}`).componentUses;
+  assert.deepEqual(
+    uses.map((use) => [use.child, use.method, use.args[0]?.form]),
+    [['Dlg', 'aboutToAppear', 'callback']],
+  );
+});
+
 test('a plain @CustomDialog struct, with or without @Component, is found from its controller builder', async () => {
   for (const decorators of ['@CustomDialog', '@CustomDialog\n@Component']) {
     const root = tempDir();
@@ -485,4 +504,26 @@ test('the search answers undefined outside a project, and nothing for a name tha
   assert.equal(await index.searchCallSites({ facts: index.facts(lone), name: 'Child' }), undefined);
   const row = index.facts(join(FIXTURE, COMPONENTS, 'ItemRow.ets'));
   assert.deepEqual(await index.searchCallSites({ facts: row, name: 'Item' }), { sites: [], unscanned: 0 });
+});
+
+test('a struct its file does not export is looked up without a search', async () => {
+  const root = tempDir();
+  put(join(root, 'oh-package.json5'), {});
+  const source = (child: string) =>
+    `@Component\n${child} {\n  build() {}\n}\n@Component\nstruct P {\n  build() {\n    Row()\n  }\n}`;
+  const page = put(join(root, 'P.ets'), source('struct Row'));
+  let searches = 0;
+  const counting: TextSearch = {
+    search: async () => {
+      searches++;
+      return { files: [], unreadable: [] };
+    },
+  };
+  const index = new ProjectIndex(new EtsExtractor(), counting);
+  const found = await index.searchCallSites({ facts: index.facts(page), name: 'Row' });
+  assert.deepEqual([found?.sites.map((s) => s.parent), searches], [['P'], 0]);
+
+  const exporting = put(join(root, 'Q.ets'), source('export struct Row'));
+  await index.searchCallSites({ facts: index.facts(exporting), name: 'Row' });
+  assert.equal(searches, 1);
 });

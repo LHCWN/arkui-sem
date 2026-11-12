@@ -44,8 +44,27 @@
   - The budget is checked between files, so resolving one file's uses can overrun it by the files those imports parse.
   - No signal catches a half-typed line that still parses: `this.` above `Child()` reads as `this.Child()`, so the site is
     lost with no parser error.
+- R2 event unwired (`unwiredCallbacks`):
+  - Not measured: the bench has no positives for it (the removed-`onX` mutation, roadmap phase 5).
+  - An optional callback (a default, `onX?:`, a nullable type, a checked call) is never reported, also when no call
+    site passes it and the child renders the value it would report. A judge for it is planned (roadmap phase 4).
+  - A lookup that outlasts the wait after an edit is dropped from that check; the idle gate repeats it.
+  - Call sites are `Child({ … })` in UI code, field initializers and dialog-controller builders. A struct created some
+    other way (a `builder` passed through a variable, a navigation or router destination) has no site there: with no
+    site at all nothing is reported, but one such hidden site next to a visible one that omits the callback gives a
+    false "no call site passes it".
+  - A site in a file with syntax errors can list wrong arguments; a callback that throws is still reported for it.
+  - A call is "checked" when it uses `?.` or its method reads the field anywhere else, not only in a test before the
+    call, so a callback that can still throw on another path is skipped. An unchecked call of an optional callback is
+    left to the compiler.
+  - Only `this.onX(…)` counts as a call: a callback passed on (`.onClick(this.onX)`, `Grand({ onX: this.onX })`) or
+    called through a local alias is not seen, so such a field is never asked about.
+  - `@Preview` structs count as call sites.
+  - The finding is anchored on the child's field, also when the parent was the edited file.
 - Call sites of one struct from a text search (`ProjectIndex.searchCallSites`, `src/search.ts`):
-  - Nothing in the plugin calls it yet: R2 candidates are its first user.
+  - Each lookup walks the project tree, and each struct runs its own search: a check that asks about several structs
+    walks it several times at once. On a very large project one walk can take most of the plugin's 1 s wait after an
+    edit.
   - The work follows how many files mention the name. A struct with a common name (`Index`, a word used in many files)
     parses all of them; `budgetMs` stops the parsing and counts the rest as `unscanned`.
   - Each check searches again (the result is kept for one check only), and a default export searches at least twice.

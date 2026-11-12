@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Install (or remove) arkui-sem into an opencode project:
+// Install (or remove) arkui-sem into an opencode or DevEco Code project:
 //   node scripts/install.mjs <project-dir>             → .opencode/plugins/arkui-sem.ts
-//   node scripts/install.mjs <project-dir> --uninstall
-//   node scripts/install.mjs --global                  → ~/.config/opencode/plugins/
-// The plugin file re-exports this checkout's dist/opencode.js: rebuild here, then restart opencode.
+//   node scripts/install.mjs <project-dir> --deveco    → .deveco/plugins/arkui-sem.ts
+//   node scripts/install.mjs --global [--deveco]       → ~/.config/opencode/plugins/ (or ~/.config/deveco/plugins/)
+//   add --uninstall to any of these to remove the plugin file
+// The plugin file re-exports this checkout's dist/opencode.js: rebuild here, then restart the agent.
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -13,16 +14,17 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const uninstall = args.includes('--uninstall');
 const global = args.includes('--global');
+const agent = args.includes('--deveco') ? 'deveco' : 'opencode';
 const project = args.find((a) => !a.startsWith('--'));
 
 if (!global && !project) {
   console.error(
-    'usage: node scripts/install.mjs <project-dir> [--uninstall]  |  node scripts/install.mjs --global [--uninstall]',
+    'usage: node scripts/install.mjs <project-dir> [--deveco] [--uninstall]  |  node scripts/install.mjs --global [--deveco] [--uninstall]',
   );
   process.exit(2);
 }
 
-const base = global ? join(homedir(), '.config', 'opencode') : join(resolve(project), '.opencode');
+const base = global ? join(homedir(), '.config', agent) : join(resolve(project), `.${agent}`);
 const pluginFile = join(base, 'plugins', 'arkui-sem.ts');
 const entry = join(root, 'dist', 'opencode.js');
 
@@ -45,4 +47,4 @@ writeFileSync(
 
 console.log(`installed arkui-sem into ${base}
   plugin: ${pluginFile}
-Restart opencode in that project. Backend: ARKUI_SEM_BACKEND=heuristic|jev|clef-flash|clef|deepseek-flash|laya (default clef).`);
+Restart ${agent} in that project. Backend: ARKUI_SEM_BACKEND=heuristic|jev|clef-flash|clef|deepseek-flash|laya (default clef).`);

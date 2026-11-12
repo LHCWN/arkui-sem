@@ -16,15 +16,17 @@ npm install
 npm test          # typechecks, then runs test/**/*.test.ts from src/ (offline, heuristic backend)
 ```
 
-## Use in opencode
+## Use in opencode or DevEco Code
 
 ```sh
-node scripts/install.mjs <project-dir>     # .opencode/plugins/arkui-sem.ts
-node scripts/install.mjs --global          # ~/.config/opencode/plugins/
-node scripts/install.mjs <project-dir> --uninstall
+node scripts/install.mjs <project-dir>            # .opencode/plugins/arkui-sem.ts
+node scripts/install.mjs --global                 # ~/.config/opencode/plugins/
+node scripts/install.mjs <project-dir> --deveco   # .deveco/plugins/arkui-sem.ts (DevEco Code)
+node scripts/install.mjs --global --deveco        # ~/.config/deveco/plugins/
+node scripts/install.mjs <project-dir> --uninstall   # also with --global and/or --deveco
 ```
 
-The plugin re-exports this checkout's `dist/opencode.js`: rebuild, then restart opencode. It reviews `.ets`
+The plugin re-exports this checkout's `dist/opencode.js`: rebuild, then restart the agent. It reviews `.ets`
 edits after each tool call, gates the session once on idle while findings remain open, and adds the tool
 `arkui_check`.
 

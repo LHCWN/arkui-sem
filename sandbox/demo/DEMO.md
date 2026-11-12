@@ -90,9 +90,7 @@ An agent that reads this file learns the bugs and the fixes. In a Counter sessio
 DevEco Code loads plugins from `.deveco/` instead of `.opencode/`. Set it up in the demo project (both folders are ignored):
 
 ```powershell
-node arkui-sem/scripts/install.mjs sandbox/demo
-mkdir sandbox/demo/.deveco
-Copy-Item -Recurse sandbox/demo/.opencode/plugins sandbox/demo/.deveco/
+node arkui-sem/scripts/install.mjs sandbox/demo --deveco
 Set-Content sandbox/demo/.opencode/arkui-sem.json '{"backend": "clef"}'
 ```
 

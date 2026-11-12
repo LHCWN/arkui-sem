@@ -80,6 +80,20 @@
   .judge p { margin: 6px 0 0; font: 12px/1.4 system-ui, sans-serif; color: var(--faint); }
   .judge ul { margin: 4px 0 2px; padding-left: 18px; font: 13.5px/1.5 system-ui, sans-serif; }
 
+  /* Phone on the "On screen" and "Re-check" stages: the page's build(), drawn with ArkUI-like controls */
+  .phone { width: 190px; margin: 6px 0 12px; padding: 8px; border-radius: 26px; background: #222; }
+  .phone .scr { position: relative; height: 270px; border-radius: 18px; background: #fff; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 34px 8px 10px; overflow: hidden; font-size: 14px; }
+  .phone .scr::before { content: ""; position: absolute; top: 9px; left: 50%; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: #222; }
+  .phone .t { min-height: 1.5em; padding: 0 4px; border-radius: 3px; }
+  .phone .t:empty { width: 6em; border-bottom: 1px dashed var(--faint); }
+  .phone .t.flash { background: var(--fixbg); }
+  .phone .row { display: flex; align-items: center; gap: 12px; }
+  .phone .b { border-radius: 999px; background: #007dff; color: #fff; font-size: 13px; padding: 4px 16px; transition: transform .1s, filter .1s; }
+  .phone .b.press { transform: scale(.94); filter: brightness(.75); }
+  .phone .sw { width: 36px; height: 20px; border-radius: 10px; background: #ccc; position: relative; }
+  .phone .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+  .phone .dot { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: rgba(17, 17, 17, .18); border: 2px solid rgba(17, 17, 17, .45); pointer-events: none; }
+
   /* Code panel */
   #codes { position: relative; max-height: 70vh; overflow: auto; }
   .file { font: 12px var(--mono); color: var(--mute); padding: 4px 8px; border: 1px solid var(--line); border-bottom: 0; background: var(--soft); }
@@ -515,6 +529,37 @@ const GREY = {
 };
 
 // ---------------------------------------------------------------------------------------------------------------
+// 2b. Phone: each page's build() as HTML, and the taps played on it. bug: the "On screen" stage, fixed: "Re-check".
+//     A tap is [button, state change]; no change means the tap does nothing on screen. Clock has none: its bug
+//     is not visible on screen.
+// ---------------------------------------------------------------------------------------------------------------
+const pt = (key, text) => `<span class="t" data-f="${key}">${esc(String(text))}</span>`;
+const pb = (label) => `<span class="b" data-b="${label}">${esc(label)}</span>`;
+const PHONES = {
+  profile: {
+    init: { city: '' },
+    ui: (s) => `${pt('city', s.city)}<span class="sw"></span>${pb('Move')}${pb('Move to Beijing')}${pb('Theme')}`,
+    bug: [['Move'], ['Move to Beijing', { city: 'Beijing' }]],
+    fixed: [['Move', { city: 'Shenzhen' }], ['Move to Beijing', { city: 'Beijing' }]],
+  },
+  counter: {
+    init: { count: 0 },
+    ui: (s) => `${pt('count', `Clicks: ${s.count}`)}${pb('Increment')}${pb('Reset')}`,
+    bug: [['Increment'], ['Increment'], ['Reset']],
+    fixed: [['Increment', { count: 1 }], ['Increment', { count: 2 }], ['Reset', { count: 0 }], ['Increment', { count: 1 }]],
+  },
+  volume: {
+    init: { volume: 5 },
+    ui: (s) => `${pt('volume', `Volume: ${s.volume}`)}<div class="row">${pb('-')}${pt('volume', s.volume)}${pb('+')}</div>${pb('Mute')}`,
+    bug: [['+'], ['-'], ['Mute', { volume: 0 }]],
+    fixed: [['+', { volume: 6 }], ['+', { volume: 7 }], ['-', { volume: 6 }]],
+  },
+};
+const phoneMode = (c, st) => PHONES[c.id] && { screen: 'bug', check: 'fixed' }[st.kind];
+const phoneEnd = (p, mode) => Object.assign({}, p.init, ...p[mode].map(([, set]) => set || {}));
+const phoneHtml = (p, s) => `<div class="phone" aria-hidden="true"><div class="scr">${p.ui(s)}</div></div>`;
+
+// ---------------------------------------------------------------------------------------------------------------
 // 3. The story per case.
 //    links: report part -> code lines, as "File.ets:n" in the file when the report was made (after the first edit).
 //    cap: the stage's caption in the strip. marks: lines the "On screen" stage blames. refs: lines a facts-only judge
@@ -752,6 +797,8 @@ function stageHtml(c, st, final) {
   if (st.kind === 'report') h += reportHtml(r.report, c.links);
   if (st.kind === 'gate') h += `<div class="q"><span>由空闲门控作为新消息发送</span>${reportHtml(r.gate, c.links)}</div>`;
   for (const key of st.quotes || []) h += quoteHtml(r, key, st);
+  const mode = phoneMode(c, st);
+  if (mode) h += phoneHtml(PHONES[c.id], final ? phoneEnd(PHONES[c.id], mode) : PHONES[c.id].init);
   return h;
 }
 
@@ -822,7 +869,40 @@ function counter(c) {
   };
 }
 
+// Plays the taps on the phone: a touch dot on the button, a press, then the state change (if any) flashes.
+function tapper(p, mode, minMs) {
+  const LEAD = 500, TAP = 1300, PRESS = 300, APPLY = 450, FLASH = 800, DOT = 900;
+  const taps = p[mode], scr = document.querySelector('#story .phone .scr');
+  let shown = '';
+  return {
+    dur: Math.max(minMs, LEAD + taps.length * TAP + 1000),
+    update(e) {
+      const i = e < LEAD ? -1 : Math.floor((e - LEAD) / TAP), k = e - LEAD - i * TAP;
+      const s = { ...p.init };
+      let flash = [];
+      taps.forEach(([, set], j) => {
+        if (!set || j > i || (j === i && k < APPLY)) return;
+        Object.assign(s, set);
+        if (j === i && k < APPLY + FLASH) flash = Object.keys(set);
+      });
+      const active = i >= 0 && i < taps.length && k < DOT ? taps[i][0] : null;
+      const press = active !== null && k >= PRESS && k < APPLY + 100;
+      const key = JSON.stringify([s, active, press, flash]);
+      if (key === shown) return;
+      shown = key;
+      scr.innerHTML = p.ui(s);
+      scr.querySelectorAll('.t').forEach((el) => el.classList.toggle('flash', flash.includes(el.dataset.f)));
+      const b = active !== null && scr.querySelector(`[data-b="${active}"]`);
+      if (!b) return;
+      b.classList.toggle('press', press);
+      scr.insertAdjacentHTML('beforeend', `<span class="dot" style="left:${b.offsetLeft + b.offsetWidth / 2}px;top:${b.offsetTop + b.offsetHeight / 2}px"></span>`);
+    },
+  };
+}
+
 function stageAnimation(c, st, typed) {
+  const mode = phoneMode(c, st);
+  if (mode) return tapper(PHONES[c.id], mode, KINDS[st.kind].ms);
   if (st.kind === 'edit' || st.kind === 'fix') return typer(typed);
   if (st.kind === 'judge') return st.facts ? { dur: 3600, update() {} } : counter(c);
   if (st.kind === 'report') return revealer(900);

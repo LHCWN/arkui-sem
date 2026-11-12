@@ -14,6 +14,7 @@ const VARS = [
   'ARKUI_SEM_QUESTION_THRESHOLD',
   'ARKUI_SEM_JUDGE_TIMEOUT_MS',
   'ARKUI_SEM_DATA_DIR',
+  'ARKUI_SEM_LSP',
   'DEEPSEEK_API_KEY',
   'DEEPSEEK_BASE_URL',
   'TYPESAFE_API_KEY',
@@ -44,6 +45,16 @@ describe('loadSettings', () => {
     assert.deepEqual(s.thresholds, { finding: 0.8, question: 0.5 });
     assert.equal(s.credentials.deepseekApiKey, undefined);
     assert.deepEqual(s.warnings, []);
+  });
+
+  test('lsp is auto unless switched off; another value warns and stays auto', () => {
+    assert.equal(loadSettings({}, project).lsp, 'auto');
+    put(projectFile, { lsp: 'off' });
+    assert.equal(loadSettings({}, project).lsp, 'off');
+    process.env.ARKUI_SEM_LSP = 'on';
+    const s = loadSettings({}, project);
+    assert.equal(s.lsp, 'auto');
+    assert.match(s.warnings.join(' '), /lsp should be "auto" or "off"/);
   });
 
   test('the user config supplies the backend and the DeepSeek key', () => {

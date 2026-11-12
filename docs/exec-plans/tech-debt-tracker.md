@@ -8,27 +8,34 @@
 - Judge slices still describe the field's class from the edited file only (`type_is_observed_class`, `object_link_types_in_file`), even when the project index resolved it elsewhere.
 - The direct-render check for `@ObjectLink` sees only `this.<field>.<path>` reads: not reads through a `ForEach` item variable or a local alias, and for an array call not `ForEach(this.<field>.<array>, …)` in the parent.
 - The judge fallback chain is decided but not implemented (`docs/design-docs/decisions.md`).
-- The fact extractor reads one file's syntax tree, with no type checker: types come from annotations and `new X(…)` initializers, and writes through an alias (`const self = this; self.x = …`) are missed. Typed values from the ohos-typescript checker are planned (`docs/exec-plans/active/cross-file-facts.md`, PR 2b); aliasing needs dataflow.
+- The fact extractor reads one file's syntax tree, with no type checker: types come from annotations and `new X(…)` initializers, and writes through an alias (`const self = this; self.x = …`) are missed. Typed values from the ohos-typescript checker are planned (`docs/exec-plans/completed/cross-file-facts.md`, PR 2b); aliasing needs dataflow.
 - The project index caches facts by mtime only (an edit within the same mtime tick, or a tool that keeps mtimes, serves
   stale facts), and cached `FileFacts` are mutable and shared across checks; size + mtime keys and
   `readonly` fact types would close both.
 - `analysis.ts` mixes the fact model, derived queries, file utilities and rules; splitting it would let `src/ets/` import
   only the model.
-- The parser reads the SDK once per process (`defaultParser()`) and ignores the SDK passed to the LSP client; one SDK
-  choice should feed both (PR 3).
+- The parser reads the SDK once per process (`defaultParser()`) and ignores the SDK passed to the LSP client. The plugin
+  passes none, so both use the same lookup there; only `arkui-sem lsp --sdk` can differ.
 - Struct getters and setters are not scanned: a write in `set v(x) { this.a = x }` and reads through a getter used in
   `build()` are not recorded.
   - `v2Gap` handles index writes (unknown container, nested container, container in a plain object, other calls) as separate branches; one rule (walk up to the nearest non-container owner, then classify it) would cover them.
 - Only the undecorated-mutated-rendered kind of R1 is measured with a model; nested-write has only a small offline contract benchmark (`bench/docs/plans/r1-nested.md`).
 - Writes inside functions in field initializers (arrow-function properties, listener objects) are not scanned.
 - Comparing with DevEco's built-in `arkts_check` needs DevEco Studio 6.0+ and `DEVECO_HOME`, not installed yet (deferred).
-- LSP client (`arkui-sem/src/lsp/`) is not wired into the plugin: after the agent edits a file, the plugin must call
-  `open(file)` with the new text before asking the server anything (the API supports it).
-- The LSP client sends no package dependency records at `initialize`: modules come from a folder scan (up to four
-  levels below the project root), so the server doesn't resolve imports by package name (listing modules from
-  `oh-package.json5` alone was not enough, nor was the server's own `--projectPath` mode). The rules resolve them through
-  the project index (`src/project.ts`); the LSP records come from the same lookup (cross-file-facts PR 3). R3 releases in
-  helpers and R4 writers across modules are still missing.
+- The language server in the plugin (`arkui-sem/src/lsp/warm.ts`):
+  - No rule asks it anything: it is started, sent each edited file and stopped. `WarmLsp.ask` is the one way in for the
+    facts planned for it (field writers and readers, V2 owners in other files); R3 releases in helpers and R4 writers
+    across modules are still missing.
+  - With `lsp: auto` it starts on the first edit whether or not anything will ask it; on a large project that is minutes
+    of start-up and several GB (numbers: `bench/docs/RESULTS.md`).
+  - One start per project and plugin lifetime: a server that failed to start or died is not started again.
+  - A file is sent as it is on disk when the edit tool returns; files changed outside the agent's edit tools are not sent.
+  - opencode ends the server through the plugin's `dispose`. A killed opencode process skips it, and whether the
+    server then exits on its closed stdin was not checked.
+- ace-server follows an import by package name through the `oh_modules` link that a DevEco sync or `ohpm install`
+  creates, and we run neither. In a project without the links it stops at the import; with them it reaches the other
+  module, with or without dependency records at `initialize` (both servers; decisions.md). The rules resolve such
+  imports through the project index (`src/project.ts`).
 - Call-site edges (`ProjectIndex.callSites`):
   - The time budget stops the scan between files, but listing the project can't be interrupted: on a cold OS file cache
     the listing alone can exceed the budget.

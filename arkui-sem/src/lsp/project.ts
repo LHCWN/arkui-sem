@@ -1,9 +1,10 @@
 // The `initialize` params ace-server requires: project root, server dir, and one record per ArkTS module.
-// Modules are the directories holding src/main/ets, no hvigor sync needed.
+// Modules come from the root build-profile.json5, else from the directories holding src/main/ets.
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { type ProjectModule, profileModules } from '../project.js';
 import type { LspPaths } from './server.js';
 
 const MODULE_SOURCES = join('src', 'main', 'ets');
@@ -38,11 +39,14 @@ export function findModuleDirs(projectRoot: string): string[] {
   return found;
 }
 
-/** Nearest ancestor with build-profile.json5, else the parent of the module holding the file. */
+/**
+ * Nearest ancestor whose build-profile.json5 lists modules (a module has a build profile of its own, without them), else
+ * the parent of the module holding the file.
+ */
 export function projectRootFor(file: string): string {
   let moduleDir: string | undefined;
   for (let dir = dirname(resolve(file)); ; dir = dirname(dir)) {
-    if (existsSync(join(dir, 'build-profile.json5'))) {
+    if (profileModules(dir)) {
       return dir;
     }
     if (!moduleDir && existsSync(join(dir, MODULE_SOURCES))) {
@@ -80,12 +84,17 @@ function sdkVersion(sdk: string): SdkVersion {
   return { version: String(pkg.data?.version ?? ''), level: String(pkg.data?.apiVersion ?? '') };
 }
 
+function projectModules(root: string): ProjectModule[] {
+  const listed = profileModules(root);
+  return listed?.length ? listed : findModuleDirs(root).map((dir) => ({ name: basename(dir), dir }));
+}
+
 export function initializeParams(projectRoot: string, paths: LspPaths, workDir: string) {
   const root = resolve(projectRoot);
   const { version, level } = sdkVersion(paths.sdk);
   const ets = join(paths.sdk, 'default', 'openharmony', 'ets');
-  const modules = findModuleDirs(root).map((dir) => ({
-    moduleName: basename(dir),
+  const modules = projectModules(root).map(({ name, dir }) => ({
+    moduleName: name,
     modulePath: unix(dir),
     jsComponentType: 'declarative', // ArkTS UI module (server enum ComponentType)
     apiType: 'stageMode',
@@ -99,7 +108,7 @@ export function initializeParams(projectRoot: string, paths: LspPaths, workDir: 
     compatibleSdkLevel: level,
   }));
   if (modules.length === 0) {
-    throw new Error(`no ArkTS module (a dir with ${MODULE_SOURCES}) under ${root}`);
+    throw new Error(`no ArkTS module (a build-profile.json5 module or a dir with ${MODULE_SOURCES}) under ${root}`);
   }
   const rootUri = toFileUri(root);
   const indexDir = join(

@@ -41,6 +41,13 @@ and macOS), or the build `ARKUI_SEM_ACE_SERVER` / `--ace-server` points to; a bu
 (DevEco 26+) is driven over standard LSP. The SDK comes from DevEco Studio or `ARKUI_SEM_SDK`; `ARKUI_SEM_LSP_NODE`
 picks the node that runs the server.
 
+The plugin starts the same server in the background on the first `.ets` edit of a project, sends it each edited
+file, and stops it when opencode disposes the plugin. Nothing waits for it: without a server, or while it starts, checks
+run as before. No rule asks it anything so far. `"lsp": "off"` in a config file, or `ARKUI_SEM_LSP=off`, keeps it
+from starting (default `auto`); on a large project the server takes minutes and several GB to start.
+The server follows imports by package name only in a project with `oh_modules` links (after a DevEco sync or
+`ohpm install`); the rules don't depend on that, they use the project index.
+
 ## Backends and configuration
 
 | Backend | What it is |

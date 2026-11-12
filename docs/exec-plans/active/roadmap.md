@@ -14,6 +14,7 @@ The linter lives in `arkui-sem/` (package `arkui-sem` 0.2.0); see `ARCHITECTURE.
 - Live opencode runs 1–4 (logs removed 2026-10-08; run 4 called DeepSeek and found the @Observed-only false negative that led to the depth-aware rule).
 
 **Known limits:**
+- **The language server is not used by any rule.** The plugin starts ace-server on the first `.ets` edit, keeps it in step with the edits and stops it on dispose (`lsp: auto | off`); the facts it is meant for (field writers and readers, V2 owners in other files) are phases 3–4.
 - **Mostly single-file analysis.** No aliasing. Across files: class lookups for the V1 nested write, and call sites for R2 event-unwired; the parent-side facts the other R2 shapes need are missing.
 - **The heuristic judge's probabilities are placeholders.**
 - **The gate under `opencode run`.** The non-interactive run may exit at idle before the follow-up is processed [I]. Use the TUI or `opencode serve` + SDK for gate tests.
@@ -85,7 +86,7 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | `@Trace` per property | ⚠️ Same file (mutated + rendered property, inherited `@Trace` included); cross-file through ace-server (follow-up) | ✅ Class (LSP) + property decorator (our parse) | Eval |
 | `@Observed` / `@ObjectLink` children | ✅ Across files: imported children the parent calls (project index) | – | – |
 | `@Track` | ❌ | Class lookup only | Rule design |
-| R2 facts: call-site edges | ✅ Project index: a scan of the project, or a text search for one struct | `references` adds to them (cross-file-facts PR 3) | – |
+| R2 facts: call-site edges | ✅ Project index: a scan of the project, or a text search for one struct | – (index only, no second source) | – |
 | R2-a | ❌ | ✅ Detected (`references` + `documentHighlight` write kinds) | Judge: snapshot intended? |
 | R2-d | ✅ Call sites from the project index, V1 and V2 | – | Positives to measure it on (phase 5 mutations) |
 | R2-f | ❌ | ✅ Facts | Fix choice |
@@ -95,7 +96,7 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | Derived state: `@Watch`, `@Monitor`, `@Computed` | ❌ | Locating only | New rule + dataset (MDP doesn't cover them) |
 | R3 unreleased resource | ✅ | Release in another file or owner object | Judge: app-lifetime or released elsewhere |
 | R4 over-reactive | ❌ | "Never written" via `references` | Rule; perf judgment |
-| Imports by package name across modules | ✅ Project index (`src/project.ts`): `oh-package.json5` local dependencies and `build-profile.json5` modules; `Index.ets` re-exports | hvigor's dependency map and dependency records at `initialize` (cross-file-facts PR 3) | `oh_modules` packages, namespace imports (`import * as`) |
+| Imports by package name across modules | ✅ Project index (`src/project.ts`): `oh-package.json5` local dependencies and `build-profile.json5` modules; `Index.ets` re-exports | Resolved by the server only in a synced project (`oh_modules` links); dependency records at `initialize` change nothing (decisions.md) | `oh_modules` packages, namespace imports (`import * as`) |
 
 **LSP fit:** good for the per-edit plugin, where the server stays warm and runs a few queries per edit. Poor for bench scale (thousands of items and sequential `references` calls, warm-up nondeterminism), so the bench uses a one-pass index instead.
 
@@ -112,7 +113,7 @@ Each phase starts only after an explicit go.
 #### Phase 1: LSP spike (decides how much LSP can do)
 - [ ] Pick a headless ArkTS language server
 - [ ] Probe on `sandbox/demo`:
-  - [x] `references` on a struct: works, and `definition` works per call site (ace-server 26 and DevEco 6.1.1). Call hierarchy doesn't list struct calls in either direction, so call sites come from our own walk (cross-file-facts PR 2b); `references` and `definition` join in PR 3
+  - [x] `references` on a struct: works, and `definition` works per call site (ace-server 26 and DevEco 6.1.1). Call hierarchy doesn't list struct calls in either direction, so call sites come from our own walk (cross-file-facts PR 2b) and stay there: the LSP doesn't add a second source for them
   - [ ] `references` on a child field: does it return the call-site property? (**decisive probe**)
   - [ ] `documentHighlight` Write kinds
   - [ ] `typeDefinition` across files
@@ -122,7 +123,7 @@ Each phase starts only after an explicit go.
 - [ ] Decide: LSP behind `FactExtractor` for the plugin, or grep for struct names + our parse
 
 #### Phase 2: cross-file facts
-- [x] Cross-file class resolution: a project index (`src/project.ts`) passed to the rules, in the plugin and the bench alike; the LSP adds `references` later (cross-file-facts PR 3)
+- [x] Cross-file class resolution: a project index (`src/project.ts`) passed to the rules, in the plugin and the bench alike
 - [x] Call-site edge index: parent, child, field, expression form (`this.x` / `$x` / `this.x.y` / literal / callback), from our own walk and the project index (no R2 candidate yet); for one struct without parsing the project: `searchCallSites` (text search, then a parse of the matching files)
 - [ ] Parent-side facts: decorator of `x`, writes after init, readers (parent, siblings)
 - [x] Child-side facts for R2-d: each call of a callback field or `@Event` (checked or not), `onX?:`, `export` on the struct; a dialog controller's builder counts as a call site in any method

@@ -36,7 +36,7 @@ sandbox/demo/                            the demo project (opencode): R1 pages i
 sandbox/*                                everything else is local scratch (ignored), e.g. a DevEco Code copy of the demo
 arkui-sem/                               the linter (opencode plugin, package arkui-sem 0.2.0, ESM, TypeScript)
   README.md, AGENTS.md
-  src/opencode.ts      plugin: tool.execute.after feedback, session.idle gate, tool arkui_check
+  src/opencode.ts      plugin: tool.execute.after feedback, session.idle gate, tool arkui_check, language server lifecycle
   src/analysis.ts      fact types, .ets discovery,
                        rules R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware), R3 unreleased-resource
   src/ets/parse.ts     ArkTS parser: ohos-typescript with the SDK ets-loader options (bundled copy: src/ets/options.json,
@@ -59,7 +59,9 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/engine.ts        candidates → slices → judge → finding/question bands (thresholds 0.8 / 0.5); agent formatting
   src/config.ts        defaults < ~/.config/arkui-sem/config.json < .opencode/arkui-sem.json < env < plugin options
   src/cli.ts           arkui-sem check | config | lsp  (default backend: clef)
-  src/lsp/             utility client for ace-server (ArkTS language server): definition, references, call hierarchy
+  src/lsp/             utility client for ace-server (ArkTS language server): definition, references, call hierarchy;
+                       warm.ts keeps one server per project running for the plugin (started on the first .ets edit,
+                       sent each edited file, asked within a time budget, stopped on dispose; setting lsp: auto | off)
   test/                node:test, run from src/ via tsx (npm test, offline): rules/R1.test.ts, rules/R3.test.ts, one file
                        per module (config, engine, deepseek, openrouter, opencode, lsp, project, callsites, search), helpers.ts; test/fixtures/:
                        Counter, Feed, Profile (R1), Ticker (R3), fake-ace-server.mjs (both LSP protocols), project/

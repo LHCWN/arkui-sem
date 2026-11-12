@@ -974,9 +974,8 @@ function goTo(si) {
 function restart() { Object.assign(player, { si: 0, t: 0, playing: true }); render(); }
 function togglePlay() {
   const atEnd = player.t >= player.anim.dur;
-  if (!player.playing && atEnd) {
-    if (player.si === CASES[player.ci].stages.length - 1) return restart();
-    Object.assign(player, { si: player.si + 1, t: 0, playing: true });
+  if (!player.playing && atEnd) { // a stage shown complete (manual step) plays again from its start
+    Object.assign(player, { t: 0, playing: true });
     return render();
   }
   player.playing = !player.playing;

@@ -1,0 +1,1058 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arkui-sem rules</title>
+<style>
+  :root {
+    --fg: #111; --mute: #6b6b6b; --faint: #a0a0a0; --line: #e3e3e3; --soft: #f6f6f6;
+    --red: #c62828; --gate: #e06666; --agent: #2b5797; --redbg: #fdecec; --redhl: #f8c9c9; --fix: #1f6f78; --fixbg: #e6f3f4;
+    --mono: ui-monospace, Consolas, "Courier New", monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1240px; margin: 0 auto; padding-block: 20px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 2px 0 8px; }
+  button { font: inherit; color: inherit; }
+  pre { margin: 0; font: 12.5px/1.5 var(--mono); }
+  .lead { color: var(--mute); margin: 0 0 14px; }
+
+  /* Case tabs and rule line */
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); }
+  .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 10px; cursor: pointer; color: var(--mute); }
+  .tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--red); }
+  .tabs b { font: 600 12px var(--mono); margin-left: 4px; }
+  .rule { margin: 10px 0 2px; }
+  .rule b { font: 600 13px var(--mono); color: var(--red); margin-right: 6px; }
+
+  /* Loop strip: one button per stage; the current one shows its progress */
+  .strip { list-style: none; margin: 4px 0 12px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 0; }
+  .strip li { display: flex; align-items: stretch; flex: 1 1 0; min-width: 118px; max-width: 220px; }
+  .strip li + li::before { content: "\2192"; color: var(--faint); padding: 0 6px; align-self: center; font-size: 18px; }
+  .strip button { position: relative; overflow: hidden; width: 100%; border: 1px solid var(--line); background: #fff; border-radius: 4px; padding: 8px 10px 10px; cursor: pointer; text-align: left; line-height: 1.3; }
+  /* Header bar coloured by actor, so agent and linter steps stand apart */
+  .strip button { --actor: var(--mute); display: flex; flex-direction: column; justify-content: flex-start; }
+  .strip .a-agent { --actor: var(--agent); }
+  .strip .a-linter { --actor: var(--red); }
+  .strip .a-gate { --actor: var(--gate); }
+  .strip .a-user { --actor: var(--faint); }
+  .strip small { display: block; margin: -8px -10px 6px; padding: 3px 10px; background: var(--actor); color: #fff; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  .strip button:not(.done):not([aria-current]) small { opacity: .5; }
+  .strip span { display: block; font-size: 15px; font-weight: 600; color: var(--mute); }
+  .strip em { display: block; font-style: normal; font-size: 12.5px; color: var(--faint); margin-top: 2px; }
+  .strip .done span, .strip .done em { color: var(--fg); }
+  .strip [aria-current="step"] { border-color: var(--fg); box-shadow: inset 0 0 0 1px var(--fg); background: var(--soft); }
+  .strip [aria-current="step"] span, .strip [aria-current="step"] em { color: var(--fg); }
+  .strip [aria-current="step"]::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: var(--prog, 0%); background: var(--fg); }
+
+  /* Player controls */
+  .ctl { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; color: var(--mute); font-size: 13px; }
+  .ctl button { border: 1px solid var(--line); background: #fff; border-radius: 3px; padding: 2px 10px; cursor: pointer; }
+  #play, #restart { min-width: 2.6em; font-size: 15px; line-height: 1.4; }
+  .ctl input { vertical-align: middle; width: 110px; }
+  .ctl .view { margin-left: auto; }
+  .static .anim-only { display: none; }
+
+  /* Stage text: actor, title, note, quotes, report, judge */
+  .grid { display: grid; grid-template-columns: minmax(300px, 5fr) 7fr; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .actor { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--mute); }
+  .actor { font-weight: 600; }
+  .actor.agent { color: var(--agent); }
+  .actor.linter { color: var(--red); }
+  .actor.gate { color: var(--gate); }
+  .note { margin: 0 0 10px; }
+  .q { margin: 8px 0; }
+  .q > span { font-size: 12px; color: var(--mute); }
+  .q pre, .report { white-space: pre-wrap; word-break: break-word; background: var(--soft); padding: 8px 10px; border-left: 2px solid var(--line); }
+  .report { border-left-color: var(--red); }
+  .part { display: block; border-radius: 2px; }
+  .part.link { outline: none; text-decoration: underline dotted #b9b9b9; text-underline-offset: 3px; }
+  .part.link.hl, .part.link:focus { background: var(--redhl); }
+  .judge { font: 13px/1.6 var(--mono); border-left: 2px solid var(--red); padding: 6px 10px; background: var(--soft); }
+  .judge div { display: grid; grid-template-columns: 9.5em 4em 1fr; }
+  .judge .main { font-size: 15px; }
+  .judge .main b { color: var(--red); font-size: 22px; line-height: 1.2; }
+  .judge .grey { color: var(--faint); transition: opacity .4s; }
+  .judge .off { opacity: 0; }
+  .judge p { margin: 6px 0 0; font: 12px/1.4 system-ui, sans-serif; color: var(--faint); }
+  .judge ul { margin: 4px 0 2px; padding-left: 18px; font: 13.5px/1.5 system-ui, sans-serif; }
+
+  /* Phone on the "On screen" and "Re-check" stages: the page's build(), drawn with ArkUI-like controls */
+  .phone { width: 190px; margin: 6px 0 12px; padding: 8px; border-radius: 26px; background: #222; }
+  .phone .scr { position: relative; height: 270px; border-radius: 18px; background: #fff; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 34px 8px 10px; overflow: hidden; font-size: 14px; }
+  .phone .scr::before { content: ""; position: absolute; top: 9px; left: 50%; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: #222; }
+  .phone .t { min-height: 1.5em; padding: 0 4px; border-radius: 3px; }
+  .phone .t:empty { width: 6em; border-bottom: 1px dashed var(--faint); }
+  .phone .t.flash { background: var(--fixbg); }
+  .phone .row { display: flex; align-items: center; gap: 12px; }
+  .phone .b { border-radius: 999px; background: #007dff; color: #fff; font-size: 13px; padding: 4px 16px; transition: transform .1s, filter .1s; }
+  .phone .b.press { transform: scale(.94); filter: brightness(.75); }
+  .phone .sw { width: 36px; height: 20px; border-radius: 10px; background: #ccc; position: relative; }
+  .phone .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+  .phone .dot { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: rgba(17, 17, 17, .18); border: 2px solid rgba(17, 17, 17, .45); pointer-events: none; }
+
+  /* Code panel */
+  #codes { position: relative; max-height: 70vh; overflow: auto; }
+  .file { font: 12px var(--mono); color: var(--mute); padding: 4px 8px; border: 1px solid var(--line); border-bottom: 0; background: var(--soft); }
+  .code { border: 1px solid var(--line); overflow-x: auto; margin-bottom: 14px; padding: 4px 0; font: 12.5px/1.6 var(--mono); }
+  .ln { display: flex; white-space: pre; min-width: max-content; border-left: 3px solid transparent; }
+  .ln i { font-style: normal; color: #aaa; width: 3.2em; text-align: right; padding-right: 6px; user-select: none; flex: none; }
+  .ln u { text-decoration: none; width: 1.2em; color: var(--mute); flex: none; user-select: none; }
+  .ln.gap { color: var(--faint); }
+  .ln.add { background: var(--soft); border-left-color: #888; }
+  .ln.bug, .ln.ref { background: var(--redbg); border-left-color: var(--red); }
+  .ln.hl { background: var(--redhl); }
+  .ln.fadd { background: var(--fixbg); border-left-color: var(--fix); }
+  .ln.fdel { color: #8a8a8a; text-decoration: line-through; border-left-color: #b5cfd2; }
+  .ln.fdel span { color: inherit; }
+  .ln .cur { border-right: 2px solid var(--fg); }
+  .k { color: #7b2fa0; } .d { color: #a65e00; } .s { color: #2e7d32; } .c { color: #999; } .n { color: #1565c0; }
+
+  /* Static view: every stage of the case, stacked */
+  .stage-block { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<main id="app">
+  <h1>arkui-sem: how each rule catches an ArkUI state bug</h1>
+  <p class="lead">Four recorded coding-agent sessions, one per rule.</p>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <p class="rule" id="rule"></p>
+  <ol class="strip anim-only" id="strip" aria-label="Agent loop"></ol>
+  <div class="ctl">
+    <span class="anim-only"><button id="play" aria-label="Pause" title="Pause">&#x275A;&#x275A;</button> <button id="restart" aria-label="Restart" title="Restart">&#x23EE;&#xFE0E;</button></span>
+    <label class="anim-only">Speed <input type="range" id="speed" min="0.5" max="3" step="0.25" value="1"> <output id="spv">1&times;</output></label>
+    <span class="anim-only" id="pos"></span>
+    <button class="view" id="view">All stages</button>
+  </div>
+  <div class="grid anim-only">
+    <section aria-live="polite">
+      <div id="story"></div>
+    </section>
+    <section id="codes"></section>
+  </div>
+  <div id="all"></div>
+</main>
+
+<!-- Recorded sessions, verbatim: opencode, model opencode/big-pickle, judge Clef. One string per block. -->
+<!-- Profile (R1 a): starting files, then the session in order -->
+<script type="text/plain" data-run="profile" data-key="file" data-file="Profile.ets">
+class Address {
+  city: string = ''
+}
+
+class User {
+  name: string = ''
+  address: Address = new Address()
+}
+
+@Observed
+class Settings {
+  dark: boolean = false
+}
+
+@Component
+struct Profile {
+  @State user: User = new User()
+  @State settings: Settings = new Settings()
+
+  build() {
+    Column() {
+      Text(this.user.address.city)
+      Toggle({ type: ToggleType.Switch, isOn: this.settings.dark })
+      Button('Move').onClick(() => {
+        this.user.address.city = 'Shenzhen'
+      })
+      Button('Theme').onClick(() => {
+        this.settings.dark = !this.settings.dark
+      })
+    }
+  }
+}
+</script>
+<script type="text/plain" data-run="profile" data-key="prompt">
+On the Profile page (entry/src/main/ets/pages/Profile.ets), add a 'Move to Beijing' button that changes the user's city to Beijing. Keep the change minimal.
+</script>
+<script type="text/plain" data-run="profile" data-key="e0.old" data-file="Profile.ets">
+      Button('Move').onClick(() => {
+        this.user.address.city = 'Shenzhen'
+      })
+</script>
+<script type="text/plain" data-run="profile" data-key="e0.new" data-file="Profile.ets">
+      Button('Move').onClick(() => {
+        this.user.address.city = 'Shenzhen'
+      })
+      Button('Move to Beijing').onClick(() => {
+        const user = new User()
+        user.name = this.user.name
+        user.address = new Address()
+        user.address.city = 'Beijing'
+        this.user = user
+      })
+</script>
+<script type="text/plain" data-run="profile" data-key="report">
+arkui-sem: 1 finding(s), 0 question(s) about ArkUI state semantics.
+- [R1 nested-write-unobserved] entry\src\main\ets\pages\Profile.ets:25 Profile.user.address.city (p=0.93, @cf/cloudflare/clef)
+  why: @State field written 2 levels deep (build-closure in build() line 25); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that
+  fix: change it at the first layer instead, e.g. build a new object and assign this.user.address = <new object> (or reassign this.user); or render the nested object in a child component that receives it as @ObjectLink (its class @Observed) and mutate it there.
+</script>
+<script type="text/plain" data-run="profile" data-key="t0">
+The edit applied; the finding is the pre-existing `Move` (Shenzhen) button, not the new one. Verifying:
+</script>
+<script type="text/plain" data-run="profile" data-key="c0">
+arkui-sem: 1 finding(s), 0 question(s) about ArkUI state semantics.
+- [R1 nested-write-unobserved] entry\src\main\ets\pages\Profile.ets:25 Profile.user.address.city (p=0.93, @cf/cloudflare/clef)
+  why: @State field written 2 levels deep (build-closure in build() line 25); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that
+  fix: change it at the first layer instead, e.g. build a new object and assign this.user.address = <new object> (or reassign this.user); or render the nested object in a child component that receives it as @ObjectLink (its class @Observed) and mutate it there.
+</script>
+<script type="text/plain" data-run="profile" data-key="t1">
+Added the button in entry/src/main/ets/pages/Profile.ets:29. Since `User`/`Address` aren't `@Observed`, it builds a new `User` and reassigns `this.user` so the UI actually re-renders. Note: the existing `Move` (Shenzhen) button has a pre-existing defect — its nested write won't update the UI (per arkui_check); say the word if you want it fixed too.
+</script>
+<script type="text/plain" data-run="profile" data-key="gate">
+arkui-sem: 1 finding(s), 0 question(s) about ArkUI state semantics.
+- [R1 nested-write-unobserved] entry\src\main\ets\pages\Profile.ets:25 Profile.user.address.city (p=0.93, @cf/cloudflare/clef)
+  why: @State field written 2 levels deep (build-closure in build() line 25); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that
+  fix: change it at the first layer instead, e.g. build a new object and assign this.user.address = <new object> (or reassign this.user); or render the nested object in a child component that receives it as @ObjectLink (its class @Observed) and mutate it there.
+
+Before finishing: fix these, or if one is intentional, add the disable comment with a reason.
+</script>
+<script type="text/plain" data-run="profile" data-key="e1.old" data-file="Profile.ets">
+      Button('Move').onClick(() => {
+        this.user.address.city = 'Shenzhen'
+      })
+</script>
+<script type="text/plain" data-run="profile" data-key="e1.new" data-file="Profile.ets">
+      Button('Move').onClick(() => {
+        const user = new User()
+        user.name = this.user.name
+        user.address = new Address()
+        user.address.city = 'Shenzhen'
+        this.user = user
+      })
+</script>
+<script type="text/plain" data-run="profile" data-key="c1">
+arkui-sem: no findings in 1 .ets file(s).
+</script>
+<script type="text/plain" data-run="profile" data-key="t2">
+Fixed — the `Move` button now rebuilds the `User` and reassigns `this.user` (Profile.ets:24), matching the Beijing button. arkui_check reports no findings.
+</script>
+<script type="text/plain" data-run="profile" data-key="fixOut">
+Edit applied successfully.
+</script>
+
+<!-- Counter (R1 b): starting files, then the session in order -->
+<script type="text/plain" data-run="counter" data-key="file" data-file="Counter.ets">
+@Component
+struct Counter {
+  count: number = 0
+  label: string = 'Clicks'
+
+  build() {
+    Column() {
+      Text(`${this.label}: ${this.count}`)
+      Button('Increment')
+        .onClick(() => {
+          this.count++
+        })
+    }
+  }
+}
+
+@Component
+struct GoodCounter {
+  @State count: number = 0
+
+  build() {
+    Button(`${this.count}`).onClick(() => { this.count += 1 })
+  }
+}
+
+@ComponentV2
+struct GoodCounterV2 {
+  @Local count: number = 0
+
+  build() {
+    Button(`${this.count}`).onClick(() => { this.count += 1 })
+  }
+}
+</script>
+<script type="text/plain" data-run="counter" data-key="prompt">
+On the Counter page (entry/src/main/ets/pages/Counter.ets), add a 'Reset' button that sets the count back to 0. Keep the change minimal.
+</script>
+<script type="text/plain" data-run="counter" data-key="e0.old" data-file="Counter.ets">
+      Button('Increment')
+        .onClick(() => {
+          this.count++
+        })
+    }
+</script>
+<script type="text/plain" data-run="counter" data-key="e0.new" data-file="Counter.ets">
+      Button('Increment')
+        .onClick(() => {
+          this.count++
+        })
+      Button('Reset')
+        .onClick(() => {
+          this.count = 0
+        })
+    }
+</script>
+<script type="text/plain" data-run="counter" data-key="report">
+arkui-sem: 1 finding(s), 0 question(s) about ArkUI state semantics.
+- [R1 undecorated-mutated-rendered] entry\src\main\ets\pages\Counter.ets:3 Counter.count (p=0.95, @cf/cloudflare/clef)
+  why: rendered in build() (line 8) and written after init (build-closure in build() line 11; build-closure in build() line 15); no state decorator
+  fix: declare it @State; if the value comes from the parent, use @Prop (one-way) or @Link (two-way) instead.
+</script>
+<script type="text/plain" data-run="counter" data-key="e1.old" data-file="Counter.ets">
+  count: number = 0
+</script>
+<script type="text/plain" data-run="counter" data-key="e1.new" data-file="Counter.ets">
+  @State count: number = 0
+</script>
+<script type="text/plain" data-run="counter" data-key="c0">
+arkui-sem: no findings in 1 .ets file(s).
+</script>
+<script type="text/plain" data-run="counter" data-key="t0">
+Added a Reset button at Counter.ets:13 that sets `count = 0`. I also marked `count` as `@State` (Counter.ets:3) — without it, neither Increment nor Reset would re-render the UI.
+</script>
+<script type="text/plain" data-run="counter" data-key="fixOut">
+Edit applied successfully.
+</script>
+
+<!-- Volume (R2): starting files, then the session in order -->
+<script type="text/plain" data-run="volume" data-key="file" data-file="Volume.ets">
+import { VolumeStepper } from '../components/VolumeStepper'
+
+@Entry
+@ComponentV2
+struct Volume {
+  @Local volume: number = 5
+
+  build() {
+    Column() {
+      Text(`Volume: ${this.volume}`)
+      VolumeStepper({ value: this.volume })
+    }
+  }
+}
+</script>
+<script type="text/plain" data-run="volume" data-key="file" data-file="VolumeStepper.ets">
+@ComponentV2
+export struct VolumeStepper {
+  @Param value: number = 0
+  @Event changeValue: (value: number) => void
+
+  build() {
+    Row() {
+      Button('-').onClick(() => {
+        this.changeValue(this.value - 1)
+      })
+      Text(`${this.value}`)
+      Button('+').onClick(() => {
+        this.changeValue(this.value + 1)
+      })
+    }
+  }
+}
+</script>
+<script type="text/plain" data-run="volume" data-key="prompt">
+On the Volume page (entry/src/main/ets/pages/Volume.ets), add a 'Mute' button that sets the volume to 0. Keep the change minimal.
+</script>
+<script type="text/plain" data-run="volume" data-key="e0.old" data-file="Volume.ets">
+      Text(`Volume: ${this.volume}`)
+      VolumeStepper({ value: this.volume })
+</script>
+<script type="text/plain" data-run="volume" data-key="e0.new" data-file="Volume.ets">
+      Text(`Volume: ${this.volume}`)
+      VolumeStepper({ value: this.volume })
+      Button('Mute').onClick(() => {
+        this.volume = 0
+      })
+</script>
+<script type="text/plain" data-run="volume" data-key="report">
+arkui-sem: 1 finding(s), 0 question(s) about ArkUI state semantics.
+- [R2 event-unwired] entry\src\main\ets\components\VolumeStepper.ets:4 VolumeStepper.changeValue (facts)
+  why: @Event changeValue is called (lines 9 and 13), but the only call site of VolumeStepper doesn't pass it: an @Event the parent doesn't pass is an empty function, so the call does nothing
+  at: entry\src\main\ets\pages\Volume.ets:11
+  fix: pass changeValue where VolumeStepper is created, with a handler that updates the parent's state; or remove the callback and its calls if nothing should handle it.
+</script>
+<script type="text/plain" data-run="volume" data-key="e1.old" data-file="Volume.ets">
+      VolumeStepper({ value: this.volume })
+</script>
+<script type="text/plain" data-run="volume" data-key="e1.new" data-file="Volume.ets">
+      VolumeStepper({ value: this.volume, changeValue: (v: number) => { this.volume = v } })
+</script>
+<script type="text/plain" data-run="volume" data-key="t0">
+Added a `Mute` button that sets `this.volume = 0`, and wired `VolumeStepper`'s `changeValue` so the +/- buttons actually update the page state (it was unwired, flagged by the ArkUI checker).
+</script>
+<script type="text/plain" data-run="volume" data-key="fixOut">
+Edit applied successfully.
+</script>
+
+<!-- Clock (R3): starting files, then the session in order -->
+<script type="text/plain" data-run="clock" data-key="file" data-file="Clock.ets">
+import { emitter } from '@kit.BasicServicesKit'
+
+@Entry
+@Component
+struct Clock {
+  @State now: string = new Date().toLocaleTimeString()
+  @State zone: string = 'UTC'
+
+  aboutToAppear(): void {
+    emitter.on('zoneChanged', (event: emitter.EventData) => {
+      this.zone = `${event.data?.zone}`
+    })
+  }
+
+  build() {
+    Column() {
+      Text(this.now)
+      Text(this.zone)
+    }
+  }
+}
+</script>
+<script type="text/plain" data-run="clock" data-key="prompt">
+On the Clock page (entry/src/main/ets/pages/Clock.ets), make the displayed time update every second. Keep the change minimal.
+</script>
+<script type="text/plain" data-run="clock" data-key="e0.old" data-file="Clock.ets">
+  @State now: string = new Date().toLocaleTimeString()
+  @State zone: string = 'UTC'
+
+  aboutToAppear(): void {
+    emitter.on('zoneChanged', (event: emitter.EventData) => {
+      this.zone = `${event.data?.zone}`
+    })
+  }
+</script>
+<script type="text/plain" data-run="clock" data-key="e0.new" data-file="Clock.ets">
+  @State now: string = new Date().toLocaleTimeString()
+  @State zone: string = 'UTC'
+  private timer: number = -1
+
+  aboutToAppear(): void {
+    this.timer = setInterval(() => {
+      this.now = new Date().toLocaleTimeString()
+    }, 1000)
+    emitter.on('zoneChanged', (event: emitter.EventData) => {
+      this.zone = `${event.data?.zone}`
+    })
+  }
+
+  aboutToDisappear(): void {
+    clearInterval(this.timer)
+  }
+</script>
+<script type="text/plain" data-run="clock" data-key="report">
+arkui-sem: 1 finding(s), 0 question(s) about ArkUI state semantics.
+- [R3 unreleased-resource] entry\src\main\ets\pages\Clock.ets:14 Clock emitter.on:zoneChanged (p=0.93, @cf/cloudflare/clef)
+  why: listener acquired in aboutToAppear() at line 14; no matching release in aboutToDisappear/onPageHide
+  fix: release it in aboutToDisappear(): emitter.off('zoneChanged', <same handler>). Keep the handler in a field so off() receives the same reference.
+</script>
+<script type="text/plain" data-run="clock" data-key="t0">
+The check also flagged the pre-existing `emitter.on` listener as never released; I'll fix that too since it's a one-liner.
+</script>
+<script type="text/plain" data-run="clock" data-key="e1.old" data-file="Clock.ets">
+  aboutToAppear(): void {
+    this.timer = setInterval(() => {
+      this.now = new Date().toLocaleTimeString()
+    }, 1000)
+    emitter.on('zoneChanged', (event: emitter.EventData) => {
+      this.zone = `${event.data?.zone}`
+    })
+  }
+
+  aboutToDisappear(): void {
+    clearInterval(this.timer)
+  }
+</script>
+<script type="text/plain" data-run="clock" data-key="e1.new" data-file="Clock.ets">
+  aboutToAppear(): void {
+    this.timer = setInterval(() => {
+      this.now = new Date().toLocaleTimeString()
+    }, 1000)
+    emitter.on('zoneChanged', this.onZoneChanged)
+  }
+
+  aboutToDisappear(): void {
+    clearInterval(this.timer)
+    emitter.off('zoneChanged', this.onZoneChanged)
+  }
+
+  private onZoneChanged = (event: emitter.EventData): void => {
+    this.zone = `${event.data?.zone}`
+  }
+</script>
+<script type="text/plain" data-run="clock" data-key="c0">
+arkui-sem: no findings in 1 .ets file(s).
+</script>
+<script type="text/plain" data-run="clock" data-key="t1">
+Done. `Clock.ets` now starts a 1-second `setInterval` in `aboutToAppear` that refreshes `this.now`, and clears it in `aboutToDisappear` (plus releases the pre-existing `emitter.on` listener that the check flagged). arkui_check passes clean.
+</script>
+<script type="text/plain" data-run="clock" data-key="fixOut">
+Edit applied successfully.
+</script>
+
+<script>
+// ---------------------------------------------------------------------------------------------------------------
+// 1. Recorded sessions: read the text blocks above into RUNS[case] = { files, prompt, edits, report, texts, ... }
+// ---------------------------------------------------------------------------------------------------------------
+function loadRuns() {
+  const runs = {};
+  for (const el of document.querySelectorAll('script[data-run]')) {
+    const r = runs[el.dataset.run] ??= { files: {}, edits: [], texts: [], checks: [] };
+    const text = el.textContent.slice(1, -1); // the generator wraps each string in one newline on each side
+    const key = el.dataset.key;
+    if (key === 'file') r.files[el.dataset.file] = text;
+    else if (/^e\d+\./.test(key)) {
+      const [i, side] = [+key.slice(1, key.indexOf('.')), key.split('.')[1]];
+      (r.edits[i] ??= { file: el.dataset.file })[side] = text;
+    } else if (/^t\d+$/.test(key)) r.texts[+key.slice(1)] = text;
+    else if (/^c\d+$/.test(key)) r.checks[+key.slice(1)] = text;
+    else r[key] = text;
+  }
+  return runs;
+}
+const RUNS = loadRuns();
+
+// ---------------------------------------------------------------------------------------------------------------
+// 2. Grey numbers: the same file state checked with the CLI per backend; not part of the sessions.
+// ---------------------------------------------------------------------------------------------------------------
+const GREY = {
+  profile: [['heuristic', '0.88', 'finding'], ['DeepSeek flash', '0.85', 'finding']],
+  counter: [['heuristic', '0.95', 'finding'], ['DeepSeek flash', '0.90', 'finding']],
+  clock: [['heuristic', '0.80', 'finding'], ['DeepSeek flash', '0.72', 'question']],
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// 2b. Phone: each page's build() as HTML, and the taps played on it. bug: the "On screen" stage, fixed: "Re-check".
+//     A tap is [button, state change]; no change means the tap does nothing on screen. Clock has none: its bug
+//     is not visible on screen.
+// ---------------------------------------------------------------------------------------------------------------
+const pt = (key, text) => `<span class="t" data-f="${key}">${esc(String(text))}</span>`;
+const pb = (label) => `<span class="b" data-b="${label}">${esc(label)}</span>`;
+const PHONES = {
+  profile: {
+    init: { city: '' },
+    ui: (s) => `${pt('city', s.city)}<span class="sw"></span>${pb('Move')}${pb('Move to Beijing')}${pb('Theme')}`,
+    bug: [['Move'], ['Move to Beijing', { city: 'Beijing' }]],
+    fixed: [['Move', { city: 'Shenzhen' }], ['Move to Beijing', { city: 'Beijing' }]],
+  },
+  counter: {
+    init: { count: 0 },
+    ui: (s) => `${pt('count', `Clicks: ${s.count}`)}${pb('Increment')}${pb('Reset')}`,
+    bug: [['Increment'], ['Increment'], ['Reset']],
+    fixed: [['Increment', { count: 1 }], ['Increment', { count: 2 }], ['Reset', { count: 0 }], ['Increment', { count: 1 }]],
+  },
+  volume: {
+    init: { volume: 5 },
+    ui: (s) => `${pt('volume', `Volume: ${s.volume}`)}<div class="row">${pb('-')}${pt('volume', s.volume)}${pb('+')}</div>${pb('Mute')}`,
+    bug: [['+'], ['-'], ['Mute', { volume: 0 }]],
+    fixed: [['+', { volume: 6 }], ['+', { volume: 7 }], ['-', { volume: 6 }]],
+  },
+};
+const phoneMode = (c, st) => PHONES[c.id] && { screen: 'bug', check: 'fixed' }[st.kind];
+const phoneEnd = (p, mode) => Object.assign({}, p.init, ...p[mode].map(([, set]) => set || {}));
+const phoneHtml = (p, s) => `<div class="phone" aria-hidden="true"><div class="scr">${p.ui(s)}</div></div>`;
+
+// ---------------------------------------------------------------------------------------------------------------
+// 3. The story per case.
+//    links: report part -> code lines, as "File.ets:n" in the file when the report was made (after the first edit).
+//    cap: the stage's caption in the strip. marks: lines the "On screen" stage blames. refs: lines a facts-only judge
+//    stage cites. quotes: t0 = texts[0], c0 = checks[0], fixOut = last edit result.
+// ---------------------------------------------------------------------------------------------------------------
+const CASES = [
+  {
+    id: 'profile', name: 'Profile', tag: 'R1 a', rule: 'R1 nested write', p: '0.93',
+    plain: 'A write two levels below a @State field (this.user.address.city) is not observed, so the screen keeps the old value.',
+    links: { head: ['Profile.ets:25'], why: ['Profile.ets:17', 'Profile.ets:25'], fix: ['Profile.ets:25'] },
+    stages: [
+      { kind: 'task', cap: 'Add a Beijing button' },
+      { kind: 'edit', cap: 'Correct new button', note: 'The new button builds a new User and reassigns this.user: a first-layer write, which ArkUI sees.' },
+      { kind: 'screen', cap: 'Move does nothing', marks: ['Profile.ets:17', 'Profile.ets:22', 'Profile.ets:25'],
+        note: 'Tapping Move does nothing on screen: the city text stays empty. @State user reacts when user or user.address is reassigned; line 25 writes city, one level deeper, so nothing re-renders. That line was in the page before the agent came; its new button works.' },
+      { kind: 'judge', cap: 'Clef 0.93' },
+      { kind: 'report', cap: '1 finding, line 25' },
+      { kind: 'say', cap: 'Calls it pre-existing', title: 'The agent calls it pre-existing and stops', quotes: ['t0', 't1'],
+        note: 'It ran arkui_check itself, got the same report, and ended its turn with a question.' },
+      { kind: 'gate', cap: 'Re-sends the finding', note: 'The session went idle with the finding open, so the gate sent it once more. This is why the gate exists.' },
+      { kind: 'fix', cap: 'Rewrites Move', edit: 1, quotes: ['t2'], note: 'The agent rewrote Move the same way as its new button.' },
+      { kind: 'check', cap: 'No findings', quotes: ['c1'] },
+    ],
+  },
+  {
+    id: 'counter', name: 'Counter', tag: 'R1 b', rule: 'R1 undecorated field', p: '0.95',
+    plain: 'count is shown on screen and changed by the buttons, but has no @State, so ArkUI never redraws it.',
+    links: { head: ['Counter.ets:3'], why: ['Counter.ets:3', 'Counter.ets:8', 'Counter.ets:11', 'Counter.ets:15'], fix: ['Counter.ets:3'] },
+    stages: [
+      { kind: 'task', cap: 'Add a Reset button' },
+      { kind: 'edit', cap: 'Reset inherits the bug', note: 'Reset is written the same way as Increment.' },
+      { kind: 'screen', cap: 'Count never updates', marks: ['Counter.ets:3', 'Counter.ets:8', 'Counter.ets:11', 'Counter.ets:15'],
+        note: 'Neither button changes the number on screen. count is a plain field, so writing it (lines 11 and 15) does not redraw the text on line 8. The bug was in the page; the new Reset button inherits it.' },
+      { kind: 'judge', cap: 'Clef 0.95' },
+      { kind: 'report', cap: '1 finding, line 3' },
+      { kind: 'fix', cap: 'Adds @State', edit: 1, quotes: ['t0'], note: 'Right after the report, the agent declared count as @State.' },
+      { kind: 'check', cap: 'No findings', quotes: ['c0'] },
+    ],
+  },
+  {
+    id: 'volume', name: 'Volume', tag: 'R2', rule: 'R2 event unwired',
+    plain: 'The child calls its @Event changeValue, but the parent never passes one, so the call does nothing.',
+    links: {
+      head: ['VolumeStepper.ets:4'], why: ['VolumeStepper.ets:4', 'VolumeStepper.ets:9', 'VolumeStepper.ets:13', 'Volume.ets:11'],
+      at: ['Volume.ets:11'], fix: ['Volume.ets:11'],
+    },
+    stages: [
+      { kind: 'task', cap: 'Add a Mute button' },
+      { kind: 'edit', cap: 'Correct Mute button', note: 'Mute sets the page’s own @Local volume, which works.' },
+      { kind: 'screen', cap: '− and + do nothing', marks: ['Volume.ets:11', 'VolumeStepper.ets:4', 'VolumeStepper.ets:9', 'VolumeStepper.ets:13'],
+        note: 'Tapping − or + does nothing. The stepper asks its parent to change the value, but Volume creates it without changeValue, so the call is an empty function and the volume stays 5. The bug was in the page; Mute works.' },
+      { kind: 'judge', cap: 'No model, 3 facts', label: 'Facts', title: 'The linter checks code facts', refs: ['VolumeStepper.ets:4', 'VolumeStepper.ets:9', 'VolumeStepper.ets:13', 'Volume.ets:11'],
+        note: 'No decision model is called. The finding follows from three facts, so every backend gives the same result.',
+        facts: [
+          'VolumeStepper.ets:4 declares @Event changeValue, and lines 9 and 13 call it.',
+          'Volume.ets:11 is the only place VolumeStepper is created, and it does not pass changeValue.',
+          'An @Event the parent does not pass is an empty function, so both calls do nothing.',
+        ] },
+      { kind: 'report', cap: '1 finding, 2 files' },
+      { kind: 'fix', cap: 'Passes changeValue', edit: 1, quotes: ['t0'], note: 'Right after the report, the agent passed changeValue with a handler that writes the page’s volume.' },
+      { kind: 'check', cap: 'Fix edit is clean', quotes: ['fixOut'], quoteLabel: 'Result of the fix edit: the plugin appends findings to an edit result, and there are none',
+        note: 'The agent did not call arkui_check; the fix edit itself was checked.' },
+    ],
+  },
+  {
+    id: 'clock', name: 'Clock', tag: 'R3', rule: 'R3 unreleased resource', p: '0.93',
+    plain: 'A listener registered in aboutToAppear is never released, so it outlives the page.',
+    links: {
+      head: ['Clock.ets:14'], why: ['Clock.ets:14', 'Clock.ets:19', 'Clock.ets:20', 'Clock.ets:21'],
+      fix: ['Clock.ets:19', 'Clock.ets:20', 'Clock.ets:21', 'Clock.ets:14'],
+    },
+    stages: [
+      { kind: 'task', cap: 'Tick every second' },
+      { kind: 'edit', cap: 'Timer, released', note: 'The timer is started in aboutToAppear and cleared in aboutToDisappear, which is correct.' },
+      { kind: 'screen', cap: 'Listener leaks', marks: ['Clock.ets:14', 'Clock.ets:15', 'Clock.ets:16', 'Clock.ets:19'],
+        note: 'Every time the page opens, aboutToAppear registers one more zoneChanged listener and nothing removes it. After the page closes the listener stays alive, holds the page in memory and keeps writing its zone. The bug was in the page; the agent’s timer is released properly.' },
+      { kind: 'judge', cap: 'Clef 0.93' },
+      { kind: 'report', cap: '1 finding, line 14' },
+      { kind: 'fix', cap: 'Adds emitter.off', edit: 1, quotes: ['t0'], note: 'Right after the report, the agent moved the handler into a field so that emitter.off in aboutToDisappear removes the same function.' },
+      { kind: 'check', cap: 'No findings', quotes: ['c0', 't1'] },
+    ],
+  },
+];
+
+// Per stage kind: actor, strip label, title, code version shown, duration at 1x in ms (null: set by its animation).
+const KINDS = {
+  task:   { actor: 'user',   label: 'Task',      title: 'The task given to the agent',             view: 'base',  ms: 2600 },
+  edit:   { actor: 'agent',  label: 'Edit',      title: 'The agent’s edit',                   view: 'edit',  ms: null },
+  screen: { actor: 'app',    label: 'On screen', title: 'What goes wrong',                         view: 'after', ms: 5000 },
+  judge:  { actor: 'linter', label: 'Judge',     title: 'The linter scores the candidate',         view: 'after', ms: null },
+  report: { actor: 'linter', label: 'Report',    title: 'The report, appended to the edit result', view: 'after', ms: null },
+  say:    { actor: 'agent',  label: 'Agent',     title: '',                                        view: 'after', ms: 4500 },
+  gate:   { actor: 'gate',   label: 'Idle gate', title: 'The idle gate sends the finding again',   view: 'after', ms: null },
+  fix:    { actor: 'agent',  label: 'Fix',       title: 'The fix',                                 view: 'fix',   ms: null },
+  check:  { actor: 'linter', label: 'Re-check',  title: 'Clean re-check',                          view: 'fixed', ms: 2600 },
+};
+const ACTOR = { user: 'User', agent: 'Agent', app: 'On screen', linter: 'Linter', gate: 'Idle gate' };
+
+// ---------------------------------------------------------------------------------------------------------------
+// 4. Code versions and line diff
+// ---------------------------------------------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+const clamp = (x) => Math.max(0, Math.min(1, x));
+
+function applyEdits(files, edits) {
+  const out = { ...files };
+  for (const e of edits) out[e.file] = out[e.file].replace(e.old, () => e.new);
+  return out;
+}
+
+// base: before the agent; after: after its first edit (what the report saw); fixed: after the fix edit.
+function versions(c) {
+  const r = RUNS[c.id];
+  const after = applyEdits(r.files, [r.edits[0]]);
+  const fixEdit = r.edits[c.stages.find((s) => s.kind === 'fix').edit];
+  return { base: r.files, after, fixed: applyEdits(after, [fixEdit]) };
+}
+
+// Line diff by longest common subsequence. Rows: [op, text, line number in b], op is ' ', '+' or '-'.
+function diff(a, b) {
+  a = a.split('\n');
+  b = b.split('\n');
+  const n = a.length, m = b.length, lcs = [];
+  for (let i = n; i >= 0; i--) {
+    lcs[i] = [];
+    for (let j = m; j >= 0; j--) {
+      if (i === n || j === m) lcs[i][j] = 0;
+      else if (a[i] === b[j]) lcs[i][j] = lcs[i + 1][j + 1] + 1;
+      else lcs[i][j] = Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const rows = [];
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) { rows.push([' ', b[j], ++j]); i++; }
+    else if (i < n && (j === m || lcs[i + 1][j] >= lcs[i][j + 1])) rows.push(['-', a[i++], 0]);
+    else rows.push(['+', b[j], ++j]);
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// 5. Rendering: code panel, report, judge, stage text
+// ---------------------------------------------------------------------------------------------------------------
+const KEYWORDS = 'import|from|export|struct|class|build|this|new|const|private|void|number|string|boolean|true|false';
+const TOKENS = new RegExp(`(\\/\\/.*$)|('[^']*'|\`[^\`]*\`)|(@\\w+)|\\b(${KEYWORDS})\\b|\\b(\\d+)\\b`, 'g');
+function hilite(s) {
+  return esc(s).replace(TOKENS, (m, comment, str, deco, kw) =>
+    `<span class="${comment ? 'c' : str ? 's' : deco ? 'd' : kw ? 'k' : 'n'}">${m}</span>`);
+}
+
+// Rows of one file for a code version, with each row's CSS class and whether it is typed in by the animation.
+function codeRows(v, f, view) {
+  const rows = view === 'base' ? diff(v.base[f], v.base[f])
+    : view === 'fix' || view === 'fixed' ? diff(v.after[f], v.fixed[f])
+    : diff(v.base[f], v.after[f]);
+  const out = [];
+  for (const [op, text, n] of rows) {
+    if (op === '-' && view !== 'fix') continue;
+    let cls = '';
+    if (op === '-') cls = 'fdel';
+    else if (op === '+') cls = { edit: 'add', fix: 'fadd', fixed: 'fadd' }[view] || '';
+    const marker = op === ' ' || view === 'after' || view === 'fixed' ? '' : op;
+    out.push({ op, text, n, cls, marker, key: op === '-' ? '' : `${f}:${n}`, typed: op === '+' && (view === 'edit' || view === 'fix') });
+  }
+  return out;
+}
+
+// Code panel HTML. lines: { bug, ref } sets of "File.ets:n". excerpt: keep only rows near changed or marked lines
+// (static view). Typed rows get data-ty.
+function codeHtml(c, view, lines, excerpt) {
+  const v = versions(c), typed = [];
+  let html = '';
+  for (const f of Object.keys(v.base)) {
+    let rows = codeRows(v, f, view);
+    rows.forEach((r) => { r.cls += lines.bug.has(r.key) ? ' bug' : lines.ref.has(r.key) ? ' ref' : ''; });
+    if (excerpt) {
+      const near = (i) => rows.slice(Math.max(0, i - 3), i + 4).some((r) => r.op !== ' ' && view !== 'after' || /bug|ref/.test(r.cls));
+      const keep = rows.map((_, i) => near(i));
+      keep.forEach((k, i) => { if (!k && keep[i - 1] && near(i + 1)) keep[i] = true; }); // a one-line gap saves nothing
+      if (!keep.some(Boolean)) continue;
+      rows = rows.flatMap((r, i) => keep[i] ? [r] : keep[i - 1] ? [{ gap: true }] : []);
+    }
+    html += `<div class="file">${f}</div><div class="code">`;
+    for (const r of rows) {
+      if (r.gap) { html += '<div class="ln gap"><i>⋮</i><u></u><span></span></div>'; continue; }
+      const ty = r.typed && !excerpt ? ` data-ty="${typed.push(r.text) - 1}"` : '';
+      html += `<div class="ln ${r.cls}" data-k="${r.key}"${ty}><i>${r.n || ''}</i><u>${r.marker}</u><span>${hilite(r.text) || ' '}</span></div>`;
+    }
+    html += '</div>';
+  }
+  return { html, typed };
+}
+
+// A report line maps to a part by its prefix: "- [" is the finding head, then why / at / fix.
+function reportHtml(text, links) {
+  const lines = text.split('\n').map((line) => {
+    const m = line.match(/^\s+(why|at|fix):/);
+    const keys = links[line.startsWith('- [') ? 'head' : m && m[1]];
+    return keys
+      ? `<span class="part link" tabindex="0" data-ks="${keys.join(' ')}">${esc(line)}</span>`
+      : `<span class="part">${esc(line) || ' '}</span>`;
+  });
+  return `<pre class="report">${lines.join('')}</pre>`;
+}
+
+function judgeHtml(c, final) {
+  const grey = GREY[c.id].map(([backend, p, band]) =>
+    `<div class="grey ${final ? '' : 'off'}"><span>${backend}</span><span>${p}</span><span>${band}</span></div>`).join('');
+  const foot = 'Several judges scored the same code.';
+  return `<div class="judge"><div class="main"><span>Clef</span><b class="pnum">${final ? c.p : '0.00'}</b><span>finding</span></div>${grey}<p>${foot}</p></div>`;
+}
+
+// A rule decided from code facts alone: no model, so no score; list the facts instead.
+function factsHtml(facts) {
+  return `<div class="judge"><div class="main"><span>Model</span><b>none</b><span>facts only</span></div><ul>${facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+}
+
+const QUOTE_LABEL = { t: 'Agent', c: 'Linter re-check (arkui_check)' };
+function quoteHtml(r, key, st) {
+  const text = key === 'fixOut' ? r.fixOut : key[0] === 't' ? r.texts[+key.slice(1)] : r.checks[+key.slice(1)];
+  const label = key === 'fixOut' ? st.quoteLabel : QUOTE_LABEL[key[0]];
+  return `<div class="q"><span>${esc(label)}</span><pre>${esc(text)}</pre></div>`;
+}
+
+// The text column of one stage. final: show the end state (static view, or after a manual step).
+function stageHtml(c, st, final) {
+  const r = RUNS[c.id], kind = KINDS[st.kind];
+  let h = `<span class="actor ${kind.actor}">${ACTOR[kind.actor]}</span><h2>${esc(st.title || kind.title)}</h2>`;
+  if (st.note) h += `<p class="note">${esc(st.note)}</p>`;
+  if (st.kind === 'task') h += `<div class="q"><span>Prompt</span><pre>${esc(r.prompt)}</pre></div>`;
+  if (st.kind === 'judge' && st.facts) h += factsHtml(st.facts);
+  else if (st.kind === 'judge') h += `<p class="note">The linter found the candidate in the code and asked a System One model how likely it is a real bug.</p>${judgeHtml(c, final)}`;
+  if (st.kind === 'report') h += reportHtml(r.report, c.links);
+  if (st.kind === 'gate') h += `<div class="q"><span>Sent by the idle gate as a new message</span>${reportHtml(r.gate, c.links)}</div>`;
+  for (const key of st.quotes || []) h += quoteHtml(r, key, st);
+  const mode = phoneMode(c, st);
+  if (mode) h += phoneHtml(PHONES[c.id], final ? phoneEnd(PHONES[c.id], mode) : PHONES[c.id].init);
+  return h;
+}
+
+// Lines a stage points at: bug, the lines "On screen" blames; ref, the lines the judge or the report cites.
+function stageLines(c, st) {
+  const cited = st.kind === 'judge' ? st.refs || c.links.head
+    : st.kind === 'report' || st.kind === 'gate' ? Object.values(c.links).flat() : [];
+  return { bug: new Set(st.marks), ref: new Set(cited) };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// 6. Animations. Each returns { dur, update(elapsedMs) }; update must also accept Infinity (stage complete).
+// ---------------------------------------------------------------------------------------------------------------
+
+// Types the '+' lines in order; lines not reached yet are hidden.
+function typer(typed) {
+  const total = typed.reduce((a, s) => a + s.length + 1, 0);
+  const typingMs = Math.min(2600, 16 * total);
+  const els = [...document.querySelectorAll('#codes [data-ty]')];
+  const shown = els.map(() => -1);
+  return {
+    dur: 300 + typingMs + 1400,
+    update(e) {
+      let left = total * clamp((e - 300) / typingMs);
+      els.forEach((el, i) => {
+        const s = typed[i];
+        const k = Math.max(0, Math.min(s.length + 1, Math.floor(left)));
+        left -= s.length + 1;
+        if (k === shown[i]) return;
+        shown[i] = k;
+        el.style.display = k === 0 ? 'none' : '';
+        el.lastChild.innerHTML = k > s.length ? hilite(s) || ' ' : `<span class="cur">${esc(s.slice(0, k))}</span>`;
+      });
+    },
+  };
+}
+
+// Reveals report lines one by one; each linked part marks its code lines as it appears and is lit briefly.
+function revealer(perLineMs) {
+  const parts = [...document.querySelectorAll('#story .report .part')];
+  const end = 300 + parts.length * perLineMs;
+  let shown = -1;
+  return {
+    dur: end + 1800,
+    update(e) {
+      const n = Math.min(parts.length, Math.floor((e - 300) / perLineMs) + 1);
+      if (n === shown) return;
+      shown = n;
+      parts.forEach((p, i) => { p.style.visibility = i < n ? '' : 'hidden'; });
+      const lit = parts.slice(0, n).filter((p) => p.dataset.ks).flatMap((p) => p.dataset.ks.split(' '));
+      document.querySelectorAll('#codes .ln').forEach((el) => el.classList.toggle('ref', lit.includes(el.dataset.k)));
+      const current = e < end + 600 ? parts[n - 1] : null;
+      const keys = current && current.dataset.ks ? current.dataset.ks.split(' ') : [];
+      light(keys, keys.length > 0);
+    },
+  };
+}
+
+// Counts Clef's p up from 0, then fades in the grey backends.
+function counter(c) {
+  const p = +c.p;
+  return {
+    dur: 3600,
+    update(e) {
+      document.querySelector('#story .pnum').textContent = (p * (1 - (1 - clamp(e / 1300)) ** 3)).toFixed(2);
+      document.querySelectorAll('#story .judge .grey').forEach((g) => g.classList.toggle('off', e < 1600));
+    },
+  };
+}
+
+// Plays the taps on the phone: a touch dot on the button, a press, then the state change (if any) flashes.
+function tapper(p, mode, minMs) {
+  const LEAD = 500, TAP = 1300, PRESS = 300, APPLY = 450, FLASH = 800, DOT = 900;
+  const taps = p[mode], scr = document.querySelector('#story .phone .scr');
+  let shown = '';
+  return {
+    dur: Math.max(minMs, LEAD + taps.length * TAP + 1000),
+    update(e) {
+      const i = e < LEAD ? -1 : Math.floor((e - LEAD) / TAP), k = e - LEAD - i * TAP;
+      const s = { ...p.init };
+      let flash = [];
+      taps.forEach(([, set], j) => {
+        if (!set || j > i || (j === i && k < APPLY)) return;
+        Object.assign(s, set);
+        if (j === i && k < APPLY + FLASH) flash = Object.keys(set);
+      });
+      const active = i >= 0 && i < taps.length && k < DOT ? taps[i][0] : null;
+      const press = active !== null && k >= PRESS && k < APPLY + 100;
+      const key = JSON.stringify([s, active, press, flash]);
+      if (key === shown) return;
+      shown = key;
+      scr.innerHTML = p.ui(s);
+      scr.querySelectorAll('.t').forEach((el) => el.classList.toggle('flash', flash.includes(el.dataset.f)));
+      const b = active !== null && scr.querySelector(`[data-b="${active}"]`);
+      if (!b) return;
+      b.classList.toggle('press', press);
+      scr.insertAdjacentHTML('beforeend', `<span class="dot" style="left:${b.offsetLeft + b.offsetWidth / 2}px;top:${b.offsetTop + b.offsetHeight / 2}px"></span>`);
+    },
+  };
+}
+
+function stageAnimation(c, st, typed) {
+  const mode = phoneMode(c, st);
+  if (mode) return tapper(PHONES[c.id], mode, KINDS[st.kind].ms);
+  if (st.kind === 'edit' || st.kind === 'fix') return typer(typed);
+  if (st.kind === 'judge') return st.facts ? { dur: 3600, update() {} } : counter(c);
+  if (st.kind === 'report') return revealer(900);
+  if (st.kind === 'gate') return revealer(450);
+  return { dur: KINDS[st.kind].ms, update() {} };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// 7. Player: current case and stage, the clock, controls and keyboard
+// ---------------------------------------------------------------------------------------------------------------
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const player = { ci: 0, si: 0, t: 0, playing: !reducedMotion, speed: 1, anim: { dur: 1, update() {} }, staticView: reducedMotion };
+
+function renderHeader() {
+  const c = CASES[player.ci];
+  $('tabs').innerHTML = CASES.map((x, i) =>
+    `<button role="tab" aria-selected="${i === player.ci}" data-c="${i}">${x.name}<b>${x.tag}</b></button>`).join('');
+  $('rule').innerHTML = `<b>${c.rule}</b>${esc(c.plain)}`;
+  $('view').textContent = player.staticView ? 'Animate' : 'All stages';
+  $('app').classList.toggle('static', player.staticView);
+}
+
+function renderStage() {
+  const c = CASES[player.ci], st = c.stages[player.si], kind = KINDS[st.kind];
+  $('strip').innerHTML = c.stages.map((x, i) => {
+    const k = KINDS[x.kind];
+    const current = i === player.si ? 'aria-current="step"' : '';
+    return `<li><button data-s="${i}" class="a-${k.actor} ${i < player.si ? 'done' : ''}" ${current}><small>${ACTOR[k.actor]}</small><span>${x.label || k.label}</span><em>${esc(x.cap)}</em></button></li>`;
+  }).join('');
+  $('story').innerHTML = stageHtml(c, st, false);
+  const { html, typed } = codeHtml(c, kind.view, stageLines(c, st), false);
+  $('codes').innerHTML = html;
+  player.anim = stageAnimation(c, st, typed);
+  scrollCodeToStage(c, st); // before update(): typed lines are hidden at t = 0 and have no position
+  player.anim.update(player.t);
+  $('pos').textContent = `stage ${player.si + 1} of ${c.stages.length}`;
+  setPlayButton(player.playing ? 'pause' : 'play');
+}
+
+// Scrolls the code panel so the first line this stage is about sits in its upper third.
+function scrollCodeToStage(c, st) {
+  const box = $('codes');
+  const el = box.querySelector('[data-ty], .ln.bug, .ln.ref, .ln.fadd')
+    || (st.kind === 'task' ? null : box.querySelector(`[data-k="${c.links.head[0]}"]`));
+  box.scrollTop = el ? el.offsetTop - box.clientHeight / 3 : 0;
+}
+
+function render() {
+  renderHeader();
+  if (player.staticView) renderStatic(); else { $('all').innerHTML = ''; renderStage(); }
+}
+
+// The play button shows what a press does: pause, play, or replay the case from the start.
+const PLAY_BUTTON = { pause: ['❚❚', 'Pause'], play: ['▶︎', 'Play'], replay: ['↻', 'Replay'] };
+function setPlayButton(state) {
+  const [symbol, name] = PLAY_BUTTON[state], b = $('play');
+  Object.assign(b, { textContent: symbol, title: name });
+  b.dataset.state = state;
+  b.setAttribute('aria-label', name);
+}
+
+// Manual moves show the stage complete and pause.
+function goTo(si) {
+  player.playing = false;
+  player.si = Math.max(0, Math.min(CASES[player.ci].stages.length - 1, si));
+  player.t = Infinity;
+  render();
+}
+function restart() { Object.assign(player, { si: 0, t: 0, playing: true }); render(); }
+function togglePlay() {
+  const atEnd = player.t >= player.anim.dur;
+  if (!player.playing && atEnd) { // a stage shown complete (manual step) plays again from its start
+    Object.assign(player, { t: 0, playing: true });
+    return render();
+  }
+  player.playing = !player.playing;
+  setPlayButton(player.playing ? 'pause' : 'play');
+}
+
+let lastFrame = performance.now();
+function frame(now) {
+  const dt = now - lastFrame;
+  lastFrame = now;
+  if (player.playing && !player.staticView) {
+    player.t += dt * player.speed;
+    player.anim.update(player.t);
+    if (player.t >= player.anim.dur) {
+      if (player.si < CASES[player.ci].stages.length - 1) { player.si++; player.t = 0; render(); }
+      else { player.playing = false; setPlayButton('replay'); }
+    }
+  }
+  const current = document.querySelector('.strip [aria-current]');
+  if (current) current.style.setProperty('--prog', `${100 * clamp(player.t / player.anim.dur)}%`);
+  requestAnimationFrame(frame);
+}
+
+// Highlights code lines and the report parts that point at them, within one stage (root).
+function light(keys, on, root = document) {
+  const set = new Set(keys);
+  root.querySelectorAll('.ln').forEach((el) => el.classList.toggle('hl', on && set.has(el.dataset.k)));
+  root.querySelectorAll('.part.link').forEach((el) =>
+    el.classList.toggle('hl', on && el.dataset.ks.split(' ').some((k) => set.has(k))));
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.c) { player.ci = +b.dataset.c; restart(); }
+  else if (b.dataset.s) goTo(+b.dataset.s);
+  else if (b.id === 'play') { if (b.dataset.state === 'replay') restart(); else togglePlay(); }
+  else if (b.id === 'restart') restart();
+  else if (b.id === 'view') { player.staticView = !player.staticView; player.playing = false; player.t = Infinity; render(); }
+});
+$('speed').addEventListener('input', (e) => {
+  player.speed = +e.target.value;
+  $('spv').textContent = `${player.speed}×`;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.altKey || e.ctrlKey || e.metaKey || e.target.tagName === 'INPUT' || player.staticView) return;
+  if (e.key === 'ArrowRight') goTo(player.si + 1);
+  else if (e.key === 'ArrowLeft') goTo(player.si - 1);
+  else if (e.key === ' ' && e.target.tagName !== 'BUTTON') { e.preventDefault(); togglePlay(); }
+});
+for (const type of ['mouseover', 'focusin']) {
+  document.addEventListener(type, (e) => {
+    const part = e.target.closest && e.target.closest('.part.link');
+    const line = e.target.closest && e.target.closest('.ln.ref');
+    const root = (part || line)?.closest('.stage-block') || document;
+    if (part) light(part.dataset.ks.split(' '), true, root);
+    else if (line) light([line.dataset.k], true, root);
+    else if (type === 'mouseover') light([], false);
+  });
+}
+document.addEventListener('focusout', () => light([], false));
+
+// ---------------------------------------------------------------------------------------------------------------
+// 8. Static view: every stage of the case stacked, end states, code cut to the lines each stage is about
+// ---------------------------------------------------------------------------------------------------------------
+function renderStatic() {
+  const c = CASES[player.ci];
+  $('all').innerHTML = c.stages.map((st, i) => {
+    const kind = KINDS[st.kind];
+    const showCode = ['edit', 'screen', 'report', 'fix'].includes(st.kind);
+    const code = showCode ? codeHtml(c, kind.view, stageLines(c, st), true).html : '';
+    return `<section class="stage-block"><div class="grid"><div><span class="actor">${i + 1} of ${c.stages.length} · ${esc(st.cap)}</span> ${stageHtml(c, st, true)}</div><div>${code}</div></div></section>`;
+  }).join('');
+}
+
+render();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -6,7 +6,7 @@ Its fix (adding `@Observed` to the classes) was still wrong, and the linter of t
 
 ## The project
 
-`sandbox/demo/` is a minimal opencode project. Its pages in `entry/src/main/ets/pages/` are the committed baselines. `Shelf.ets` is clean and uses the child in `entry/src/main/ets/components/ShelfRow.ets`. The others each have an R1 bug (a state change the UI never sees):
+`sandbox/demo/` is a minimal opencode project. Its pages in `entry/src/main/ets/pages/` are the committed baselines. `Shelf.ets` is clean and uses the child in `entry/src/main/ets/components/ShelfRow.ets`. `Volume.ets` and `Clock.ets` are the R2 and R3 demos (below). The others each have an R1 bug (a state change the UI never sees):
 
 - `Profile.ets`: the main demo. The `Move` button writes `this.user.address.city`, two levels below the `@State` field, so ArkUI never re-renders. A new button written the same way has the same bug.
 - `Counter.ets`: a simpler backup demo. `count` has no state decorator, so the counter never updates on screen.
@@ -14,6 +14,8 @@ Its fix (adding `@Observed` to the classes) was still wrong, and the linter of t
 - `Toast.ets`: a precision example. `shownCount` is rendered and written without a decorator (a bug). `timeoutFlag` is only used in the click handler, never rendered, so it must stay undecorated: the text-based extractor still raises it (the handler sits inside `build()`), and the model judge has to reject it. The offline heuristic judges by name and flags it.
 
 Everything else in `sandbox/` is local scratch and git-ignored.
+
+`docs/demo/rules.html` animates one recorded session per rule (Profile R1 a, Counter R1 b, Volume R2, Clock R3): the edit, what breaks, the judge's score, the report, the fix. Open it from disk; `docs/demo/rules.zh.html` is the same page in Chinese. Its sessions used Clef and ran from a copy of this project outside the repo, without this file.
 
 ## Setup
 
@@ -60,6 +62,28 @@ Checked on 2026-10-08 with the CLI, no agent:
 | New object assigned at the first layer | no findings | not run |
 | `Counter.ets` baseline | finding, p 0.85 | finding, p 0.96 |
 | `Counter.ets` with `@State` | no findings | not run |
+
+## R2 and R3 demos
+
+Each baseline page has the bug, so any edit of the page brings the finding up.
+
+- **R2 event unwired, `Volume.ets`.** The child `components/VolumeStepper.ets` (V2) calls its `@Event changeValue` from the `-` and `+` buttons, and the page creates it with `VolumeStepper({ value: this.volume })`: the buttons do nothing. Found from facts alone, no judge call.
+  ```
+  On the Volume page (entry/src/main/ets/pages/Volume.ets), add a 'Mute' button that sets the volume to 0. Keep the change minimal.
+  ```
+  Expect `[R2 event-unwired] …VolumeStepper.ets:4 VolumeStepper.changeValue (facts)` with the call site `Volume.ets:11`. The fix passes `changeValue: (value: number) => { this.volume = value }`.
+- **R3 unreleased resource, `Clock.ets`.** `aboutToAppear` registers `emitter.on('zoneChanged', …)` and nothing releases it.
+  ```
+  On the Clock page (entry/src/main/ets/pages/Clock.ets), make the displayed time update every second. Keep the change minimal.
+  ```
+  Expect `[R3 unreleased-resource] …Clock.ets Clock emitter.on:zoneChanged`, and one more for the agent's own timer if it adds `setInterval` without `clearInterval`. The fix keeps the handler in a field and calls `emitter.off` in `aboutToDisappear`.
+
+Checked on 2026-11-11 with the CLI: both baselines give their finding (R3: heuristic p 0.80, Clef p 0.93). And in opencode 1.18.30 with Clef and `opencode/big-pickle`, one session each:
+
+- `Volume.ets`: the finding came with the agent's edit; in the same turn the agent passed `changeValue`. No idle gate fired, and the fix edit's own check appended nothing — the agent did not call `arkui_check`.
+- `Clock.ets`: the agent added the timer with its `clearInterval`; the finding for the listener came with the edit, and the agent moved the handler to a field and added `emitter.off`. `arkui_check` was clean.
+
+An agent that reads this file learns the bugs and the fixes. In a Counter session it read that the bug is the demo's baseline and left it in. For a fair take, tell the agent not to read `DEMO.md`.
 
 ## DevEco Code (the opencode fork)
 

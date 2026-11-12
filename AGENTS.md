@@ -54,7 +54,7 @@ This file is the map for every coding agent (opencode and Codex read `AGENTS.md`
 | `docs/exec-plans/tech-debt-tracker.md` | known gaps (`@ObjectLink`, nested-write citation, unimplemented judge chain, ...) |
 | `docs/design-docs/index.md` | design docs with status: decisions, core beliefs, agentic plugin, parked ideas |
 | `docs/design-docs/decisions.md` | decisions made (judge chain, scope, repos, docs) |
-| `sandbox/demo/` | the demo project (R1 pages) and `DEMO.md`, the demo kit for opencode and DevEco Code; the rest of `sandbox/` is ignored scratch |
+| `sandbox/demo/` | the demo project (R1, R2 and R3 pages) and `DEMO.md`, the demo kit for opencode and DevEco Code; the rest of `sandbox/` is ignored scratch |
 | `bench/` (private) | `bench/README.md` (layout), `bench/docs/RESULTS.md` (results, evaluation status), `bench/docs/evaluation-method.md`, eval scripts |
 
 ## Keeping docs fresh

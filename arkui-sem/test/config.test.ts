@@ -66,6 +66,15 @@ describe('loadSettings', () => {
     assert.deepEqual(s.sources, [userFile, projectFile]);
   });
 
+  test('a DevEco project config is read when there is no opencode one', () => {
+    const deveco = join(tmp, 'deveco-project');
+    const devecoFile = join(deveco, '.deveco', 'arkui-sem.json');
+    put(devecoFile, { backend: 'heuristic' });
+    const s = loadSettings({}, deveco);
+    assert.equal(s.backend, 'heuristic');
+    assert.deepEqual(s.sources, [userFile, devecoFile]);
+  });
+
   test('the project config overrides the user config', () => {
     put(userFile, { backend: 'deepseek-flash', findingThreshold: 0.7 });
     put(projectFile, { backend: 'clef-flash', findingThreshold: 0.9 });

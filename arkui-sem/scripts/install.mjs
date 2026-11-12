@@ -47,4 +47,4 @@ writeFileSync(
 
 console.log(`installed arkui-sem into ${base}
   plugin: ${pluginFile}
-Restart ${agent} in that project. Backend: ARKUI_SEM_BACKEND=heuristic|jev|clef-flash|clef|deepseek-flash|laya (default clef).`);
+Restart ${agent} in that project. Backends and settings: see README.md.`);

@@ -65,5 +65,5 @@ The server follows imports by package name only in a project with `oh_modules` l
 Any backend can be tried on your own files: `node dist/cli.js check <file.ets> --backend <name>`.
 
 Settings merge in this order: defaults < `~/.config/arkui-sem/config.json` < `.opencode/arkui-sem.json`
-< environment (`ARKUI_SEM_*`; `ARKUI_SEM_CONFIG` points at another config file) < plugin options.
+(or `.deveco/arkui-sem.json` when only that one exists) < environment (`ARKUI_SEM_*`; `ARKUI_SEM_CONFIG` points at another config file) < plugin options.
 API keys belong in the user config file only; `node dist/cli.js config --init` writes a starter file.

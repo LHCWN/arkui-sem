@@ -94,7 +94,7 @@ node arkui-sem/scripts/install.mjs sandbox/demo --deveco
 Set-Content sandbox/demo/.opencode/arkui-sem.json '{"backend": "clef"}'
 ```
 
-The last line pins the judge; without it the user config's backend applies. Checked on 2026-10-08 with DevEco Code 0.2.1, without a model call: `deveco debug config` lists the plugin, and `deveco debug agent build` shows `arkui_check` registered.
+The last line pins the judge; without it the user config's backend applies. A DevEco-only project can keep it in `.deveco/arkui-sem.json` instead. Checked on 2026-11-12 with DevEco Code 0.1.12: `deveco debug config` lists the plugin. DevEco Code 0.2.x refuses to run outside Mainland China.
 
 Run `deveco` in `sandbox/demo` and paste this prompt. The DevEco TUI hides tool output, so the last sentence makes the findings visible in chat:
 

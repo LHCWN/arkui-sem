@@ -90,13 +90,11 @@ An agent that reads this file learns the bugs and the fixes. In a Counter sessio
 DevEco Code loads plugins from `.deveco/` instead of `.opencode/`. Set it up in the demo project (both folders are ignored):
 
 ```powershell
-node arkui-sem/scripts/install.mjs sandbox/demo
-mkdir sandbox/demo/.deveco
-Copy-Item -Recurse sandbox/demo/.opencode/plugins sandbox/demo/.deveco/
-Set-Content sandbox/demo/.opencode/arkui-sem.json '{"backend": "clef"}'
+node arkui-sem/scripts/install.mjs sandbox/demo --deveco
+Set-Content sandbox/demo/.deveco/arkui-sem.json '{"backend": "clef"}'
 ```
 
-The last line pins the judge; without it the user config's backend applies. Checked on 2026-10-08 with DevEco Code 0.2.1, without a model call: `deveco debug config` lists the plugin, and `deveco debug agent build` shows `arkui_check` registered.
+The last line pins the judge; without it the user config's backend applies. If the project already has an `.opencode/arkui-sem.json` (for example from the opencode setup above), put the line in that file instead: it wins over the `.deveco/` one. Checked on 2026-11-12 with DevEco Code 0.1.12: `deveco debug config` lists the plugin. DevEco Code 0.2.x refuses to run outside Mainland China.
 
 Run `deveco` in `sandbox/demo` and paste this prompt. The DevEco TUI hides tool output, so the last sentence makes the findings visible in chat:
 

@@ -91,10 +91,10 @@ DevEco Code loads plugins from `.deveco/` instead of `.opencode/`. Set it up in 
 
 ```powershell
 node arkui-sem/scripts/install.mjs sandbox/demo --deveco
-Set-Content sandbox/demo/.opencode/arkui-sem.json '{"backend": "clef"}'
+Set-Content sandbox/demo/.deveco/arkui-sem.json '{"backend": "clef"}'
 ```
 
-The last line pins the judge; without it the user config's backend applies. A DevEco-only project can keep it in `.deveco/arkui-sem.json` instead. Checked on 2026-11-12 with DevEco Code 0.1.12: `deveco debug config` lists the plugin. DevEco Code 0.2.x refuses to run outside Mainland China.
+The last line pins the judge; without it the user config's backend applies. If the project already has an `.opencode/arkui-sem.json` (for example from the opencode setup above), put the line in that file instead: it wins over the `.deveco/` one. Checked on 2026-11-12 with DevEco Code 0.1.12: `deveco debug config` lists the plugin. DevEco Code 0.2.x refuses to run outside Mainland China.
 
 Run `deveco` in `sandbox/demo` and paste this prompt. The DevEco TUI hides tool output, so the last sentence makes the findings visible in chat:
 

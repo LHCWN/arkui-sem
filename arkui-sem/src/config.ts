@@ -1,5 +1,5 @@
 // Precedence: defaults < user config (~/.config/arkui-sem/config.json or ARKUI_SEM_CONFIG; API keys go here)
-// < project .opencode/arkui-sem.json (no secrets) < env (ARKUI_SEM_*, DEEPSEEK_API_KEY, …) < plugin options.
+// < project .opencode/arkui-sem.json or, for DevEco Code, .deveco/arkui-sem.json (no secrets) < env (ARKUI_SEM_*, DEEPSEEK_API_KEY, …) < plugin options.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -68,8 +68,11 @@ const SECRET_KEYS = new Set(['deepseek.apiKey', 'typesafe.apiKey', 'cloudflare.a
 export function userConfigPath() {
   return process.env.ARKUI_SEM_CONFIG ?? join(homedir(), '.config', 'arkui-sem', 'config.json');
 }
+/** `.opencode/arkui-sem.json`, or `.deveco/arkui-sem.json` when only that one exists. */
 export function projectConfigPath(projectDir: string) {
-  return join(projectDir, '.opencode', 'arkui-sem.json');
+  const opencode = join(projectDir, '.opencode', 'arkui-sem.json');
+  const deveco = join(projectDir, '.deveco', 'arkui-sem.json');
+  return !existsSync(opencode) && existsSync(deveco) ? deveco : opencode;
 }
 
 /** Invalid entries are dropped with a warning, never thrown. */

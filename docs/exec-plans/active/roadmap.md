@@ -9,7 +9,7 @@ The linter lives in `arkui-sem/` (package `arkui-sem` 0.2.0); see `ARCHITECTURE.
 **Status:**
 - Rules: R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware, V1/V2), R3 unreleased-resource, R2 event-unwired (shape d, from facts alone, no judge call). The other R2 shapes have a judge slice (used by the bench) but are not emitted yet.
 - Backends: Jev, Clef, Clef-flash (also through OpenRouter: `or-clef`, `or-clef-flash`), DeepSeek flash (structured output), heuristic, Laya. The fallback chain is not implemented.
-- Tests: `npm test` (offline). The plugin and its `arkui_check` tool load in opencode 1.18.30 and in DevEco Code 0.2.1 (an opencode fork; plugin under `.deveco/`).
+- Tests: `npm test` (offline). The plugin and its `arkui_check` tool load in opencode 1.18.30 and in DevEco Code 0.1.12 (an opencode fork; plugin under `.deveco/`; 0.2.x refuses to run outside Mainland China).
 - DevEco demo (2026-10-08, `sandbox/demo/DEMO.md`): Clef flagged the agent's nested write, the idle gate re-sent it for the old button, and the agent fixed both. The DevEco TUI hides tool output, so the demo prompt asks the agent to quote findings verbatim.
 - Live opencode runs 1–4 (logs removed 2026-10-08; run 4 called DeepSeek and found the @Observed-only false negative that led to the depth-aware rule).
 

@@ -62,8 +62,8 @@ export interface Method {
 export interface MethodScan {
   method: Method;
   /** `this.<m>` for each method, getter or handler m of the component, other than the method itself; called:
-   *  `this.m(…)`; inHandler: inside a function that runs on an event or later (callbacks.ts). */
-  uses: { name: string; called: boolean; inHandler: boolean }[];
+   *  `this.m(…)`; where it sits (climb): in a handler (callbacks.ts), in a loop, in an attribute call. */
+  uses: ({ name: string; called: boolean } & Pick<BuildRead, 'inHandler' | 'inForEach' | 'attribute'>)[];
   /** Every call, in source order. */
   calls: ts.CallExpression[];
 }
@@ -84,7 +84,7 @@ export function component(s: ts.StructDeclaration, scan: FileScan): ComponentFac
   const drawing = drawingMethods(scans);
   const renderOnly = renderOnlyMethods(scans, drawing);
   for (const s of scans) {
-    recordAccesses(s, byName, scan, { drawing: drawing.has(s.method), renderOnly: renderOnly.has(s.method) });
+    recordAccesses(s, byName, scan, { drawn: drawing.get(s.method), renderOnly: renderOnly.has(s.method) });
   }
   const external = externalMethods(scans);
   for (const f of fields) {
@@ -169,10 +169,13 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
     const member = thisMember(n);
     if (member !== undefined && ts.isPropertyAccessExpression(n)) {
       if (names.has(member) && member !== m.name) {
+        const { inHandler, inForEach, attribute } = climb(n, m.body);
         out.uses.push({
           name: member,
           called: ts.isCallExpression(n.parent) && n.parent.expression === n,
-          inHandler: scopes.slice(1).some(isHandler),
+          inHandler,
+          inForEach,
+          ...(attribute === undefined ? {} : { attribute }),
         });
       }
       if (fields.has(member)) {
@@ -188,29 +191,43 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
   return out;
 }
 
-/** The methods whose reads draw the UI: build() and the @Builders, then the methods they call and the getters they read
- *  outside handlers (`.width(this.calcWidth())`, `Text(this.label)` with `get label()`), transitively. */
-function drawingMethods(scans: MethodScan[]): Set<Method> {
+/** Where build() uses a drawing method: in a loop, through an attribute call (`.width(this.calc())`). */
+type DrawSite = Pick<BuildRead, 'inForEach' | 'attribute'>;
+
+/** The methods whose reads draw the UI, with where build() uses them: build() and the @Builders, then the methods they
+ *  call and the getters they read outside handlers (`.width(this.calcWidth())`, `Text(this.label)` with `get label()`),
+ *  transitively. A helper used at several sites is in a loop if any site is, through the first attribute found. */
+function drawingMethods(scans: MethodScan[]): Map<Method, DrawSite> {
   const byName = new Map(scans.map((s) => [s.method.name, s]));
-  const seen = new Set(scans.filter((s) => rendersUi(s.method)));
-  const todo = [...seen];
-  for (let s = todo.pop(); s !== undefined; s = todo.pop()) {
-    for (const use of s.uses) {
-      const next = byName.get(use.name);
-      const helper = use.called ? next?.method.kind === 'method' : next?.method.kind === 'getter';
-      if (next && helper && !use.inHandler && !seen.has(next) && !LIFECYCLE.has(use.name)) {
-        seen.add(next);
-        todo.push(next);
+  const sites = new Map<MethodScan, DrawSite>(
+    scans.filter((s) => rendersUi(s.method)).map((s) => [s, { inForEach: false }]),
+  );
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [s, site] of [...sites]) {
+      for (const use of s.uses) {
+        const next = byName.get(use.name);
+        const helper = use.called ? next?.method.kind === 'method' : next?.method.kind === 'getter';
+        if (!next || !helper || use.inHandler || rendersUi(next.method) || LIFECYCLE.has(use.name)) {
+          continue;
+        }
+        const old = sites.get(next);
+        const inForEach = (old?.inForEach ?? false) || site.inForEach || use.inForEach;
+        const attribute = old?.attribute ?? use.attribute ?? site.attribute;
+        if (!old || old.inForEach !== inForEach || old.attribute !== attribute) {
+          sites.set(next, { inForEach, ...(attribute === undefined ? {} : { attribute }) });
+          changed = true;
+        }
       }
     }
   }
-  return new Set([...seen].map((s) => s.method));
+  return new Map([...sites].map(([s, site]) => [s.method, site]));
 }
 
 /** The drawing methods that run only while build() draws: build(), the @Builders, and helpers whose every use is a call
  *  (or a getter read) outside handlers in another such method. */
-function renderOnlyMethods(scans: MethodScan[], drawing: Set<Method>): Set<Method> {
-  const only = new Set(drawing);
+function renderOnlyMethods(scans: MethodScan[], drawing: Map<Method, DrawSite>): Set<Method> {
+  const only = new Set(drawing.keys());
   const usedOnlyWhileDrawing = (m: Method) =>
     scans.every((s) =>
       s.uses.every(
@@ -229,13 +246,14 @@ function renderOnlyMethods(scans: MethodScan[], drawing: Set<Method>): Set<Metho
   return only;
 }
 
-/** Turns a method's accesses to fields into reads and writes of those fields. drawing: the method draws the UI
- *  (drawingMethods), so its reads are build reads; renderOnly: it runs only while drawing (renderOnlyMethods). */
+/** Turns a method's accesses to fields into reads and writes of those fields. drawn: where build() uses the method, if
+ *  it draws the UI (drawingMethods), so its reads are build reads; renderOnly: it runs only while drawing
+ *  (renderOnlyMethods). */
 function recordAccesses(
   walk: MethodWalk,
   fields: Map<string, FieldFact>,
   scan: FileScan,
-  { drawing, renderOnly }: { drawing: boolean; renderOnly: boolean },
+  { drawn, renderOnly }: { drawn: DrawSite | undefined; renderOnly: boolean },
 ) {
   const m = walk.method;
   const context: AccessContext = {
@@ -243,9 +261,9 @@ function recordAccesses(
     awaits: walk.awaits,
     scan,
     isBuild: rendersUi(m),
-    drawing,
+    drawn,
     renderOnly,
-    via: drawing && !rendersUi(m) ? (m.kind === 'getter' ? `this.${m.name}` : `this.${m.name}()`) : undefined,
+    via: drawn && !rendersUi(m) ? (m.kind === 'getter' ? `this.${m.name}` : `this.${m.name}()`) : undefined,
     calls: [],
     tested: new Set(),
   };
@@ -266,8 +284,9 @@ interface AccessContext {
   scan: FileScan;
   /** build() or a @Builder: its writes in handlers are build-closure writes. */
   isBuild: boolean;
-  /** The method draws the UI (drawingMethods): its reads are build reads. */
-  drawing: boolean;
+  /** Where build() uses the method, if it draws the UI (drawingMethods): its reads are build reads, in that loop or
+   *  attribute when the read itself sits in none. */
+  drawn: DrawSite | undefined;
   /** The method runs only while drawing (renderOnlyMethods): its writes outside handlers are render writes. */
   renderOnly: boolean;
   /** For a drawing helper, how build() reaches it (BuildRead.via). */
@@ -316,12 +335,12 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
   }
   const where = climb(base, ctx.method.body);
   if (!mutatingCall && !assignment && !updated) {
-    if (ctx.drawing) {
+    if (ctx.drawn) {
       field.buildReads.push({
         line,
         path: segments,
-        attribute: where.attribute,
-        inForEach: where.inForEach,
+        attribute: where.attribute ?? ctx.drawn.attribute,
+        inForEach: where.inForEach || ctx.drawn.inForEach,
         inHandler: where.inHandler,
         ...(ctx.via ? { via: ctx.via } : {}),
       });

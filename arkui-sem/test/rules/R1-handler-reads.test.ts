@@ -257,3 +257,33 @@ struct P {
     ['method'],
   );
 });
+
+test('on… callbacks in option objects and callbacks given to constructors are handlers', () => {
+  for (const body of [
+    "Text('a').bindPopup(true, { builder: () => { Text('p') }, onStateChange: () => { console.info(String(this.x)) } })",
+    "Text('a').width(new Ctrl({ cancel: () => { console.info(String(this.x)) } }) ? 1 : 2)",
+  ]) {
+    assert.deepEqual(undecorated(plain(body)), [], body);
+  }
+  // A counter bumped in such a callback is a handler write, not a render counter: the drawn field stays a candidate.
+  const sheet = plain(`Text(String(this.x))
+      Text('a').bindSheet(true, () => { Text('s') }, { onWillDismiss: () => { this.x++ } })`);
+  assert.deepEqual(undecorated(sheet), ['x']);
+  assert.ok(extract(sheet).components[0].fields[0].writes.some((w) => w.context === 'build-closure'));
+});
+
+test('a read in a helper takes the loop and attribute of the site build() uses it at', () => {
+  const src = helper(
+    `ForEach([1], (i: number) => { Text(String(this.scaled(i))) })
+      Text('a').width(this.calc())`,
+    'scaled(i: number): number { return i * this.x }\n  calc(): number { return this.x }',
+  );
+  const reads = renderingReads(extract(src).components[0].fields[0]);
+  assert.deepEqual(
+    reads.map((r) => [r.via, r.inForEach, r.attribute]),
+    [
+      ['this.scaled()', true, undefined],
+      ['this.calc()', false, 'width'],
+    ],
+  );
+});

@@ -91,7 +91,9 @@
 - R1 "rendered" follows `this.m(…)` calls and getter reads from `build()` within the component only: a helper reached
   through a local alias, passed as a function value, or in another class or file doesn't count.
 - Handler reads (`BuildRead.inHandler`, `ets/callbacks.ts`) are decided by syntax, not by what the callee does: an
-  `on…` call's closure is a handler (except `onDragStart`) even if it draws; a closure passed to a child component is a
-  handler unless it calls a capitalized function, so a `@BuilderParam` closure that only calls a plain helper counts as
-  a handler; a method-shorthand property (`Child({ onChange(v) { … } })`) counts as rendering.
+  `on…` call's closure is a handler (except `onDragStart`) even if it draws; an option property (`on…` anywhere, any
+  property of an object given to a child component or a constructor) is a handler unless it calls a capitalized
+  function, so a `@BuilderParam` closure that only calls a plain helper counts as a handler; other option callbacks not
+  named `on…` (`.bindSheet(…, { shouldDismiss: … })`) and method-shorthand properties (`Child({ onChange(v) { … } })`)
+  count as rendering.
 - No licence yet: the owner picks one before the repo goes public.

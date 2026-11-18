@@ -9,13 +9,13 @@ import type {
   WriteContext,
   WriteFact,
 } from '../analysis.js';
+import { defers, isHandler } from './callbacks.js';
 import { LIFECYCLE } from './lifecycle.js';
 import { ts } from './parse.js';
 import { resources } from './resources.js';
 import type { FileScan } from './scan.js';
 import {
   argumentOf,
-  calleeName,
   decoratorNames,
   expressionName,
   hasModifier,
@@ -44,16 +44,14 @@ const MUTATING_CALLS = new Set([
   'delete',
   'clear',
 ]);
-/** Calls whose function arguments run later, after the calling code has returned. */
-const DEFERRING_CALLS = new Set(['then', 'catch', 'finally', 'setTimeout', 'setInterval', 'on', 'subscribe']);
 const CLOCKS = new Set(['Date.now', 'performance.now']);
 const TIMERS = new Set(['setTimeout', 'setInterval']);
 const LOOPS = new Set(['ForEach', 'LazyForEach', 'Repeat']);
 const UI_BUILDERS = new Set(['@Builder', '@LocalBuilder']);
 
-/** Code the component runs: a method, or a field holding a function (a handler, `onTap = () => { … }`). */
+/** Code the component runs: a method, a getter, or a field holding a function (a handler, `onTap = () => { … }`). */
 export interface Method {
-  kind: 'method' | 'handler';
+  kind: 'method' | 'getter' | 'handler';
   name: string;
   decorators: string[];
   /** The method's block, or the handler's function. */
@@ -63,8 +61,9 @@ export interface Method {
 /** What one walk over a method's body found. */
 export interface MethodScan {
   method: Method;
-  /** `this.<m>` for each method or handler m of the component, other than the method itself; called: `this.m(…)`. */
-  uses: { name: string; called: boolean }[];
+  /** `this.<m>` for each method, getter or handler m of the component, other than the method itself; called:
+   *  `this.m(…)`; inHandler: inside a function that runs on an event or later (callbacks.ts). */
+  uses: { name: string; called: boolean; inHandler: boolean }[];
   /** Every call, in source order. */
   calls: ts.CallExpression[];
 }
@@ -81,7 +80,12 @@ export function component(s: ts.StructDeclaration, scan: FileScan): ComponentFac
   const methods = methodsOf(s);
   const byName = new Map(fields.map((f) => [f.name, f]));
   const names = new Set(methods.map((m) => m.name));
-  const scans = methods.map((m) => scanMethod(m, byName, names, scan));
+  const scans = methods.map((m) => scanMethod(m, byName, names));
+  const drawing = drawingMethods(scans);
+  const renderOnly = renderOnlyMethods(scans, drawing);
+  for (const s of scans) {
+    recordAccesses(s, byName, scan, { drawing: drawing.has(s.method), renderOnly: renderOnly.has(s.method) });
+  }
   const external = externalMethods(scans);
   for (const f of fields) {
     for (const w of f.writes) {
@@ -107,6 +111,9 @@ export function methodsOf(s: ts.StructDeclaration): Method[] {
     }
     if (ts.isMethodDeclaration(m) && m.body) {
       return [{ kind: 'method', name, decorators: decoratorNames(m), body: m.body }];
+    }
+    if (ts.isGetAccessorDeclaration(m) && m.body) {
+      return [{ kind: 'getter', name, decorators: [], body: m.body }];
     }
     const init = ts.isPropertyDeclaration(m) && m.initializer ? unwrap(m.initializer) : undefined;
     return init && isFunction(init) ? [{ kind: 'handler', name, decorators: [], body: init }] : [];
@@ -136,12 +143,17 @@ function fieldFact(m: ts.PropertyDeclaration, name: string, scan: FileScan): Fie
   };
 }
 
-/** One walk over a method's body: its uses of the component's methods, its calls, its awaits, and every access to a
- *  field, which becomes a read or a write of that field. */
-function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string>, scan: FileScan): MethodScan {
-  const out: MethodScan = { method: m, uses: [], calls: [] };
-  const awaits = new Map<ts.Node, number[]>(); // function → end of each await directly in it
-  const accesses: ts.PropertyAccessExpression[] = [];
+/** A method's scan with what recordAccesses needs: its accesses to fields and its awaits. */
+interface MethodWalk extends MethodScan {
+  accesses: ts.PropertyAccessExpression[];
+  /** function → end of each await directly in it */
+  awaits: Map<ts.Node, number[]>;
+}
+
+/** One walk over a method's body: its uses of the component's methods, its calls, its awaits, and its accesses to
+ *  fields. */
+function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string>): MethodWalk {
+  const out: MethodWalk = { method: m, uses: [], calls: [], accesses: [], awaits: new Map() };
   const scopes: ts.Node[] = [m.body];
   const visit = (n: ts.Node) => {
     const opens = n !== m.body && isFunction(n);
@@ -152,15 +164,19 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
       out.calls.push(n);
     } else if (ts.isAwaitExpression(n)) {
       const scope = scopes[scopes.length - 1];
-      awaits.set(scope, [...(awaits.get(scope) ?? []), n.end]);
+      out.awaits.set(scope, [...(out.awaits.get(scope) ?? []), n.end]);
     }
     const member = thisMember(n);
     if (member !== undefined && ts.isPropertyAccessExpression(n)) {
       if (names.has(member) && member !== m.name) {
-        out.uses.push({ name: member, called: ts.isCallExpression(n.parent) && n.parent.expression === n });
+        out.uses.push({
+          name: member,
+          called: ts.isCallExpression(n.parent) && n.parent.expression === n,
+          inHandler: scopes.slice(1).some(isHandler),
+        });
       }
       if (fields.has(member)) {
-        accesses.push(n);
+        out.accesses.push(n);
       }
     }
     ts.forEachChild(n, visit);
@@ -169,8 +185,71 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
     }
   };
   visit(m.body);
-  const context: AccessContext = { method: m, awaits, scan, isBuild: rendersUi(m), calls: [], tested: new Set() };
-  for (const base of accesses) {
+  return out;
+}
+
+/** The methods whose reads draw the UI: build() and the @Builders, then the methods they call and the getters they read
+ *  outside handlers (`.width(this.calcWidth())`, `Text(this.label)` with `get label()`), transitively. */
+function drawingMethods(scans: MethodScan[]): Set<Method> {
+  const byName = new Map(scans.map((s) => [s.method.name, s]));
+  const seen = new Set(scans.filter((s) => rendersUi(s.method)));
+  const todo = [...seen];
+  for (let s = todo.pop(); s !== undefined; s = todo.pop()) {
+    for (const use of s.uses) {
+      const next = byName.get(use.name);
+      const helper = use.called ? next?.method.kind === 'method' : next?.method.kind === 'getter';
+      if (next && helper && !use.inHandler && !seen.has(next) && !LIFECYCLE.has(use.name)) {
+        seen.add(next);
+        todo.push(next);
+      }
+    }
+  }
+  return new Set([...seen].map((s) => s.method));
+}
+
+/** The drawing methods that run only while build() draws: build(), the @Builders, and helpers whose every use is a call
+ *  (or a getter read) outside handlers in another such method. */
+function renderOnlyMethods(scans: MethodScan[], drawing: Set<Method>): Set<Method> {
+  const only = new Set(drawing);
+  const usedOnlyWhileDrawing = (m: Method) =>
+    scans.every((s) =>
+      s.uses.every(
+        (u) => u.name !== m.name || (only.has(s.method) && !u.inHandler && (u.called || m.kind === 'getter')),
+      ),
+    );
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const m of only) {
+      if (!rendersUi(m) && !usedOnlyWhileDrawing(m)) {
+        only.delete(m);
+        changed = true;
+      }
+    }
+  }
+  return only;
+}
+
+/** Turns a method's accesses to fields into reads and writes of those fields. drawing: the method draws the UI
+ *  (drawingMethods), so its reads are build reads; renderOnly: it runs only while drawing (renderOnlyMethods). */
+function recordAccesses(
+  walk: MethodWalk,
+  fields: Map<string, FieldFact>,
+  scan: FileScan,
+  { drawing, renderOnly }: { drawing: boolean; renderOnly: boolean },
+) {
+  const m = walk.method;
+  const context: AccessContext = {
+    method: m,
+    awaits: walk.awaits,
+    scan,
+    isBuild: rendersUi(m),
+    drawing,
+    renderOnly,
+    via: drawing && !rendersUi(m) ? (m.kind === 'getter' ? `this.${m.name}` : `this.${m.name}()`) : undefined,
+    calls: [],
+    tested: new Set(),
+  };
+  for (const base of walk.accesses) {
     const field = fields.get(base.name.text);
     if (field) {
       access(base, field, context);
@@ -179,14 +258,20 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
   for (const { field, call } of context.calls) {
     field.calls.push({ ...call, checked: call.checked || context.tested.has(field) });
   }
-  return out;
 }
 
 interface AccessContext {
   method: Method;
   awaits: Map<ts.Node, number[]>;
   scan: FileScan;
+  /** build() or a @Builder: its writes in handlers are build-closure writes. */
   isBuild: boolean;
+  /** The method draws the UI (drawingMethods): its reads are build reads. */
+  drawing: boolean;
+  /** The method runs only while drawing (renderOnlyMethods): its writes outside handlers are render writes. */
+  renderOnly: boolean;
+  /** For a drawing helper, how build() reaches it (BuildRead.via). */
+  via?: string;
   /** The method's calls of fields, and the fields it reads without calling or writing them. */
   calls: { field: FieldFact; call: CallbackCall }[];
   tested: Set<FieldFact>;
@@ -231,8 +316,15 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
   }
   const where = climb(base, ctx.method.body);
   if (!mutatingCall && !assignment && !updated) {
-    if (ctx.isBuild) {
-      field.buildReads.push({ line, path: segments, attribute: where.attribute, inForEach: where.inForEach });
+    if (ctx.drawing) {
+      field.buildReads.push({
+        line,
+        path: segments,
+        attribute: where.attribute,
+        inForEach: where.inForEach,
+        inHandler: where.inHandler,
+        ...(ctx.via ? { via: ctx.via } : {}),
+      });
     }
     return;
   }
@@ -242,11 +334,13 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     [ctx.method.body, ...where.functions].some((f) => (ctx.awaits.get(f) ?? []).some((end) => end <= parent.end));
   const context: WriteContext = deferred
     ? 'async-callback'
-    : ctx.isBuild
-      ? 'build-closure'
-      : LIFECYCLE.has(ctx.method.name)
-        ? 'lifecycle'
-        : 'method';
+    : ctx.renderOnly && !where.inHandler
+      ? 'render'
+      : ctx.isBuild
+        ? 'build-closure'
+        : LIFECYCLE.has(ctx.method.name)
+          ? 'lifecycle'
+          : 'method';
   // A mutating call changes the container below its receiver: `[]` with no index stands for it.
   const path: PathSegment[] = mutatingCall ? [...segments.slice(0, -1), { index: '' }] : segments;
   const write: WriteFact = {
@@ -255,6 +349,7 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     method: ctx.method.name,
     path: path.length ? path : undefined,
     value: mutatingCall ? undefined : assignedValue(assignment),
+    ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
     disabledRules: ctx.scan.disabledAt(line),
   };
   field.writes.push(write);
@@ -262,20 +357,22 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
 
 /** What lies between an access and its method's body: the functions holding it (innermost first), whether one of them is
  *  passed to a deferring call, the nearest attribute call holding it (not through a callback such as an event handler),
- *  and whether a loop holds it. */
+ *  whether a loop holds it, and whether one of the functions is a handler. */
 function climb(
   node: ts.Node,
   body: ts.Node,
-): Pick<BuildRead, 'attribute' | 'inForEach'> & { functions: ts.Node[]; deferringCall: boolean } {
+): Pick<BuildRead, 'attribute' | 'inForEach' | 'inHandler'> & { functions: ts.Node[]; deferringCall: boolean } {
   const functions: ts.Node[] = [];
   let deferringCall = false;
+  let inHandler = false;
   let attribute: string | undefined;
   let inForEach = false;
   for (let n: ts.Node = node; n !== body && n.parent; n = n.parent) {
     const call = argumentOf(n);
     if (isFunction(n)) {
       functions.push(n);
-      deferringCall ||= call !== undefined && ts.isCallExpression(call) && DEFERRING_CALLS.has(calleeName(call) ?? '');
+      deferringCall ||= defers(n);
+      inHandler ||= isHandler(n);
     }
     if (!call) {
       continue;
@@ -293,7 +390,16 @@ function climb(
       inForEach = true;
     }
   }
-  return { functions, deferringCall, attribute, inForEach };
+  return { functions, deferringCall, attribute, inForEach, inHandler };
+}
+
+/** The assignment's new value depends on the field's old one: `+=` and the like, or `this.f = g(this.f)`. */
+function accumulates(assignment: ts.BinaryExpression, field: string): boolean {
+  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+    return true;
+  }
+  const reads = (n: ts.Node): boolean => thisMember(n) === field || ts.forEachChild(n, reads) === true;
+  return reads(assignment.right);
 }
 
 /** What an assignment assigns: an object literal, a `new` instance, or anything else (compound and update writes too). */

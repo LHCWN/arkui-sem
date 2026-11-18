@@ -6,7 +6,9 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 
 export type StateMgmtVersion = 'V1' | 'V2';
 
-export type WriteContext = 'build-closure' | 'async-callback' | 'lifecycle' | 'method';
+/** render: only while build() draws, in build(), a @Builder or a helper only they call, outside handlers;
+ *  build-closure: in a handler inside build() or a @Builder. */
+export type WriteContext = 'render' | 'build-closure' | 'async-callback' | 'lifecycle' | 'method';
 
 /** A type annotation's structure. */
 export type TypeRef =
@@ -40,6 +42,8 @@ export interface WriteFact {
   path?: PathSegment[];
   /** For an assignment (`=`, compound or update), what the assigned value is. */
   value?: 'object-literal' | 'new' | 'other';
+  /** The new value depends on the old one: `++`, `+=`, `this.f = g(this.f)`, a mutating call. */
+  accumulates?: true;
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
   disabledRules: string[];
@@ -82,6 +86,25 @@ export interface BuildRead {
   attribute?: string;
   /** The read sits in the arguments of ForEach, LazyForEach or Repeat. */
   inForEach: boolean;
+  /** A function holding the read is an event handler (an `on…` call's argument or a child's `on…` property, except
+   *  `onDragStart`), an `animateTo` body or a deferred callback (timer, promise, `.on(…)`, `subscribe`): it runs on input
+   *  or later and draws nothing. */
+  inHandler: boolean;
+  /** The read sits in a helper that build() or a @Builder calls or reads (`this.calcWidth()`, `this.label` for a getter),
+   *  possibly through other helpers. */
+  via?: string;
+}
+
+/** A write that runs only while build() draws and builds on the old value (a render counter): as state the field would
+ *  re-render in a loop, so it is no reason for a state decorator. */
+export function feedsRender(w: WriteFact): boolean {
+  return w.context === 'render' && w.accumulates === true;
+}
+
+/** The reads that draw the UI: build()/@Builder reads outside event handlers, direct reads first, then reads in helpers. */
+export function renderingReads(f: FieldFact): BuildRead[] {
+  const reads = f.buildReads.filter((r) => !r.inHandler);
+  return [...reads.filter((r) => r.via === undefined), ...reads.filter((r) => r.via !== undefined)];
 }
 
 export interface ResourceFact {
@@ -257,9 +280,9 @@ export function pathText(path?: PathSegment[]): string {
     .join('');
 }
 
-/** The lines build()/@Builder reads the field on, each once, in source order. */
+/** The lines build()/@Builder renders the field on, each once: direct reads, then reads in helpers, each in source order. */
 export function readLines(f: FieldFact): number[] {
-  return [...new Set(f.buildReads.map((r) => r.line))];
+  return [...new Set(renderingReads(f).map((r) => r.line))];
 }
 
 /** The type declared in decl's file under its name, when it is a class, interface or object type alias. */
@@ -698,13 +721,13 @@ function sameSegment(a: PathSegment, b: PathSegment): boolean {
   return isIndex(a) ? isIndex(b) : !isIndex(b) && a.prop === b.prop;
 }
 
-/** Whether build() or a @Builder reads this.<field><path> or deeper; any index matches any index. For an array call
+/** Whether build() or a @Builder renders this.<field><path> or deeper; any index matches any index. For an array call
  *  (path ending in the call segment) only reads of the contents count, so passing the array itself to a child does not. */
 function rendersPath(f: FieldFact, path: PathSegment[]): boolean {
   const arrayCall = isCallSegment(path.at(-1));
   const prefix = arrayCall ? path.slice(0, -1) : path;
   const minLength = prefix.length + (arrayCall ? 1 : 0);
-  return f.buildReads.some(
+  return renderingReads(f).some(
     ({ path: read }) => read.length >= minLength && prefix.every((s, i) => sameSegment(s, read[i])),
   );
 }
@@ -902,9 +925,10 @@ export function candidates(facts: FileFacts, resolver?: ClassResolver): Candidat
       if (f.decorators.some((d) => NON_STATE.has(d))) {
         continue;
       }
-      const rendered = f.buildReads.length > 0;
+      const rendered = renderingReads(f).length > 0;
 
-      if (!isReactive(f) && rendered && f.writes.length > 0 && !f.disabledRules.includes('R1')) {
+      const writtenLater = f.writes.some((w) => !feedsRender(w));
+      if (!isReactive(f) && rendered && writtenLater && !f.disabledRules.includes('R1')) {
         out.push({
           rule: 'R1',
           kind: 'undecorated-mutated-rendered',

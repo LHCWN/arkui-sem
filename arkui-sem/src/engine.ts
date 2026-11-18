@@ -12,12 +12,13 @@ import {
   type Declaration,
   type FieldFact,
   type FileFacts,
+  feedsRender,
   hasUnsetCallbacks,
   nestedDepth,
   omitsCallback,
   type Project,
   pathText,
-  readLines,
+  renderingReads,
   type Unwired,
   unwiredCallbacks,
   type V2Gap,
@@ -248,6 +249,7 @@ function describe(c: Candidate): { subject: string; evidence: string; fix: strin
     return describeUnwired(c.component, f, c.unwired);
   }
   const writes = f.writes
+    .filter((w) => !feedsRender(w))
     .slice(0, 2)
     .map((w) => `${w.context} in ${w.method}() line ${w.line}`)
     .join('; ');
@@ -274,7 +276,7 @@ function describe(c: Candidate): { subject: string; evidence: string; fix: strin
   }
   return {
     subject: `${c.component.name}.${f.name}`,
-    evidence: `rendered in build() (line ${readLines(f)[0]}) and written after init (${writes}); no state decorator`,
+    evidence: `rendered in build() (${shownRead(f)}) and written after init (${writes}); no state decorator`,
     fix: v2
       ? `declare it @Local; if the value comes from the parent, use @Param plus an @Event callback instead.`
       : `declare it @State; if the value comes from the parent, use @Prop (one-way) or @Link (two-way) instead.`,
@@ -442,4 +444,10 @@ export async function checkFiles(
   }
   cache.save();
   return { findings, errors };
+}
+
+/** Where build() renders the field, for the evidence: `line 12`, or `through this.calcWidth(), line 40`. */
+function shownRead(f: FieldFact): string {
+  const read = renderingReads(f)[0];
+  return read?.via ? `through ${read.via}, line ${read.line}` : `line ${read?.line}`;
 }

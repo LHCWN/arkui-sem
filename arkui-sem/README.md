@@ -16,15 +16,17 @@ npm install
 npm test          # typechecks, then runs test/**/*.test.ts from src/ (offline, heuristic backend)
 ```
 
-## Use in opencode
+## Use in opencode or DevEco Code
 
 ```sh
-node scripts/install.mjs <project-dir>     # .opencode/plugins/arkui-sem.ts
-node scripts/install.mjs --global          # ~/.config/opencode/plugins/
-node scripts/install.mjs <project-dir> --uninstall
+node scripts/install.mjs <project-dir>            # .opencode/plugins/arkui-sem.ts
+node scripts/install.mjs --global                 # ~/.config/opencode/plugins/
+node scripts/install.mjs <project-dir> --deveco   # .deveco/plugins/arkui-sem.ts (DevEco Code)
+node scripts/install.mjs --global --deveco        # ~/.config/deveco/plugins/
+node scripts/install.mjs <project-dir> --uninstall   # also with --global and/or --deveco
 ```
 
-The plugin re-exports this checkout's `dist/opencode.js`: rebuild, then restart opencode. It reviews `.ets`
+The plugin re-exports this checkout's `dist/opencode.js`: rebuild, then restart the agent. It reviews `.ets`
 edits after each tool call, gates the session once on idle while findings remain open, and adds the tool
 `arkui_check`.
 
@@ -63,5 +65,5 @@ The server follows imports by package name only in a project with `oh_modules` l
 Any backend can be tried on your own files: `node dist/cli.js check <file.ets> --backend <name>`.
 
 Settings merge in this order: defaults < `~/.config/arkui-sem/config.json` < `.opencode/arkui-sem.json`
-< environment (`ARKUI_SEM_*`; `ARKUI_SEM_CONFIG` points at another config file) < plugin options.
+(or `.deveco/arkui-sem.json` when only that one exists) < environment (`ARKUI_SEM_*`; `ARKUI_SEM_CONFIG` points at another config file) < plugin options.
 API keys belong in the user config file only; `node dist/cli.js config --init` writes a starter file.

@@ -1,5 +1,5 @@
 // .ets source → FileFacts, from the ohos-typescript syntax tree of one file (no type checker).
-import type { ComponentFact, FactExtractor, FileFacts, TypeFact } from '../analysis.js';
+import type { ComponentFact, FactExtractor, FileFacts, TypeFact } from '../facts.js';
 import { component } from './component.js';
 import { moduleLinks } from './modules.js';
 import { defaultParser, type EtsParser, ts } from './parse.js';

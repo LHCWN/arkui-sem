@@ -4,10 +4,12 @@ import assert from 'node:assert/strict';
 import { readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
-import { classesWith, etsFiles, etsFilesIn, type FileFacts } from '../src/analysis.js';
 import { checkFiles } from '../src/engine.js';
+import type { FileFacts } from '../src/facts.js';
+import { etsFiles, etsFilesIn } from '../src/files.js';
 import type { SystemOneBackend } from '../src/judge.js';
 import { ProjectIndex } from '../src/project.js';
+import { classesWith } from '../src/queries.js';
 import { FIXTURE, project, put, tempDir, touch } from './helpers.js';
 
 const PAGES = join('entry', 'src', 'main', 'ets', 'pages');

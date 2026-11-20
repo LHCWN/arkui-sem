@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { etsFiles, SKIP_DIRS } from './analysis.js';
+import { etsFiles, SKIP_DIRS } from './files.js';
 
 export interface SearchTerms {
   /** Matched as whole identifiers: no letter, digit, `_` or `$` on either side. */

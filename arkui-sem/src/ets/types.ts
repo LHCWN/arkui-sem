@@ -1,5 +1,5 @@
 // Type annotations, object literals, and the classes, interfaces and object type aliases a file declares.
-import type { ClassMember, LiteralValue, ObjectLiteralFact, TypeFact, TypeRef } from '../analysis.js';
+import type { ClassMember, LiteralValue, ObjectLiteralFact, TypeFact, TypeRef } from '../facts.js';
 import { ts } from './parse.js';
 import { decoratorNames, expressionName, isThis, memberName, oneLine, unwrap } from './syntax.js';
 

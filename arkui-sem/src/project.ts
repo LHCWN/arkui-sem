@@ -3,17 +3,9 @@
 import { readFileSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import JSON5 from 'json5';
-import {
-  type CallSite,
-  type CallSites,
-  type ComponentFact,
-  type Declaration,
-  declares,
-  type FactExtractor,
-  type FileFacts,
-  type Project,
-} from './analysis.js';
 import { EtsExtractor } from './ets/extract.js';
+import type { CallSite, CallSites, ComponentFact, Declaration, FactExtractor, FileFacts, Project } from './facts.js';
+import { declares } from './queries.js';
 import { FileSearch, listEtsFiles, type SearchTerms, type TextSearch } from './search.js';
 
 /** A whole-project pass over call sites. */

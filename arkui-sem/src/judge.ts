@@ -12,11 +12,10 @@ import {
   score,
   TypeSafeClient,
 } from '@typesafe-ai/sdk';
+import type { Credentials } from './config.js';
+import type { FieldFact, FileFacts } from './facts.js';
 import {
-  type Candidate,
   declaresClass,
-  type FieldFact,
-  type FileFacts,
   holdsFunction,
   isClassWith,
   nestedDepth,
@@ -26,8 +25,8 @@ import {
   renderingReads,
   typeClass,
   typeKind,
-} from './analysis.js';
-import type { Credentials } from './config.js';
+} from './queries.js';
+import type { Candidate } from './rules/index.js';
 
 // --- System One interface, Jev, Clef ---
 

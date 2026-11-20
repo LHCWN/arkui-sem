@@ -12,8 +12,6 @@
 - The project index caches facts by mtime only (an edit within the same mtime tick, or a tool that keeps mtimes, serves
   stale facts), and cached `FileFacts` are mutable and shared across checks; size + mtime keys and
   `readonly` fact types would close both.
-- `analysis.ts` mixes the fact model, derived queries, file utilities and rules; splitting it would let `src/ets/` import
-  only the model.
 - The parser reads the SDK once per process (`defaultParser()`) and ignores the SDK passed to the LSP client. The plugin
   passes none, so both use the same lookup there; only `arkui-sem lsp --sdk` can differ.
 - Struct getters and setters are not scanned: a write in `set v(x) { this.a = x }` and reads through a getter used in

@@ -1,6 +1,6 @@
 // Where a file instantiates components: `Child({ … })` in build(), @Builder and @LocalBuilder bodies and field initializers,
 // and a dialog controller's builder in any method.
-import type { ArgumentForm, ComponentArgument, ComponentUse } from '../analysis.js';
+import type { ArgumentForm, ComponentArgument, ComponentUse } from '../facts.js';
 import { methodsOf, rendersUi } from './component.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';

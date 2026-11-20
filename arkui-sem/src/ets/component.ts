@@ -8,7 +8,7 @@ import type {
   PathSegment,
   WriteContext,
   WriteFact,
-} from '../analysis.js';
+} from '../facts.js';
 import { defers, isHandler } from './callbacks.js';
 import { LIFECYCLE } from './lifecycle.js';
 import { ts } from './parse.js';

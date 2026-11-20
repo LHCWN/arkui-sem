@@ -1,0 +1,293 @@
+// Queries derived from the facts: paths, rendering reads, declared types and class hierarchies.
+import { relative } from 'node:path';
+import type {
+  BuildRead,
+  ClassMember,
+  ClassResolver,
+  ComponentFact,
+  Declaration,
+  FieldFact,
+  FileFacts,
+  PathSegment,
+  TypeFact,
+  TypeRef,
+  WriteFact,
+} from './facts.js';
+
+/** A write that runs only while build() draws and builds on the old value (a render counter): as state the field would
+ *  re-render in a loop, so it is no reason for a state decorator. */
+export function feedsRender(w: WriteFact): boolean {
+  return w.context === 'render' && w.accumulates === true;
+}
+
+/** The reads that draw the UI: build()/@Builder reads outside event handlers, direct reads first, then reads in helpers. */
+export function renderingReads(f: FieldFact): BuildRead[] {
+  const reads = f.buildReads.filter((r) => !r.inHandler);
+  return [...reads.filter((r) => r.via === undefined), ...reads.filter((r) => r.via !== undefined)];
+}
+
+export function own<T>(map: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
+export function isIndex(s: PathSegment): s is { index: string } & { optional?: true } {
+  return 'index' in s;
+}
+
+/** A path as written: `.title`, `?.items[]` (a mutating call), `[i].title`; '' for none. */
+export function pathText(path?: PathSegment[]): string {
+  return (path ?? [])
+    .map((s) => (isIndex(s) ? `${s.optional ? '?.' : ''}[${s.index}]` : `${s.optional ? '?.' : '.'}${s.prop}`))
+    .join('');
+}
+
+/** The lines build()/@Builder renders the field on, each once: direct reads, then reads in helpers, each in source order. */
+export function readLines(f: FieldFact): number[] {
+  return [...new Set(renderingReads(f).map((r) => r.line))];
+}
+
+/** The type declared in decl's file under its name, when it is a class, interface or object type alias. */
+export function typeFact(decl: Declaration): TypeFact | undefined {
+  return own(decl.facts.types, decl.name);
+}
+
+/** Classes in the file decorated with `decorator` (`@Observed`, `@ObservedV2`). */
+export function classesWith(facts: FileFacts, decorator: string): string[] {
+  return Object.entries(facts.types)
+    .filter(([, t]) => t.kind === 'class' && t.decorators.includes(decorator))
+    .map(([name]) => name);
+}
+
+/** Whether the file declares a class `name` decorated with `decorator`. */
+export function isClassWith(facts: FileFacts, name: string, decorator: string): boolean {
+  const t = own(facts.types, name);
+  return t?.kind === 'class' && t.decorators.includes(decorator);
+}
+
+export function declaresClass(facts: FileFacts, name: string): boolean {
+  return own(facts.types, name)?.kind === 'class';
+}
+
+/** The classes the file's components take as @ObjectLink. */
+export function objectLinkTypes(facts: FileFacts): string[] {
+  return facts.components.flatMap((c) => linkTypesOf(c, facts).map((t) => t.name));
+}
+
+/** The container a mutating call changes (see PathSegment). */
+export function isCallSegment(s: PathSegment | undefined): boolean {
+  return s !== undefined && isIndex(s) && s.index === '';
+}
+
+/** The property name of a segment, or the index as written (`[i]`). */
+export function segmentText(s: PathSegment): string {
+  return isIndex(s) ? `[${s.index}]` : s.prop;
+}
+
+/** Levels below the field a write reaches: .title → 1, .address.city → 2, [i].title → 2, [] (array call) → 1. */
+export function nestedDepth(path?: PathSegment[]) {
+  return path?.length ?? 0;
+}
+
+function isNullType(t: TypeRef): boolean {
+  return t.kind === 'keyword' && (t.name === 'null' || t.name === 'undefined');
+}
+
+export function nonNull(t: TypeRef): TypeRef {
+  if (t.kind !== 'union') {
+    return t;
+  }
+  const kept = t.members.filter((m) => !isNullType(m));
+  return kept.length === 1 ? kept[0] : { kind: 'union', members: kept };
+}
+
+export function isNullable(t: TypeRef): boolean {
+  return t.kind === 'union' && t.members.some(isNullType);
+}
+
+/** The name a type refers to, without null or undefined; undefined for anything but a named type. */
+export function className(t: TypeRef): string | undefined {
+  const held = nonNull(t);
+  return held.kind === 'name' ? held.name : undefined;
+}
+
+/** The class an @ObjectLink of type t binds: the element class for an array. */
+export function heldClass(t: TypeRef): string | undefined {
+  const held = nonNull(t);
+  return className(held.kind === 'array' ? held.element : held);
+}
+
+/** Whether the file itself declares `name`: a class, an interface or object type alias, or a component. */
+export function declares(facts: FileFacts, name: string): boolean {
+  return own(facts.types, name) !== undefined || facts.components.some((c) => c.name === name);
+}
+
+/** Where `name`, as written in `scope`, is declared: in `scope` itself, else through the resolver. */
+export function declarationOf(
+  name: string | undefined,
+  scope: FileFacts,
+  resolver?: ClassResolver,
+): Declaration | undefined {
+  if (name === undefined) {
+    return undefined;
+  }
+  return declares(scope, name) ? { facts: scope, name } : resolver?.declaration(name, scope);
+}
+
+function samePath(a: string, b: string): boolean {
+  return relative(a, b) === '';
+}
+
+export function sameDeclaration(a: Declaration | undefined, b: Declaration) {
+  return a !== undefined && a.name === b.name && samePath(a.facts.file, b.facts.file);
+}
+
+/** A type and the file it is written in, which resolves the names in it. */
+export interface ScopedType {
+  type: TypeRef;
+  scope: FileFacts;
+}
+
+/** The class a field of type t holds: the element class for an array, without null or undefined; undefined for
+ *  anything but a named type. */
+export function typeClass(t: TypeRef, facts: FileFacts): string | undefined {
+  const held = nonNull(t);
+  return className(elementType(held, facts) ?? held);
+}
+
+export function elementType(t: TypeRef, facts: FileFacts): TypeRef | undefined {
+  return scopedElementType(t, facts)?.type;
+}
+
+/** Element type of X[], Array<X>, or a class extending Array<…> (its type parameters bound from t's arguments). */
+export function scopedElementType(t: TypeRef, scope: FileFacts, resolver?: ClassResolver): ScopedType | undefined {
+  if (t.kind === 'array') {
+    return { type: t.element, scope };
+  }
+  if (t.kind !== 'name') {
+    return undefined;
+  }
+  if (t.name === 'Array' && t.args.length === 1) {
+    return { type: t.args[0], scope };
+  }
+  const decl = declarationOf(t.name, scope, resolver);
+  const arrayOf = decl && typeFact(decl)?.arrayOf;
+  if (!decl || !arrayOf) {
+    return undefined;
+  }
+  const { element, params } = arrayOf;
+  const param = element.kind === 'name' && element.args.length === 0 ? params.indexOf(element.name) : -1;
+  if (param < 0) {
+    return { type: element, scope: decl.facts };
+  }
+  const arg = t.args[param];
+  return arg ? { type: arg, scope } : undefined;
+}
+
+/** decl, then the declarations it extends, nearest first; each parent name resolves from its child's file (without a
+ *  resolver, only within it). complete: every parent was found. */
+export function hierarchy(decl: Declaration, resolver?: ClassResolver): { chain: Declaration[]; complete: boolean } {
+  const chain = [decl];
+  let complete = true;
+  for (let i = 0; i < chain.length; i++) {
+    for (const p of typeFact(chain[i])?.parents ?? []) {
+      const parent = declarationOf(p, chain[i].facts, resolver);
+      if (!parent) {
+        complete = false;
+      } else if (!chain.some((c) => sameDeclaration(c, parent))) {
+        chain.push(parent);
+      }
+    }
+  }
+  return { chain, complete };
+}
+
+/** The nearest declaration in chain with member `property`, and the file its type is written in. */
+export function memberOf(
+  chain: Declaration[],
+  property: string,
+): { member: ClassMember; declaring: Declaration } | undefined {
+  for (const d of chain) {
+    const member = own(typeFact(d)?.members ?? {}, property);
+    if (member) {
+      return { member, declaring: d };
+    }
+  }
+  return undefined;
+}
+
+/** Coarse kind of a field's type for the judge: a controller or scroller class, a primitive, an array, another class. */
+export function typeKind(
+  t: TypeRef,
+  facts: FileFacts,
+): 'controller' | 'boolean' | 'number' | 'string' | 'array' | 'class' | 'other' {
+  const held = nonNull(t);
+  const cls = typeClass(held, facts)?.toLowerCase() ?? '';
+  if (cls.includes('controller') || cls.includes('scroller')) {
+    return 'controller';
+  }
+  if (held.kind === 'keyword' && (held.name === 'boolean' || held.name === 'number' || held.name === 'string')) {
+    return held.name;
+  }
+  if (elementType(held, facts) !== undefined) {
+    return 'array';
+  }
+  return held.kind === 'name' ? 'class' : 'other';
+}
+
+/** The type is, or wraps (`T | undefined`, `Nullable<() => void>`), a function type. */
+export function holdsFunction(t: TypeRef): boolean {
+  switch (t.kind) {
+    case 'function':
+      return true;
+    case 'union':
+      return t.members.some(holdsFunction);
+    case 'name':
+      return t.args.some(holdsFunction);
+    default:
+      return false;
+  }
+}
+
+export function linkTypesOf(c: ComponentFact, scope: FileFacts): { name: string; scope: FileFacts }[] {
+  return c.fields.flatMap((f) => {
+    const name = f.decorators.includes('@ObjectLink') && f.typeRef ? heldClass(f.typeRef) : undefined;
+    return name === undefined ? [] : [{ name, scope }];
+  });
+}
+
+const REACTIVE_V1 = new Set([
+  '@State',
+  '@Prop',
+  '@Link',
+  '@ObjectLink',
+  '@Provide',
+  '@Consume',
+  '@StorageLink',
+  '@StorageProp',
+  '@LocalStorageLink',
+  '@LocalStorageProp',
+]);
+
+const OWNED_V2 = new Set(['@Local']);
+
+const REACTIVE_V2 = new Set(['@Local', '@Param', '@Provider', '@Consumer']);
+
+/** Fields that never hold renderable state. */
+const NON_STATE = new Set(['@BuilderParam', '@Event', '@Require']);
+
+export function isReactive(f: FieldFact): boolean {
+  return f.decorators.some((d) => REACTIVE_V1.has(d) || REACTIVE_V2.has(d));
+}
+
+export function isReactiveV1(f: FieldFact): boolean {
+  return f.decorators.some((d) => REACTIVE_V1.has(d));
+}
+
+/** V2 state the component itself initializes. */
+export function isOwnedV2(f: FieldFact): boolean {
+  return f.decorators.some((d) => OWNED_V2.has(d));
+}
+
+export function isNonState(f: FieldFact): boolean {
+  return f.decorators.some((d) => NON_STATE.has(d));
+}

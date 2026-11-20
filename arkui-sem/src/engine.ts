@@ -3,28 +3,20 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, relative } from 'node:path';
 import type { Questions } from '@typesafe-ai/sdk';
+import type { CallSiteOptions, CallSites, ComponentFact, Declaration, FieldFact, FileFacts, Project } from './facts.js';
+import { buildSlice, Q_R1, Q_R2, Q_R3, type SystemOneBackend } from './judge.js';
+import { ProjectIndex } from './project.js';
+import { feedsRender, nestedDepth, pathText, renderingReads } from './queries.js';
 import {
-  type CallSiteOptions,
-  type CallSites,
   type Candidate,
-  type ComponentFact,
+  type CandidateKind,
   candidates,
-  type Declaration,
-  type FieldFact,
-  type FileFacts,
-  feedsRender,
   hasUnsetCallbacks,
-  nestedDepth,
   omitsCallback,
-  type Project,
-  pathText,
-  renderingReads,
   type Unwired,
   unwiredCallbacks,
   type V2Gap,
-} from './analysis.js';
-import { buildSlice, Q_R1, Q_R2, Q_R3, type SystemOneBackend } from './judge.js';
-import { ProjectIndex } from './project.js';
+} from './rules/index.js';
 
 // --- Formatting ---
 
@@ -65,10 +57,7 @@ export function formatForAgent(findings: Finding[], cwd = process.cwd()): string
   for (const f of questions) {
     out.push(`- [${f.rule}?] ${relative(cwd, f.file)}:${f.line} ${f.subject} (${source(f)})`);
     out.push(`  ${f.evidence}. Is this intended? If it should behave reactively/be released: ${f.fix}`);
-    const where =
-      f.kind === 'nested-write-unobserved'
-        ? "above each write it lists, or above the field's decorators for all of them"
-        : `above line ${f.line}`;
+    const where = KINDS[f.kind].disableWhere ?? `above line ${f.line}`;
     out.push(
       `  If it is intentional, leave it and add \`// arkui-sem-disable-next-line ${f.rule} -- <reason>\` ${where}.`,
     );
@@ -116,14 +105,6 @@ export interface EngineOptions {
 
 /** Above this many structs to look up, one pass over the project replaces a search for each. */
 const MAX_SEARCHES = 8;
-
-const QUESTIONS: Record<Candidate['rule'], Questions> = { R1: Q_R1, R2: Q_R2, R3: Q_R3 };
-const VIOLATION_LABEL: Record<Candidate['rule'], string> = {
-  R1: 'desync_bug',
-  R2: 'shared_with_parent',
-  R3: 'leak_bug',
-};
-// R2 label assumes the @Link → @Prop mismatch (shared intent); callers map the other intent × decorator pairs.
 
 class JudgmentCache {
   private entries: Record<string, number> = {};
@@ -233,55 +214,113 @@ function describeUnwired(
   };
 }
 
-function describe(c: Candidate): { subject: string; evidence: string; fix: string } {
-  const v2 = c.component.version === 'V2';
-  if (c.resource) {
-    const r = c.resource;
-    const release = r.release;
+interface Description {
+  subject: string;
+  evidence: string;
+  fix: string;
+}
+
+function describeResource(c: Candidate): Description {
+  const r = c.resource;
+  if (!r) {
+    throw new Error(`${c.kind} candidate without a resource`);
+  }
+  return {
+    subject: `${c.component.name} ${r.key}`,
+    evidence: `${r.kind} acquired in ${r.acquireIn}() at line ${r.acquireLine}; no matching release in aboutToDisappear/onPageHide`,
+    fix: `release it in aboutToDisappear(): ${r.release}.${r.kind === 'listener' ? ' Keep the handler in a field so off() receives the same reference.' : ''}`,
+  };
+}
+
+function fieldOf(c: Candidate): FieldFact {
+  if (!c.field) {
+    throw new Error(`${c.kind} candidate without a field`);
+  }
+  return c.field;
+}
+
+function describeNested(c: Candidate): Description {
+  const f = fieldOf(c);
+  const [w, ...rest] = c.writes?.length ? c.writes : f.writes;
+  const path = pathText(w?.path);
+  const head = w?.path?.[0];
+  const first = head && 'prop' in head ? head.prop : undefined;
+  const otherLines = [...new Set(rest.map((x) => x.line))].filter((l) => l !== w.line);
+  const also = otherLines.length ? `; also written in place at ${lineList(otherLines)}` : '';
+  const at = `${w?.context} in ${w?.method}() line ${w?.line}${also}`;
+  if (c.gaps) {
     return {
-      subject: `${c.component.name} ${r.key}`,
-      evidence: `${r.kind} acquired in ${r.acquireIn}() at line ${r.acquireLine}; no matching release in aboutToDisappear/onPageHide`,
-      fix: `release it in aboutToDisappear(): ${release}.${r.kind === 'listener' ? ' Keep the handler in a field so off() receives the same reference.' : ''}`,
+      subject: `${c.component.name}.${f.name}${path}`,
+      evidence: `${f.decorators.join(' ')} field's property written in place (${at}); ${[...new Set(c.gaps.map(gapReason))].join('; ')}`,
+      fix: `${[...new Set(c.gaps.map(gapFix))].join('; ')}.`,
     };
   }
-  const f = c.field;
-  if (c.unwired) {
-    return describeUnwired(c.component, f, c.unwired);
-  }
+  return {
+    subject: `${c.component.name}.${f.name}${path}`,
+    evidence: `${f.decorators.join(' ')} field written ${nestedDepth(w?.path)} levels deep (${at}); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that`,
+    fix: `change it at the first layer instead, e.g. build a new object and assign this.${f.name}${first ? `.${first}` : ''} = <new object> (or reassign this.${f.name}); or render the nested object in a child component that receives it as @ObjectLink (its class @Observed) and mutate it there.`,
+  };
+}
+
+function describeUndecorated(c: Candidate): Description {
+  const f = fieldOf(c);
   const writes = f.writes
     .filter((w) => !feedsRender(w))
     .slice(0, 2)
     .map((w) => `${w.context} in ${w.method}() line ${w.line}`)
     .join('; ');
-  if (c.kind === 'nested-write-unobserved') {
-    const [w, ...rest] = c.writes?.length ? c.writes : f.writes;
-    const path = pathText(w?.path);
-    const head = w?.path?.[0];
-    const first = head && 'prop' in head ? head.prop : undefined;
-    const otherLines = [...new Set(rest.map((x) => x.line))].filter((l) => l !== w.line);
-    const also = otherLines.length ? `; also written in place at ${lineList(otherLines)}` : '';
-    const at = `${w?.context} in ${w?.method}() line ${w?.line}${also}`;
-    if (c.gaps) {
-      return {
-        subject: `${c.component.name}.${f.name}${path}`,
-        evidence: `${f.decorators.join(' ')} field's property written in place (${at}); ${[...new Set(c.gaps.map(gapReason))].join('; ')}`,
-        fix: `${[...new Set(c.gaps.map(gapFix))].join('; ')}.`,
-      };
-    }
-    return {
-      subject: `${c.component.name}.${f.name}${path}`,
-      evidence: `${f.decorators.join(' ')} field written ${nestedDepth(w?.path)} levels deep (${at}); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that`,
-      fix: `change it at the first layer instead, e.g. build a new object and assign this.${f.name}${first ? `.${first}` : ''} = <new object> (or reassign this.${f.name}); or render the nested object in a child component that receives it as @ObjectLink (its class @Observed) and mutate it there.`,
-    };
-  }
   return {
     subject: `${c.component.name}.${f.name}`,
     evidence: `rendered in build() (${shownRead(f)}) and written after init (${writes}); no state decorator`,
-    fix: v2
-      ? `declare it @Local; if the value comes from the parent, use @Param plus an @Event callback instead.`
-      : `declare it @State; if the value comes from the parent, use @Prop (one-way) or @Link (two-way) instead.`,
+    fix:
+      c.component.version === 'V2'
+        ? `declare it @Local; if the value comes from the parent, use @Param plus an @Event callback instead.`
+        : `declare it @State; if the value comes from the parent, use @Prop (one-way) or @Link (two-way) instead.`,
   };
 }
+
+/** How a kind becomes a finding. judge: P(violation) is the judge's probability of `violation` for `questions`, and the
+ *  thresholds set the band. facts: the facts decide alone (p null) at a fixed band. */
+type KindPath = { judge: { questions: Questions; violation: string } } | { facts: Band };
+
+interface KindSpec {
+  path: KindPath;
+  describe(c: Candidate): Description;
+  /** Where the question tells the agent to put a disable comment; above the finding's line when absent. */
+  disableWhere?: string;
+  related?(c: Candidate): Finding['related'];
+}
+
+const R1_JUDGE: KindPath = { judge: { questions: Q_R1, violation: 'desync_bug' } };
+
+/** Every kind a rule emits. A new kind is one entry here. */
+const KINDS: Record<CandidateKind, KindSpec> = {
+  'undecorated-mutated-rendered': { path: R1_JUDGE, describe: describeUndecorated },
+  'nested-write-unobserved': {
+    path: R1_JUDGE,
+    describe: describeNested,
+    disableWhere: "above each write it lists, or above the field's decorators for all of them",
+  },
+  // The label assumes the @Link → @Prop mismatch (shared intent); callers map the other intent × decorator pairs.
+  'ownership-intent': {
+    path: { judge: { questions: Q_R2, violation: 'shared_with_parent' } },
+    describe: describeUndecorated,
+  },
+  'event-unwired': {
+    path: { facts: 'finding' },
+    describe: (c) => {
+      if (!c.unwired) {
+        throw new Error('event-unwired candidate without call sites');
+      }
+      return describeUnwired(c.component, fieldOf(c), c.unwired);
+    },
+    related: (c) => c.unwired?.omitted.map((s) => ({ file: s.file, line: s.line })),
+  },
+  'unreleased-resource': {
+    path: { judge: { questions: Q_R3, violation: 'leak_bug' } },
+    describe: describeResource,
+  },
+};
 
 interface Struct {
   decl: Declaration;
@@ -331,12 +370,38 @@ function sitesOf(
 
 /** R2 event-unwired candidates. Every lookup starts before the first await, so a later refresh of the index can't
  *  change which structs are asked about. */
-async function unwiredIn(files: FileFacts[], project: Project, opts: EngineOptions): Promise<Candidate[]> {
+async function unwiredIn(files: FileFacts[], project: Project, opts: EngineOptions): Promise<Checked[]> {
   const owners = callbackOwners(files, project);
   const options = { budgetMs: opts.callSiteBudgetMs, workspace: opts.workspace };
   const shared = owners.length > MAX_SEARCHES;
   const found = await Promise.all(owners.map((o) => sitesOf(o, shared, project, options)));
-  return found.flatMap((sites, i) => (sites ? unwiredCallbacks(owners[i].component, owners[i].decl.facts, sites) : []));
+  return found.flatMap((sites, i) => {
+    const { component, decl } = owners[i];
+    return sites ? unwiredCallbacks(component, decl.facts, sites).map((c) => ({ facts: decl.facts, c })) : [];
+  });
+}
+
+/** A candidate with the facts of the file it is in. */
+interface Checked {
+  facts: FileFacts;
+  c: Candidate;
+}
+
+function toFinding(c: Candidate, p: number | null, band: Band, backend: string): Finding {
+  const spec = KINDS[c.kind];
+  return {
+    fingerprint: c.fingerprint,
+    rule: c.rule,
+    kind: c.kind,
+    file: c.file,
+    line: c.line,
+    component: c.component.name,
+    p,
+    band,
+    backend,
+    ...spec.describe(c),
+    ...(spec.related ? { related: spec.related(c) } : {}),
+  };
 }
 
 export async function checkFiles(
@@ -351,13 +416,13 @@ export async function checkFiles(
   // Every candidate is found before the first await: a shared index can't be refreshed by another check in between.
   const project = opts.project ?? new ProjectIndex();
   project.refresh();
-  const found: { file: string; facts: FileFacts; candidates: Candidate[] }[] = [];
+  const found: { facts: FileFacts; candidates: Candidate[] }[] = [];
   for (const file of files) {
     try {
       // Through the project, a checked file that another checked file imports is parsed once; facts.file is its
       // normalized path, which findings and fingerprints share.
       const facts = project.facts(file);
-      found.push({ file: facts.file, facts, candidates: candidates(facts, project) });
+      found.push({ facts, candidates: candidates(facts, project) });
     } catch (e) {
       errors.push(`${file}: ${(e as Error).message}`);
     }
@@ -368,7 +433,7 @@ export async function checkFiles(
       found.map((f) => f.facts),
       project,
       opts,
-    ).catch((e: Error): Candidate[] => {
+    ).catch((e: Error): Checked[] => {
       errors.push(`call sites: ${e.message}`);
       return [];
     }),
@@ -381,66 +446,51 @@ export async function checkFiles(
     },
   );
 
-  for (const { file, facts, candidates: fileCandidates } of found) {
-    for (const c of fileCandidates) {
-      const slice = buildSlice(facts, c, opts.taskContext);
-      const questions = QUESTIONS[c.rule];
-      const key = createHash('sha256')
-        .update(opts.backend.name)
-        .update(JSON.stringify(slice))
-        .update(Object.keys(questions).join())
-        .digest('hex');
+  const decide = async ({ facts, c }: Checked) => {
+    const { path } = KINDS[c.kind];
+    if ('facts' in path) {
+      findings.push(toFinding(c, null, path.facts, FACTS));
+      return;
+    }
+    const { questions, violation } = path.judge;
+    const slice = buildSlice(facts, c, opts.taskContext);
+    const key = createHash('sha256')
+      .update(opts.backend.name)
+      .update(JSON.stringify(slice))
+      .update(Object.keys(questions).join())
+      .digest('hex');
 
-      let p: number | null = cache.get(key) ?? null;
-      if (p === null) {
-        try {
-          const { answers } = await withTimeout(opts.backend.systemOne(slice, questions), opts.judgeTimeoutMs ?? 8000);
-          const verdict = answers.verdict;
-          if (verdict?.type === 'choice') {
-            p = verdict.probabilities[VIOLATION_LABEL[c.rule]] ?? null;
-            if (p !== null) {
-              cache.set(key, p);
-            }
+    let p: number | null = cache.get(key) ?? null;
+    if (p === null) {
+      try {
+        const { answers } = await withTimeout(opts.backend.systemOne(slice, questions), opts.judgeTimeoutMs ?? 8000);
+        const verdict = answers.verdict;
+        if (verdict?.type === 'choice') {
+          p = verdict.probabilities[violation] ?? null;
+          if (p !== null) {
+            cache.set(key, p);
           }
-        } catch (e) {
-          errors.push(`${opts.backend.name}: ${(e as Error).message}`);
         }
+      } catch (e) {
+        errors.push(`${opts.backend.name}: ${(e as Error).message}`);
       }
+    }
 
-      // Judge unavailable → degrade to deterministic-only and ask rather than assert.
-      const band: Band | null =
-        p === null ? 'question' : p >= thresholds.finding ? 'finding' : p >= thresholds.question ? 'question' : null;
-      if (band === null) {
-        continue;
-      }
-      findings.push({
-        fingerprint: c.fingerprint,
-        rule: c.rule,
-        kind: c.kind,
-        file,
-        line: c.line,
-        component: c.component.name,
-        p,
-        band,
-        backend: opts.backend.name,
-        ...describe(c),
-      });
+    // Judge unavailable → degrade to deterministic-only and ask rather than assert.
+    const band: Band | null =
+      p === null ? 'question' : p >= thresholds.finding ? 'finding' : p >= thresholds.question ? 'question' : null;
+    if (band !== null) {
+      findings.push(toFinding(c, p, band, opts.backend.name));
+    }
+  };
+
+  for (const { facts, candidates: fileCandidates } of found) {
+    for (const c of fileCandidates) {
+      await decide({ facts, c });
     }
   }
-  for (const c of await unwired) {
-    findings.push({
-      fingerprint: c.fingerprint,
-      rule: c.rule,
-      kind: c.kind,
-      file: c.file,
-      line: c.line,
-      component: c.component.name,
-      p: null,
-      band: 'finding',
-      backend: FACTS,
-      ...describe(c),
-      related: c.unwired?.omitted.map((s) => ({ file: s.file, line: s.line })),
-    });
+  for (const checked of await unwired) {
+    await decide(checked);
   }
   cache.save();
   return { findings, errors };

@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { classesWith, readLines } from '../src/analysis.js';
+import { classesWith, readLines } from '../src/queries.js';
 import { extract } from './helpers.js';
 
 test('a read in a @LocalBuilder counts as rendered', () => {

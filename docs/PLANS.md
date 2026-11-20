@@ -13,6 +13,7 @@ The user sets direction; agents plan and execute. Plans live in the repo so ever
 | Plan | About |
 |---|---|
 | [roadmap.md](exec-plans/active/roadmap.md) | the one forward plan: plugin status and P-A roadmap, rule coverage R1–R5 and phases 0–6 (evaluation status: `bench/docs/RESULTS.md`) |
+| [coverage-extensions.md](exec-plans/active/coverage-extensions.md) | list rendering (ForEach/LazyForEach keys and sources) and R4 wiring kinds: kinds and PR sequence |
 
 ## Completed
 

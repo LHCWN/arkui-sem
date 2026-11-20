@@ -1,7 +1,7 @@
 import { type Plugin, tool } from '@opencode-ai/plugin';
-import { absolute, editedFiles, etsFiles } from './analysis.js';
 import { cachePath, loadSettings } from './config.js';
 import { checkFiles, type Finding, formatForAgent } from './engine.js';
+import { absolute, editedFiles, etsFiles } from './files.js';
 import { createBackend, type SystemOneBackend } from './judge.js';
 import { WarmLsp } from './lsp/warm.js';
 import { ProjectIndex } from './project.js';

@@ -1,0 +1,248 @@
+// The fact model: what an extractor reads from an .ets file, and the cross-file lookups over those facts.
+
+export type StateMgmtVersion = 'V1' | 'V2';
+
+/** render: only while build() draws, in build(), a @Builder or a helper only they call, outside handlers;
+ *  build-closure: in a handler inside build() or a @Builder. */
+export type WriteContext = 'render' | 'build-closure' | 'async-callback' | 'lifecycle' | 'method';
+
+/** A type annotation's structure. */
+export type TypeRef =
+  | { kind: 'name'; name: string; args: TypeRef[] } // Item, Array<X>, Map<K, V>, Record<K, V>, a type parameter
+  | { kind: 'array'; element: TypeRef } // X[]
+  | { kind: 'union'; members: TypeRef[] }
+  | { kind: 'object' } // an inline object type
+  | { kind: 'keyword'; name: string } // number, string, boolean, object, null, undefined, …
+  | { kind: 'function' }
+  | { kind: 'other' }; // tuples, literal types, …
+
+/** One step below a field: a property, or an index as written ('' for the container a mutating call such as push
+ *  changes); optional for `?.`. */
+export type PathSegment = ({ prop: string } | { index: string }) & { optional?: true };
+
+/** An object literal: a plain object, whatever its declared type. */
+export interface ObjectLiteralFact {
+  props: Record<string, LiteralValue>;
+}
+
+export type LiteralValue =
+  | { kind: 'object'; literal: ObjectLiteralFact }
+  | { kind: 'new'; type: TypeRef }
+  | { kind: 'other' };
+
+export interface WriteFact {
+  line: number;
+  context: WriteContext;
+  method: string;
+  /** Path below the field for in-place mutation (see pathText); absent for reassignment. */
+  path?: PathSegment[];
+  /** For an assignment (`=`, compound or update), what the assigned value is. */
+  value?: 'object-literal' | 'new' | 'other';
+  /** The new value depends on the old one: `++`, `+=`, `this.f = g(this.f)`, a mutating call. */
+  accumulates?: true;
+  /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
+  external?: boolean;
+  disabledRules: string[];
+}
+
+export interface FieldFact {
+  name: string;
+  line: number;
+  decorators: string[];
+  /** The declared type as written, else the class of a `new X(…)` initializer; for display, typeRef for rules. */
+  type?: string;
+  typeRef?: TypeRef;
+  hasInitializer: boolean;
+  /** Declared `f?: T`. */
+  optional?: true;
+  /** An object-literal initializer. */
+  literal?: ObjectLiteralFact;
+  buildReads: BuildRead[];
+  writes: WriteFact[];
+  /** Where the component calls the field as a function (`this.f(…)`): a callback it invokes. */
+  calls: CallbackCall[];
+  /** timer: the initializer or an assigned value is a timer id (`setTimeout(…)`, `setInterval(…)`); clock: one reads a
+   *  clock (`Date.now()`, `performance.now()`, `new Date()`) or starts a timer inside a larger expression. */
+  timeValue?: 'timer' | 'clock';
+  disabledRules: string[];
+}
+
+export interface CallbackCall {
+  line: number;
+  /** Called through `?.`, or the calling method also reads the field without calling it (a test of it). */
+  checked: boolean;
+}
+
+/** A read of the field in build()/@Builder. */
+export interface BuildRead {
+  line: number;
+  /** The path below the field. */
+  path: PathSegment[];
+  /** The attribute method whose arguments hold the read (`.visibility(this.f ? … : …)` → "visibility"). */
+  attribute?: string;
+  /** The read sits in the arguments of ForEach, LazyForEach or Repeat. */
+  inForEach: boolean;
+  /** A function holding the read is an event handler (an `on…` call's argument or a child's `on…` property, except
+   *  `onDragStart`), an `animateTo` body or a deferred callback (timer, promise, `.on(…)`, `subscribe`): it runs on input
+   *  or later and draws nothing. */
+  inHandler: boolean;
+  /** The read sits in a helper that build() or a @Builder calls or reads (`this.calcWidth()`, `this.label` for a getter),
+   *  possibly through other helpers. */
+  via?: string;
+}
+
+export interface ResourceFact {
+  kind: 'listener' | 'timer' | 'subscription';
+  /** "emitter.on:refresh", "timer:this.pollId", "Mgr.getInstance().registerFoo", … */
+  key: string;
+  acquireLine: number;
+  acquireIn: string;
+  released: boolean;
+  /** The matching release call, for the fix text. */
+  release: string;
+  /** Identifiers in the expression the resource is acquired on (`AppStorage`, `globalThis`, `this`, `bus`, …). */
+  targetNames: string[];
+  disabledRules: string[];
+}
+
+export interface ComponentFact {
+  name: string;
+  file: string;
+  line: number;
+  /** Declared with `export`; an export list or `export default X` is in the file's facts instead. */
+  exported?: true;
+  version: StateMgmtVersion;
+  fields: FieldFact[];
+  resources: ResourceFact[];
+}
+
+/** A class, an interface or an object type alias (`type T = { … }`) declared in the file. */
+export interface TypeFact {
+  kind: 'class' | 'interface' | 'object-alias';
+  decorators: string[];
+  /** What it extends, other than Array. */
+  parents: string[];
+  /** It extends Array<element>; params are its own type parameters. */
+  arrayOf?: { element: TypeRef; params: string[] };
+  members: Record<string, ClassMember>;
+}
+
+export interface ClassMember {
+  decorators: string[];
+  setter: boolean;
+  /** Fields: as for FieldFact. */
+  typeRef?: TypeRef;
+  literal?: ObjectLiteralFact;
+}
+
+export interface FileFacts {
+  file: string;
+  components: ComponentFact[];
+  types: Record<string, TypeFact>;
+  imports: ImportFact[];
+  /** `export { a as b } from 's'` (source set) and `export { a as b }` of a local or imported name (no source). */
+  reexports: ReexportFact[];
+  /** Sources of `export * from 's'`. */
+  exportAll: string[];
+  /** Name of the class or struct behind `export default`. */
+  defaultExport?: string;
+  componentUses: ComponentUse[];
+  /** The parser reported syntax errors; some valid ArkTS does too (`.attr()` after the closure of `Child() { … }`). */
+  parseErrors: boolean;
+  lines: string[];
+}
+
+/**
+ * How an argument's value is written, after casts, parentheses and `!`. `this.x.y`: a deeper property or index path.
+ * `this.x!!` is V2 two-way binding: the child can write the parent's state, like `$x` in V1.
+ */
+export type ArgumentForm = 'this.x' | 'this.x!!' | '$x' | 'this.x.y' | 'literal' | 'callback' | 'other';
+
+export interface ComponentArgument {
+  field: string;
+  line: number;
+  form: ArgumentForm;
+  /** The expression as written, on one line. */
+  text: string;
+}
+
+/** `Child({ … })` in a build(), @Builder or @LocalBuilder body or a field initializer, and a dialog controller's
+ *  `builder: Child({ … })` in any method. */
+export interface ComponentUse {
+  /** As written in the file, an alias included. */
+  child: string;
+  /** Absent in a file-level @Builder. */
+  parent?: string;
+  /** `build`, a builder's or field's name, or `@Builder foo` for a file-level builder. */
+  method: string;
+  line: number;
+  args: ComponentArgument[];
+  /** `Child(opts)` or a spread: fields may be passed that args doesn't list. */
+  opaqueArgs?: boolean;
+}
+
+/** A component use, resolved to the struct it instantiates. */
+export interface CallSite extends ComponentUse {
+  file: string;
+}
+
+export interface CallSites {
+  sites: CallSite[];
+  /**
+   * Files whose sites may be missing or wrong: left when the budget ran out, unreadable, or with syntax errors. A
+   * directory the listing can't read counts as one.
+   */
+  unscanned: number;
+}
+
+export interface ImportFact {
+  local: string;
+  /** Name in the source module; "default" for a default import. */
+  imported: string;
+  source: string;
+}
+
+export interface ReexportFact {
+  exported: string;
+  imported: string;
+  source?: string;
+}
+
+/** A class or struct and the file that declares it. */
+export interface Declaration {
+  facts: FileFacts;
+  name: string;
+}
+
+/** Finds where a name used in a file is declared, across files; the project index implements it. */
+export interface ClassResolver {
+  declaration(name: string, from: FileFacts): Declaration | undefined;
+}
+
+export interface CallSiteOptions {
+  /** Stops parsing when it runs out; the files left count as unscanned. */
+  budgetMs?: number;
+  /** The directory the agent works in: ties a module outside the project root to its project. */
+  workspace?: string;
+}
+
+/** Where a struct is instantiated. Undefined when its file belongs to no project, so nothing was looked at. */
+export interface CallSiteIndex {
+  /** From one pass over the whole project, shared by the calls of a check. */
+  callSites(decl: Declaration, options?: CallSiteOptions): CallSites | undefined;
+  /** For one struct, from a text search: the work follows how many files mention it. */
+  searchCallSites(decl: Declaration, options?: CallSiteOptions): Promise<CallSites | undefined>;
+}
+
+/** A project's files: the facts of each, by normalized path (`resolve`), and where the names they use are declared. */
+export interface Project extends ClassResolver, CallSiteIndex {
+  /** Called once per check, before any lookup: drop what may have changed since the last one. */
+  refresh(): void;
+  /** Throws when the file can't be read or parsed. */
+  facts(file: string): FileFacts;
+}
+
+export interface FactExtractor {
+  readonly name: string;
+  extract(file: string, text: string): FileFacts;
+}

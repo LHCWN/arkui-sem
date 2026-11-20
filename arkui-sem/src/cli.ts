@@ -1,5 +1,5 @@
 // The engine outside opencode: shell, pre-commit, CI.
-import { absolute, etsFiles } from './analysis.js';
+
 import {
   cachePath,
   describeSettings,
@@ -9,6 +9,7 @@ import {
   userConfigPath,
 } from './config.js';
 import { checkFiles, formatForAgent } from './engine.js';
+import { absolute, etsFiles } from './files.js';
 import { createBackend } from './judge.js';
 import { type ArktsLsp, startArktsLsp } from './lsp/client.js';
 import { projectRootFor } from './lsp/project.js';

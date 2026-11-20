@@ -8,7 +8,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { etsFiles } from '../dist/analysis.js';
+import { etsFiles } from '../dist/files.js';
 import { ProjectIndex } from '../dist/project.js';
 import { FileSearch } from '../dist/search.js';
 

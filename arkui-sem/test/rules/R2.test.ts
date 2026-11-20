@@ -3,10 +3,10 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { unsetCallback } from '../../src/analysis.js';
 import { checkFiles, FACTS, formatForAgent } from '../../src/engine.js';
 import type { SystemOneBackend } from '../../src/judge.js';
 import { ArkuiSemPlugin } from '../../src/opencode.js';
+import { unsetCallback } from '../../src/rules/index.js';
 import { extract, project, put, tempDir } from '../helpers.js';
 
 const PAGES = join('entry', 'src', 'main', 'ets', 'pages');

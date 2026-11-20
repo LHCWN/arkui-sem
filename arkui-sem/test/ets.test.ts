@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import BUNDLED from '../src/ets/options.json' with { type: 'json' };
 import { EtsParser, ts } from '../src/ets/parse.js';
+import { FileScan } from '../src/ets/scan.js';
 import { put, tempDir } from './helpers.js';
 
 const PAGE = `@Entry
@@ -52,4 +53,29 @@ test('an SDK without the HMS kit keeps its own component list', () => {
 test('an SDK config without a component list falls back to the bundled options', () => {
   const parser = new EtsParser(fakeSdk({ components: 'Column' }));
   assert.ok(parser.options.ets?.components.includes('HdsNavDestination'));
+});
+
+test('a disable comment above a statement covers every line of it, for any rule id', () => {
+  const source = [
+    'function f(items: number[]) {',
+    '  // arkui-sem-disable-next-line R4, R12 -- reason',
+    '  items.forEach((x) =>',
+    '    g(x))',
+    '  g(0)',
+    '}',
+    'function g(x: number) {}',
+  ].join('\n');
+  const scan = new FileScan('Page.ets', source, new EtsParser());
+  const calls: ts.CallExpression[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'g') {
+      calls.push(n);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scan.sf);
+  const [inner, after] = calls;
+  assert.deepEqual(scan.disabledFor(inner), ['R4', 'R12']);
+  assert.deepEqual(scan.disabledAt(scan.line(inner)), []);
+  assert.deepEqual(scan.disabledFor(after), []);
 });

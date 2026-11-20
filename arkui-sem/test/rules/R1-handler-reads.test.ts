@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readLines, renderingReads } from '../../src/analysis.js';
+import { readLines, renderingReads } from '../../src/queries.js';
 import { extract, found } from '../helpers.js';
 
 const undecorated = (src: string) =>

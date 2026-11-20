@@ -3,8 +3,9 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { candidates, nestedDepth, pathText } from '../../src/analysis.js';
 import { ProjectIndex } from '../../src/project.js';
+import { nestedDepth, pathText } from '../../src/queries.js';
+import { candidates } from '../../src/rules/index.js';
 import { extract, found, put, ROOT, tempDir } from '../helpers.js';
 
 const nestedHits = (src: string) =>

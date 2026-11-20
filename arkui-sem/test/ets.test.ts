@@ -55,13 +55,17 @@ test('an SDK config without a component list falls back to the bundled options',
   assert.ok(parser.options.ets?.components.includes('HdsNavDestination'));
 });
 
-test('a disable comment above a statement covers every line of it, for any rule id', () => {
+test('a disable comment above a statement covers its arguments but not statements in a callback block, any rule id', () => {
   const source = [
     'function f(items: number[]) {',
     '  // arkui-sem-disable-next-line R4, R12 -- reason',
     '  items.forEach((x) =>',
     '    g(x))',
     '  g(0)',
+    '  // arkui-sem-disable-next-line R4',
+    '  items.forEach((x) => {',
+    '    g(x)',
+    '  })',
     '}',
     'function g(x: number) {}',
   ].join('\n');
@@ -74,8 +78,9 @@ test('a disable comment above a statement covers every line of it, for any rule 
     ts.forEachChild(n, visit);
   };
   visit(scan.sf);
-  const [inner, after] = calls;
+  const [inner, after, inBlock] = calls;
   assert.deepEqual(scan.disabledFor(inner), ['R4', 'R12']);
   assert.deepEqual(scan.disabledAt(scan.line(inner)), []);
   assert.deepEqual(scan.disabledFor(after), []);
+  assert.deepEqual(scan.disabledFor(inBlock), []);
 });

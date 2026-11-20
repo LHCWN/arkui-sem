@@ -254,3 +254,40 @@ export function linkTypesOf(c: ComponentFact, scope: FileFacts): { name: string;
     return name === undefined ? [] : [{ name, scope }];
   });
 }
+
+const REACTIVE_V1 = new Set([
+  '@State',
+  '@Prop',
+  '@Link',
+  '@ObjectLink',
+  '@Provide',
+  '@Consume',
+  '@StorageLink',
+  '@StorageProp',
+  '@LocalStorageLink',
+  '@LocalStorageProp',
+]);
+
+const OWNED_V2 = new Set(['@Local']);
+
+const REACTIVE_V2 = new Set(['@Local', '@Param', '@Provider', '@Consumer']);
+
+/** Fields that never hold renderable state. */
+const NON_STATE = new Set(['@BuilderParam', '@Event', '@Require']);
+
+export function isReactive(f: FieldFact): boolean {
+  return f.decorators.some((d) => REACTIVE_V1.has(d) || REACTIVE_V2.has(d));
+}
+
+export function isReactiveV1(f: FieldFact): boolean {
+  return f.decorators.some((d) => REACTIVE_V1.has(d));
+}
+
+/** V2 state the component itself initializes. */
+export function isOwnedV2(f: FieldFact): boolean {
+  return f.decorators.some((d) => OWNED_V2.has(d));
+}
+
+export function isNonState(f: FieldFact): boolean {
+  return f.decorators.some((d) => NON_STATE.has(d));
+}

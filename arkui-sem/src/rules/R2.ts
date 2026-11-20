@@ -1,4 +1,4 @@
-// R2, ownership: callbacks a component calls that no parent passes (event-unwired). Shapes a–c are judged in the bench.
+// R2, ownership: callbacks a component calls that no parent passes (event-unwired).
 import type { CallSites, ComponentFact, ComponentUse, FieldFact, FileFacts, StateMgmtVersion } from '../facts.js';
 import { isNullable } from '../queries.js';
 import { type Candidate, fingerprint, type UnsetEffect } from './candidate.js';

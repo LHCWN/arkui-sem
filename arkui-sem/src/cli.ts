@@ -1,5 +1,4 @@
 // The engine outside opencode: shell, pre-commit, CI.
-
 import {
   cachePath,
   describeSettings,

@@ -19,6 +19,10 @@ import {
   isCallSegment,
   isClassWith,
   isIndex,
+  isNonState,
+  isOwnedV2,
+  isReactive,
+  isReactiveV1,
   linkTypesOf,
   memberOf,
   nestedDepth,
@@ -32,40 +36,11 @@ import {
 } from '../queries.js';
 import { type Candidate, fingerprint, type V2Gap } from './candidate.js';
 
-const REACTIVE_V1 = new Set([
-  '@State',
-  '@Prop',
-  '@Link',
-  '@ObjectLink',
-  '@Provide',
-  '@Consume',
-  '@StorageLink',
-  '@StorageProp',
-  '@LocalStorageLink',
-  '@LocalStorageProp',
-]);
-
-/** V2 state the component itself initializes. */
-const OWNED_V2 = new Set(['@Local']);
-
-const REACTIVE_V2 = new Set(['@Local', '@Param', '@Provider', '@Consumer']);
-
-// Fields that never hold renderable state.
-const NON_STATE = new Set(['@BuilderParam', '@Event', '@Require']);
-
 /** Types whose index writes and API calls V2 observes on an observed property, besides arrays. */
 const V2_CONTAINERS = new Set(['Map', 'Set', 'Date', 'WeakMap', 'WeakSet']);
 
 /** Named types that are plain objects whatever they hold. */
 const PLAIN_TYPES = new Set(['Record', 'Object']);
-
-function isReactive(f: FieldFact) {
-  return f.decorators.some((d) => REACTIVE_V1.has(d) || REACTIVE_V2.has(d));
-}
-
-function isReactiveV1(f: FieldFact) {
-  return f.decorators.some((d) => REACTIVE_V1.has(d));
-}
 
 interface Step {
   type?: TypeRef;
@@ -137,7 +112,7 @@ function fieldContext(f: FieldFact): FieldContext {
   // get its value from elsewhere), and only until a reassignment: one that assigns literals keeps the object plain, with
   // its contents unknown.
   const reassignments = f.writes.filter((x) => x.path === undefined);
-  const owned = f.decorators.some((d) => OWNED_V2.has(d)) && f.literal !== undefined;
+  const owned = isOwnedV2(f) && f.literal !== undefined;
   const literal = !owned
     ? undefined
     : reassignments.length === 0
@@ -337,7 +312,7 @@ function unobservedWrites(
 export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: ClassResolver): Candidate[] {
   const out: Candidate[] = [];
   for (const f of c.fields) {
-    if (f.decorators.some((d) => NON_STATE.has(d)) || f.disabledRules.includes('R1')) {
+    if (isNonState(f) || f.disabledRules.includes('R1')) {
       continue;
     }
     const rendered = renderingReads(f).length > 0;

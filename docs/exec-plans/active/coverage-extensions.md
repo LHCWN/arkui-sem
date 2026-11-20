@@ -25,7 +25,7 @@ plus the original over-reactive cases. All new kinds are V1-only until ForEach a
 One branch and PR per step, each after an explicit go.
 
 1. **Refactor (no behaviour change).** Fact model, derived queries and one module per rule; one per-kind entry in
-   the engine; disable comments that attach to a statement. Done: this plan's first PR.
+   the engine; disable comments that attach to a statement.
 2. **Loop fact and `@Builder` parameter reads** (no new rule): one fact per `ForEach`/`LazyForEach` call in a drawing
    method (source, key, what the row renders, disable comment above the call).
 3. **`foreach-key-stale`** and the ForEach-aware nested-write fix text.

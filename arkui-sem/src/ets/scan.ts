@@ -30,8 +30,9 @@ export class FileScan {
     return this.disabled.get(line) ?? [];
   }
 
-  /** The rules disabled for a node: by a comment above its line, or above the first line of the statement holding it, so
-   *  one comment above a multi-line call covers the whole call. */
+  /** The rules disabled for a node: by a comment above its line, or above the first line of the innermost statement
+   *  holding it, so one comment above a multi-line call covers its arguments. A statement inside a callback's block body
+   *  is its own statement; an `else if` or unbraced branch belongs to the outer `if`. */
   disabledFor(n: ts.Node): string[] {
     let statement: ts.Node | undefined = n;
     while (statement && !isStatement(statement)) {

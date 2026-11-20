@@ -56,8 +56,9 @@ export function formatForAgent(findings: Finding[], cwd = process.cwd()): string
   }
   for (const f of questions) {
     out.push(`- [${f.rule}?] ${relative(cwd, f.file)}:${f.line} ${f.subject} (${source(f)})`);
-    out.push(`  ${f.evidence}. Is this intended? If it should behave reactively/be released: ${f.fix}`);
-    const where = KINDS[f.kind].disableWhere ?? `above line ${f.line}`;
+    const { ask, disableWhere } = KINDS[f.kind];
+    out.push(`  ${f.evidence}. Is this intended? ${ask ?? 'If it should behave reactively/be released'}: ${f.fix}`);
+    const where = disableWhere ?? `above line ${f.line}`;
     out.push(
       `  If it is intentional, leave it and add \`// arkui-sem-disable-next-line ${f.rule} -- <reason>\` ${where}.`,
     );
@@ -188,11 +189,7 @@ function gapFix(g: V2Gap): string {
   }
 }
 
-function describeUnwired(
-  c: ComponentFact,
-  f: FieldFact,
-  u: Unwired,
-): { subject: string; evidence: string; fix: string } {
+function describeUnwired(c: ComponentFact, f: FieldFact, u: Unwired): Description {
   const subject = `${c.name}.${f.name}`;
   const calls = lineList([...new Set(f.calls.map((call) => call.line))]);
   const sites = `${u.sites} call site${u.sites === 1 ? '' : 's'} of ${c.name}`;
@@ -279,21 +276,37 @@ function describeUndecorated(c: Candidate): Description {
   };
 }
 
+/** R2 a–c: a field the parent initializes, whose sync direction may not be the one the UI needs. */
+function describeOwnership(c: Candidate): Description {
+  const f = fieldOf(c);
+  return {
+    subject: `${c.component.name}.${f.name}`,
+    evidence: `${[...f.decorators, f.name].join(' ')} is initialized by the parent; its sync direction may not match how the parent and this component use it`,
+    fix:
+      c.component.version === 'V2'
+        ? `use @Param plus an @Event callback to share it with the parent, or @Local for a copy the parent doesn't refresh.`
+        : `use @Link to share it with the parent, @Prop for a one-way copy the parent refreshes, or a plain field for a snapshot.`,
+  };
+}
+
 /** How a kind becomes a finding. judge: P(violation) is the judge's probability of `violation` for `questions`, and the
  *  thresholds set the band. facts: the facts decide alone (p null) at a fixed band. */
-type KindPath = { judge: { questions: Questions; violation: string } } | { facts: Band };
+type KindPath = { judge: { questions: Questions; violation: string } } | { facts: Band | ((c: Candidate) => Band) };
 
 interface KindSpec {
   path: KindPath;
   describe(c: Candidate): Description;
   /** Where the question tells the agent to put a disable comment; above the finding's line when absent. */
   disableWhere?: string;
+  /** The question's lead-in to the fix, e.g. "If it should behave reactively"; a generic one when absent. */
+  ask?: string;
   related?(c: Candidate): Finding['related'];
 }
 
 const R1_JUDGE: KindPath = { judge: { questions: Q_R1, violation: 'desync_bug' } };
 
-/** Every kind a rule emits. A new kind is one entry here. */
+/** Every kind a rule emits. A facts-only kind is one entry here plus the rule that emits it; a judged kind also needs its
+ *  slice in judge.ts. */
 const KINDS: Record<CandidateKind, KindSpec> = {
   'undecorated-mutated-rendered': { path: R1_JUDGE, describe: describeUndecorated },
   'nested-write-unobserved': {
@@ -304,7 +317,7 @@ const KINDS: Record<CandidateKind, KindSpec> = {
   // The label assumes the @Link → @Prop mismatch (shared intent); callers map the other intent × decorator pairs.
   'ownership-intent': {
     path: { judge: { questions: Q_R2, violation: 'shared_with_parent' } },
-    describe: describeUndecorated,
+    describe: describeOwnership,
   },
   'event-unwired': {
     path: { facts: 'finding' },
@@ -449,7 +462,7 @@ export async function checkFiles(
   const decide = async ({ facts, c }: Checked) => {
     const { path } = KINDS[c.kind];
     if ('facts' in path) {
-      findings.push(toFinding(c, null, path.facts, FACTS));
+      findings.push(toFinding(c, null, typeof path.facts === 'function' ? path.facts(c) : path.facts, FACTS));
       return;
     }
     const { questions, violation } = path.judge;

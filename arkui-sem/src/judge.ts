@@ -23,6 +23,7 @@ import {
   objectLinkTypes,
   pathText,
   readLines,
+  renderingReads,
   typeClass,
   typeKind,
 } from './analysis.js';
@@ -356,9 +357,10 @@ const APP_SCOPED_NAMES = ['appstorage', 'globalthis', 'ability', 'application'];
 
 /** Where build() renders the field: inside a ForEach-style loop, and through which attribute calls. */
 function renderContexts(f: FieldFact): { for_each: boolean; attributes: string[] } {
+  const reads = renderingReads(f);
   return {
-    for_each: f.buildReads.some((r) => r.inForEach),
-    attributes: [...new Set(f.buildReads.flatMap((r) => (r.attribute === undefined ? [] : [r.attribute])))],
+    for_each: reads.some((r) => r.inForEach),
+    attributes: [...new Set(reads.flatMap((r) => (r.attribute === undefined ? [] : [r.attribute])))],
   };
 }
 

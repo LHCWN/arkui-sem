@@ -92,9 +92,9 @@ function describesUi(fn: ts.Node): boolean {
  *  counts the capitalized ones: a lowercase import is more often a plain helper (`save(…)`). */
 function callsBuilder(fn: ts.Node, names: BuilderNames): boolean {
   const local = { ...names, imports: new Set<string>() };
-  const visit = (n: ts.Node): boolean =>
-    ((ts.isCallExpression(n) || ts.isEtsComponentExpression(n)) && isBuilderCall(n, local)) ||
-    ts.forEachChild(n, visit) === true;
+  const visit = (node: ts.Node): boolean =>
+    ((ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) && isBuilderCall(node, local)) ||
+    ts.forEachChild(node, visit) === true;
   return ts.forEachChild(fn, visit) === true;
 }
 

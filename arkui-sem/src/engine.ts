@@ -280,26 +280,26 @@ function keyExample(loop: LoopFact, prop: string): string {
     : `(${item}) => \`\${${item}.${key}}-\${${item}.${prop}}\``;
 }
 
-function describeKeyStale(c: CandidateOf<'foreach-key-stale'>): Description {
-  const f = c.field;
-  const { loop } = c;
-  const methods = [...new Set(c.rebuilds.map((r) => `${r.write.method}()`))].join(', ');
-  const stale = [...new Set(c.rebuilds.flatMap((r) => r.stale))];
-  const objects = c.opaque ? 'new class instances, which may keep' : 'new objects that keep';
-  const rows = [...new Set(c.staleReads.map((r) => rowKind(r.via)))].join(', ');
+function describeKeyStale(candidate: CandidateOf<'foreach-key-stale'>): Description {
+  const field = candidate.field;
+  const { loop } = candidate;
+  const methods = [...new Set(candidate.rebuilds.map((rebuild) => `${rebuild.write.method}()`))].join(', ');
+  const stale = [...new Set(candidate.rebuilds.flatMap((rebuild) => rebuild.stale))];
+  const objects = candidate.opaque ? 'new class instances, which may keep' : 'new objects that keep';
+  const rows = [...new Set(candidate.staleReads.map((rebuild) => rowKind(rebuild.via)))].join(', ');
   const keyRoute = `make the key change with what the row shows, e.g. ${keyExample(loop, stale[0])}, and keep replacing the element (a write below it doesn't re-render either); this rebuilds the row, so what the row holds itself (typed text, focus, an animation) resets`;
   const linkRoute = `keep the key, make the items instances of an @Observed class shown by a row child that takes the item as @ObjectLink, and change the property on that object instead of replacing it; values the parent computes from the items (totals) then need their own first-layer update`;
   return {
-    subject: `${c.component.name}.${f.name}`,
-    evidence: `${methods} put ${objects} the ForEach key (${loop.key.text}, line ${loop.line}) where elements of this.${f.name} were (${lineList(rebuiltLines(c))}); ForEach keeps the existing row for an unchanged key and does not pass it the new item, so the row still shows the old ${stale.join(', ')} (row: ${rows})`,
-    fix: c.statefulRow
+    subject: `${candidate.component.name}.${field.name}`,
+    evidence: `${methods} put ${objects} the ForEach key (${loop.key.text}, line ${loop.line}) where elements of this.${field.name} were (${lineList(rebuiltLines(candidate))}); ForEach keeps the existing row for an unchanged key and does not pass it the new item, so the row still shows the old ${stale.join(', ')} (row: ${rows})`,
+    fix: candidate.statefulRow
       ? `the row holds state of its own, so ${linkRoute}. Or ${keyRoute}.`
       : `${keyRoute}. Or ${linkRoute}.`,
   };
 }
 
-function rebuiltLines(c: CandidateOf<'foreach-key-stale'>): number[] {
-  return [...new Set(c.rebuilds.map((r) => r.element.line))];
+function rebuiltLines(candidate: CandidateOf<'foreach-key-stale'>): number[] {
+  return [...new Set(candidate.rebuilds.map((rebuild) => rebuild.element.line))];
 }
 
 function rowKind(via: RowRead['via']): string {

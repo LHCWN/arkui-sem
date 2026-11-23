@@ -123,18 +123,18 @@ function elementFilters(expr: ts.Expression): string[] | undefined {
 
 /** The properties of its item a filter callback reads: `p` in `(s) => s.p > 0`. Undefined unless it is a function
  *  written in place with a named item. */
-function predicateReads(e: ts.Expression): string[] | undefined {
-  const fn = unwrap(e);
+function predicateReads(expr: ts.Expression): string[] | undefined {
+  const fn = unwrap(expr);
   const item = isFunction(fn) && fn.body ? paramName(fn, 0) : undefined;
   if (!isFunction(fn) || !fn.body || item === undefined) {
     return undefined;
   }
   const out = new Set<string>();
-  const visit = (n: ts.Node) => {
-    if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === item) {
-      out.add(n.name.text);
+  const visit = (node: ts.Node) => {
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === item) {
+      out.add(node.name.text);
     }
-    ts.forEachChild(n, visit);
+    ts.forEachChild(node, visit);
   };
   visit(fn.body);
   return [...out];
@@ -250,17 +250,17 @@ export function builderFact(name: string, fn: FunctionNode, scan: FileScan, name
 /** The components a body creates outside handlers, by name, each once. */
 function componentsIn(body: ts.Node, names: BuilderNames): string[] {
   const out = new Set<string>();
-  const visit = (n: ts.Node) => {
+  const visit = (node: ts.Node) => {
     if (
-      (ts.isCallExpression(n) || ts.isEtsComponentExpression(n)) &&
-      ts.isIdentifier(n.expression) &&
-      COMPONENT_NAME.test(n.expression.text) &&
-      !names.functions.has(n.expression.text) &&
-      !climb(n, body, names).inHandler
+      (ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) &&
+      ts.isIdentifier(node.expression) &&
+      COMPONENT_NAME.test(node.expression.text) &&
+      !names.functions.has(node.expression.text) &&
+      !climb(node, body, names).inHandler
     ) {
-      out.add(n.expression.text);
+      out.add(node.expression.text);
     }
-    ts.forEachChild(n, visit);
+    ts.forEachChild(node, visit);
   };
   visit(body);
   return [...out];

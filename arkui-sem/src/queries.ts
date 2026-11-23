@@ -144,7 +144,12 @@ const OWN_STATE = ['@State', '@Local', '@Provide', '@Provider'];
 
 /** A loop's row holds state of its own, which rebuilding the row resets: it creates a built-in component that holds
  *  some (STATEFUL_COMPONENTS) or a component with its own state fields, directly or in a builder it passes the item to. */
-export function rowHoldsState(loop: LoopFact, c: ComponentFact, facts: FileFacts, resolver?: ClassResolver): boolean {
+export function rowHoldsState(
+  loop: LoopFact,
+  component: ComponentFact,
+  facts: FileFacts,
+  resolver?: ClassResolver,
+): boolean {
   const holds = (creates: string[], uses: ValueUses, scope: UseScope, seen: Set<string>): boolean =>
     creates.some((name) => STATEFUL_COMPONENTS.has(name) || ownsState(name, scope.facts, resolver)) ||
     uses.builders.some((pass) => {
@@ -155,7 +160,7 @@ export function rowHoldsState(loop: LoopFact, c: ComponentFact, facts: FileFacts
         holds(target.builder.creates, target.param.uses, target.scope, new Set([...seen, target.key]))
       );
     });
-  return holds(loop.creates, loop.row, { facts, component: c }, new Set());
+  return holds(loop.creates, loop.row, { facts, component }, new Set());
 }
 
 function ownsState(name: string, facts: FileFacts, resolver?: ClassResolver): boolean {

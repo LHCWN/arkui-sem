@@ -469,22 +469,24 @@ function readsTime(e: ts.Node): boolean {
 /** The methods that run only before the first build(): aboutToAppear, and helpers whose every use is a call outside
  *  handlers in such a method. A helper of an aboutToAppear that awaits may run after the first build(). */
 function setupMethods(scans: MethodWalk[]): Set<string> {
-  const first = scans.find((s) => s.method.name === 'aboutToAppear');
+  const first = scans.find((scan) => scan.method.name === 'aboutToAppear');
   if (!first) {
     return new Set();
   }
   const setup = new Set([first.method.name]);
   const awaits = (first.awaits.get(first.method.body) ?? []).length > 0;
   const onlyFrom = (name: string) =>
-    scans.every((s) => s.uses.every((u) => u.name !== name || (setup.has(s.method.name) && u.called && !u.inHandler)));
+    scans.every((scan) =>
+      scan.uses.every((use) => use.name !== name || (setup.has(scan.method.name) && use.called && !use.inHandler)),
+    );
   for (let changed = !awaits; changed; ) {
     changed = false;
-    for (const s of scans) {
-      const name = s.method.name;
+    for (const scan of scans) {
+      const name = scan.method.name;
       if (
         !setup.has(name) &&
-        s.method.kind === 'method' &&
-        scans.some((o) => o.uses.some((u) => u.name === name)) &&
+        scan.method.kind === 'method' &&
+        scans.some((other) => other.uses.some((use) => use.name === name)) &&
         onlyFrom(name)
       ) {
         setup.add(name);

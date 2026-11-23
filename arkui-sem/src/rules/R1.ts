@@ -339,8 +339,8 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
     const { writes: nested, gaps } = isReactive(f) ? unobservedWrites(f, facts, resolver) : { writes: [] };
     if (nested.length > 0 && rendered) {
       // A property of an element, not an element of a nested array (`this.grid[i][j]`).
-      const belowElement = nested.some((w) => {
-        const [first, second] = w.path ?? [];
+      const belowElement = nested.some((write) => {
+        const [first, second] = write.path ?? [];
         return first !== undefined && isIndex(first) && second !== undefined && !isIndex(second);
       });
       const [loop] = c.version === 'V1' && belowElement ? keyedLoops(c, f) : [];
@@ -366,39 +366,47 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
 }
 
 /** The ForEach loops over the field's own elements whose key stays with an element: item properties or the index. */
-function keyedLoops(c: ComponentFact, f: FieldFact): LoopFact[] {
-  return c.loops.filter(
-    (l) => l.kind === 'ForEach' && l.source.itemsOf === f.name && (l.key.kind === 'props' || l.key.kind === 'index'),
+function keyedLoops(component: ComponentFact, field: FieldFact): LoopFact[] {
+  return component.loops.filter(
+    (loop) =>
+      loop.kind === 'ForEach' &&
+      loop.source.itemsOf === field.name &&
+      (loop.key.kind === 'props' || loop.key.kind === 'index'),
   );
 }
 
 /** ForEach keeps the row of an existing key and does not pass it the new item (OpenHarmony ForEach docs, 数据变化不渲染):
  *  one candidate per keyed loop over the field whose row renders a property that new objects under its key change. The
  *  fingerprint names the key as written, plus a counter when the field has two loops with the same key. */
-function keyStaleCandidates(c: ComponentFact, f: FieldFact, facts: FileFacts, resolver?: ClassResolver): Candidate[] {
-  const writes = f.writes.filter(
-    (w) => w.rebuilt && !feedsRender(w) && !w.beforeFirstRender && !w.disabledRules.includes('R1'),
+function keyStaleCandidates(
+  component: ComponentFact,
+  field: FieldFact,
+  facts: FileFacts,
+  resolver?: ClassResolver,
+): Candidate[] {
+  const writes = field.writes.filter(
+    (write) => write.rebuilt && !feedsRender(write) && !write.beforeFirstRender && !write.disabledRules.includes('R1'),
   );
   if (writes.length === 0) {
     return [];
   }
   const out: Candidate[] = [];
   const seen = new Map<string, number>();
-  for (const loop of keyedLoops(c, f)) {
+  for (const loop of keyedLoops(component, field)) {
     const keyText = loop.key.text ?? loop.key.kind;
-    const n = (seen.get(keyText) ?? 0) + 1;
-    seen.set(keyText, n);
+    const count = (seen.get(keyText) ?? 0) + 1;
+    seen.set(keyText, count);
     if (loop.disabledRules.includes('R1')) {
       continue;
     }
-    const reads = rowReads(loop, c, facts, resolver);
-    const rendered = new Set(reads.flatMap((r) => firstProp(r.path) ?? []));
+    const reads = rowReads(loop, component, facts, resolver);
+    const rendered = new Set(reads.flatMap((read) => firstProp(read.path) ?? []));
     // A key property is the same under a kept key; a filtered one moves the element instead of leaving it stale.
     const fixed = new Set([...(loop.key.props ?? []), ...(loop.source.filteredBy ?? [])]);
     const rebuilds: KeyStaleRebuild[] = writes.flatMap((write) =>
       (write.rebuilt ?? []).flatMap((element) => {
         const stale = keepsKey(element, loop.key)
-          ? [...rendered].filter((p) => !keeps(element, p) && !fixed.has(p))
+          ? [...rendered].filter((prop) => !keeps(element, prop) && !fixed.has(prop))
           : [];
         return stale.length ? [{ write, element, stale }] : [];
       }),
@@ -406,20 +414,24 @@ function keyStaleCandidates(c: ComponentFact, f: FieldFact, facts: FileFacts, re
     if (rebuilds.length === 0) {
       continue;
     }
-    const stale = new Set(rebuilds.flatMap((r) => r.stale));
+    const stale = new Set(rebuilds.flatMap((rebuild) => rebuild.stale));
     out.push({
       rule: 'R1',
       kind: 'foreach-key-stale',
       file: facts.file,
-      component: c,
-      field: f,
+      component,
+      field,
       line: loop.line,
       loop,
       rebuilds,
-      opaque: rebuilds.every((r) => r.element.value === 'new'),
-      staleReads: reads.filter((r) => stale.has(firstProp(r.path) ?? '')),
-      statefulRow: rowHoldsState(loop, c, facts, resolver),
-      fingerprint: fingerprint(facts.file, `${c.name}.${f.name}`, `R1-foreach-key@${keyText}${n > 1 ? `~${n}` : ''}`),
+      opaque: rebuilds.every((rebuild) => rebuild.element.value === 'new'),
+      staleReads: reads.filter((read) => stale.has(firstProp(read.path) ?? '')),
+      statefulRow: rowHoldsState(loop, component, facts, resolver),
+      fingerprint: fingerprint(
+        facts.file,
+        `${component.name}.${field.name}`,
+        `R1-foreach-key@${keyText}${count > 1 ? `~${count}` : ''}`,
+      ),
     });
   }
   return out;
@@ -432,11 +444,11 @@ function firstProp(path: PathSegment[]): string | undefined {
 
 /** The new object gives the row the same key: an index key, or every key property kept. A `new T(…)`, whose
  *  properties are unknown, is taken to. */
-function keepsKey(e: RebuiltElement, key: LoopKey): boolean {
-  return key.kind === 'index' || e.value === 'new' || (key.props ?? []).every((p) => keeps(e, p));
+function keepsKey(element: RebuiltElement, key: LoopKey): boolean {
+  return key.kind === 'index' || element.value === 'new' || (key.props ?? []).every((p) => keeps(element, p));
 }
 
 /** The new object holds the element's value of the property; never known for a `new T(…)`. */
-function keeps(e: RebuiltElement, prop: string): boolean {
-  return e.kept.includes(prop) || (e.keepsRest && !e.changed.includes(prop));
+function keeps(element: RebuiltElement, prop: string): boolean {
+  return element.kept.includes(prop) || (element.keepsRest && !element.changed.includes(prop));
 }

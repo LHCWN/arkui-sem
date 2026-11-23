@@ -13,6 +13,7 @@ import { type BuilderNames, climb } from './callbacks.js';
 import { LIFECYCLE } from './lifecycle.js';
 import { builderFact, loopsIn, type Members } from './loops.js';
 import { ts } from './parse.js';
+import { rebuiltElements } from './rebuilt.js';
 import { resources } from './resources.js';
 import type { FileScan } from './scan.js';
 import {
@@ -400,6 +401,7 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
           : 'method';
   // A mutating call changes the container below its receiver: `[]` with no index stands for it.
   const path: PathSegment[] = mutatingCall ? [...segments.slice(0, -1), { index: '' }] : segments;
+  const rebuilt = segments.length <= 1 ? rebuiltElements(field.name, top, ctx.scan) : [];
   const write: WriteFact = {
     line,
     context,
@@ -407,6 +409,7 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     path: path.length ? path : undefined,
     value: mutatingCall ? undefined : assignedValue(assignment),
     ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
+    ...(rebuilt.length ? { rebuilt } : {}),
     disabledRules: ctx.scan.disabledAt(line),
   };
   field.writes.push(write);

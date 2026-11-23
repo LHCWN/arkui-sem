@@ -42,7 +42,27 @@ export interface WriteFact {
   accumulates?: true;
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
+  /** The new objects the write puts where elements of the field were (absent when none). */
+  rebuilt?: RebuiltElement[];
   disabledRules: string[];
+}
+
+/**
+ * A new object put at an existing element's position. map: `this.F = this.F.map(cb)`. loop: a loop over this.F pushes
+ * it into the array then assigned to this.F. copy-index: `copy[i] = obj` on a copy of this.F then assigned to it.
+ * index: `this.F[i] = obj`. splice: `this.F.splice(i, n, obj)`.
+ */
+export interface RebuiltElement {
+  line: number;
+  form: 'map' | 'loop' | 'copy-index' | 'index' | 'splice';
+  /** new: a `new T(…)`, whose properties are unknown (kept and changed stay empty). */
+  value: 'object-literal' | 'new';
+  /** Properties that keep the element's value: `p: e.p`, or `p: X` under a guard `e.p === X`. */
+  kept: string[];
+  /** The other properties the literal sets. */
+  changed: string[];
+  /** The literal spreads the element (`{ ...e, … }`, `Object.assign({}, e, …)`): properties it doesn't set are kept. */
+  keepsRest: boolean;
 }
 
 export interface FieldFact {

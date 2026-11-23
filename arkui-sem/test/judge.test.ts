@@ -2,8 +2,8 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { candidates } from '../src/analysis.js';
 import { buildSlice, HeuristicBackend, Q_R1 } from '../src/judge.js';
+import { candidates } from '../src/rules/index.js';
 import { extract } from './helpers.js';
 
 const ITEM = "@Observed\nclass Item {\n  title: string = ''\n}";

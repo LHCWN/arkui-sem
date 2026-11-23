@@ -1,4 +1,4 @@
-// `// arkui-sem-disable-next-line R1, R3` comments.
+// `// arkui-sem-disable-next-line R1, R3 -- <reason>` comments: any rule id R<n>, before an optional reason.
 import { ts } from './parse.js';
 
 const DIRECTIVE = 'arkui-sem-disable-next-line';

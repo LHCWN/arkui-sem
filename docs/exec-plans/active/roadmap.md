@@ -81,6 +81,10 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | Item | Today | With an LSP server | Left after LSP |
 |---|---|---|---|
 | R1 undecorated field, mutated and rendered (V1/V2) | ✅ Facts + Q_R1; MDP runs in the bench | – | Intent verdict (judge/agent) |
+| R1 ForEach: elements replaced under an unchanged key (`foreach-key-stale`) | ❌ Planned (`coverage-extensions.md`) | – | Loop fact |
+| R1 ForEach keyed by index over changing items (`foreach-index-key`) | ❌ Planned | – | Loop fact |
+| R1 LazyForEach source rebuilt or reassigned (`lazyforeach-source-rebuilt`) | ❌ Planned | – | Loop fact |
+| R4 wiring: `input-unbound`, `input-never-read`, `selection-never-written` | ❌ Planned (questions) | – | Input fact, loop fact |
 | R1 nested write, V1 (depth ≥ 2) | ✅ Across files (project index) | – | Aliasing (`const it = this.list[i]; it.x = …`): dataflow in the fact extractor |
 | R1 nested write, V2 (class not `@ObservedV2`) | ⚠️ Same file; cross-file through ace-server (follow-up) | ✅ Cross-file class lookup | – |
 | `@Trace` per property | ⚠️ Same file (mutated + rendered property, inherited `@Trace` included); cross-file through ace-server (follow-up) | ✅ Class (LSP) + property decorator (our parse) | Eval |
@@ -105,7 +109,7 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 Each phase starts only after an explicit go.
 
 #### Phase 0: infrastructure already in place
-- [x] R1 rules (undecorated, nested write) and R3 in `analysis.ts` / `engine.ts`
+- [x] R1 rules (undecorated, nested write) and R3 in `src/rules/` / `engine.ts`
 - [x] Judge backends: Clef, DeepSeek flash (structured), heuristic, Laya
 - [x] MDP datasets and R1 recall/precision runs (bench)
 - [ ] Judge fallback chain Jev → Clef-flash → Clef → DeepSeek flash (`backend` as a list)
@@ -134,7 +138,7 @@ Each phase starts only after an explicit go.
 - [ ] V2 nested write with cross-file `@ObservedV2` classes
 - [ ] `@Trace` per property (mutated + rendered property without `@Trace`); evaluate on the bench's trace items (same-file rule done, rendered properties only)
 - [x] `@Observed` / `@ObjectLink` recognition across files
-- [x] R2-d event unwired (`unwiredCallbacks` in `analysis.ts`; the engine reports it without a judge call). In the plugin the call sites come from `searchCallSites`; a check that asks about more than 8 structs uses the shared scan
+- [x] R2-d event unwired (`unwiredCallbacks` in `src/rules/R2.ts`; the engine reports it without a judge call). In the plugin the call sites come from `searchCallSites`; a check that asks about more than 8 structs uses the shared scan
 - [ ] R2-f multiple parents
 
 #### Phase 4: R2 with intent

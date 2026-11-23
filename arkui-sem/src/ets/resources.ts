@@ -1,5 +1,5 @@
 // Listeners, subscriptions and timers a component acquires in lifecycle hooks, and whether its teardown releases them.
-import type { ResourceFact } from '../analysis.js';
+import type { ResourceFact } from '../facts.js';
 import type { MethodScan } from './component.js';
 import { ACQUIRE_HOOKS, LIFECYCLE, RELEASE_HOOKS } from './lifecycle.js';
 import { ts } from './parse.js';

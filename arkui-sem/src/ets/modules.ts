@@ -1,5 +1,5 @@
 // Imports and exports that link a file to others.
-import type { FileFacts, ImportFact, ReexportFact } from '../analysis.js';
+import type { FileFacts, ImportFact, ReexportFact } from '../facts.js';
 import { ts } from './parse.js';
 import { hasModifier } from './syntax.js';
 

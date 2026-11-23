@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { candidates } from '../src/analysis.js';
 import { EtsExtractor } from '../src/ets/extract.js';
+import { candidates } from '../src/rules/index.js';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const FIXTURE = join(ROOT, 'test', 'fixtures', 'project');

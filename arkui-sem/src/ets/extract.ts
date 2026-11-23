@@ -26,13 +26,14 @@ export class EtsExtractor implements FactExtractor {
     );
     const names: BuilderNames = {
       methods: new Set(),
-      functions: new Set([...builderFunctions.map((f) => f.name.text), ...links.imports.map((i) => i.local)]),
+      functions: new Set(builderFunctions.map((f) => f.name.text)),
+      imports: new Set(links.imports.map((i) => i.local)),
     };
     const components: ComponentFact[] = [];
     const types: Record<string, TypeFact> = {};
     const visit = (n: ts.Node) => {
       if (ts.isStructDeclaration(n)) {
-        const c = component(n, scan, names.functions);
+        const c = component(n, scan, names);
         if (c) {
           components.push(c);
         }

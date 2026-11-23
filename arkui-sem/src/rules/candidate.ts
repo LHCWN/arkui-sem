@@ -5,16 +5,16 @@ export type RuleId = 'R1' | 'R2' | 'R3';
 
 /** A candidate of each kind, keyed by kind: the facts its rule found. */
 export type Candidate =
-  | FieldCandidate<'R1', 'undecorated-mutated-rendered'> // plain member written after init and read in build()
+  | FieldCandidateBase<'R1', 'undecorated-mutated-rendered'> // plain member written after init and read in build()
   | NestedWriteCandidate
-  | FieldCandidate<'R2', 'ownership-intent'> // passed-in field; candidates() does not emit it (callers build it)
+  | FieldCandidateBase<'R2', 'ownership-intent'> // passed-in field; candidates() does not emit it (callers build it)
   | EventUnwiredCandidate
   | ResourceCandidate;
 
 export type CandidateKind = Candidate['kind'];
 export type CandidateOf<K extends CandidateKind> = Extract<Candidate, { kind: K }>;
-/** The candidates about one field of the component: every kind but R3's. */
-export type FieldCandidates = Extract<Candidate, { field: FieldFact }>;
+/** A candidate about one field of the component: every kind but R3's. */
+export type FieldCandidate = Extract<Candidate, { field: FieldFact }>;
 
 interface CandidateBase<R extends RuleId, K extends string> {
   rule: R;
@@ -26,12 +26,12 @@ interface CandidateBase<R extends RuleId, K extends string> {
   fingerprint: string;
 }
 
-interface FieldCandidate<R extends RuleId, K extends string> extends CandidateBase<R, K> {
+interface FieldCandidateBase<R extends RuleId, K extends string> extends CandidateBase<R, K> {
   field: FieldFact;
 }
 
 /** R1: in-place writes deeper than the state decorator observes. */
-export interface NestedWriteCandidate extends FieldCandidate<'R1', 'nested-write-unobserved'> {
+export interface NestedWriteCandidate extends FieldCandidateBase<'R1', 'nested-write-unobserved'> {
   /** Every unobserved write, in source order. */
   writes: WriteFact[];
   /** V2: why V2 misses the writes, one entry per distinct gap. */
@@ -39,7 +39,7 @@ export interface NestedWriteCandidate extends FieldCandidate<'R1', 'nested-write
 }
 
 /** R2: a callback the component calls and its call sites don't pass (unwiredCallbacks). */
-export interface EventUnwiredCandidate extends FieldCandidate<'R2', 'event-unwired'> {
+export interface EventUnwiredCandidate extends FieldCandidateBase<'R2', 'event-unwired'> {
   unwired: Unwired;
 }
 

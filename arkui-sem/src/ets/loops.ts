@@ -1,15 +1,16 @@
 // ForEach and LazyForEach calls, and what rows and builders do with the values they are given.
-import type { BuilderFact, LoopFact, LoopKey, LoopSource, PathSegment, ValueUses } from '../facts.js';
-import { climb } from './callbacks.js';
+import type { BuilderFact, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
+import { climb, isHandler } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
-import { argumentOf, isFunction, isWrapper, memberName, thisMember, unwrap } from './syntax.js';
+import { argumentOf, isFunction, isWrapper, memberName, pathBelow, thisMember, unwrap } from './syntax.js';
 
-/** The names a value can be passed to as a builder: the component's builder methods (`this.B(…)`), and the file's
- *  builder functions and imported names (`B(…)`). */
+/** The names a value can be passed to as a builder: the component's builder methods (`this.B(…)`), the file's builder
+ *  functions, and imported names, which may be builders (`B(…)`). */
 export interface BuilderNames {
   methods: Set<string>;
   functions: Set<string>;
+  imports: Set<string>;
 }
 
 /** What the component's fields and helpers are, for a loop's source. */
@@ -17,9 +18,11 @@ export interface Members {
   fields: Set<string>;
   /** A method called as `this.m(…)`, or a getter read as `this.g`. */
   isHelper(name: string, called: boolean): boolean;
-  /** The fields a method or getter reads, through the helpers it uses outside handlers, transitively. */
+  /** The fields a method or getter accesses outside handlers, through the helpers it uses there, transitively. */
   fieldsOf(name: string): string[];
 }
+
+const COMPONENT_NAME = /^[A-Z]/;
 
 type FunctionNode = ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | ts.MethodDeclaration;
 
@@ -137,7 +140,7 @@ function loopKey(
   itemDeclaresIndex: boolean,
   scan: FileScan,
 ): LoopKey {
-  if (!generator) {
+  if (!generator || isNullish(unwrap(generator))) {
     return { kind: 'default', withIndex: true };
   }
   const text = scan.text(generator);
@@ -152,11 +155,11 @@ function loopKey(
   let readsIndex = false;
   const props = new Set<string>();
   const visit = (n: ts.Node) => {
-    if (ts.isIdentifier(n) && isReference(n)) {
+    if (ts.isIdentifier(n) && isReference(n) && !climb(n, fn.body).functions.some((f) => shadows(f, n.text))) {
       if (n.text === index) {
         readsIndex = true;
       } else if (n.text === item) {
-        const { top, path } = pathBelow(n, scan);
+        const { top, path } = pathBelow(n, scan.sf, isWrapper);
         const [first] = path;
         const called = ts.isCallExpression(top.parent) && top.parent.expression === top;
         if (first === undefined) {
@@ -201,7 +204,8 @@ export function valueUses(name: string, body: ts.Node, scan: FileScan, names: Bu
   const visit = (n: ts.Node) => {
     if (ts.isIdentifier(n) && n.text === name && isReference(n)) {
       const where = climb(n, body);
-      if (!where.inHandler && !where.functions.some((f) => declares(f, name))) {
+      const handler = where.functions.some((f) => isHandler(f) && !passesBuilder(f, names));
+      if (!handler && !where.functions.some((f) => shadows(f, name))) {
         recordUse(n, where.attribute, scan, names, out);
       }
     }
@@ -219,59 +223,68 @@ function recordUse(
   out: ValueUses,
 ) {
   const line = scan.line(id);
-  const { top, path } = pathBelow(id, scan);
+  const { top, path } = pathBelow(id, scan.sf, isWrapper);
+  const at = attribute === undefined ? {} : { attribute };
   const call = argumentOf(top);
   if (call) {
     const callee = call.expression;
     const argument = call.arguments.indexOf(top);
     const method = thisMember(callee);
     if (method !== undefined && names.methods.has(method)) {
-      out.builders.push({ line, builder: method, method: true, argument, path });
+      out.builders.push({ line, builder: method, method: true, argument, path, ...at });
       return;
     }
-    if (ts.isIdentifier(callee) && names.functions.has(callee.text)) {
-      out.builders.push({ line, builder: callee.text, method: false, argument, path });
+    if (ts.isIdentifier(callee) && (names.functions.has(callee.text) || names.imports.has(callee.text))) {
+      out.builders.push({ line, builder: callee.text, method: false, argument, path, ...at });
       return;
     }
   }
-  const child = childArgument(top);
+  const child = childArgument(top, names);
   if (child) {
-    out.children.push({ line, ...child, path });
+    out.children.push({ line, ...child, path, ...at });
     return;
   }
-  out.reads.push({ line, path, ...(attribute === undefined ? {} : { attribute }) });
+  out.reads.push({ line, path, ...at });
 }
 
-/** `Child({ field: e })` or `Child({ e })` with e the expression: the child and the field it initializes. */
-function childArgument(e: ts.Expression): { child: string; field: string } | undefined {
+/** A callback property that draws by calling a builder: `Child({ content: () => { this.B(item) } })` fills a
+ *  @BuilderParam. */
+function passesBuilder(fn: ts.Node, names: BuilderNames): boolean {
+  if (!ts.isPropertyAssignment(fn.parent)) {
+    return false;
+  }
+  const visit = (n: ts.Node): boolean => {
+    if (ts.isCallExpression(n)) {
+      const method = thisMember(n.expression);
+      if (
+        (method !== undefined && names.methods.has(method)) ||
+        (ts.isIdentifier(n.expression) && names.functions.has(n.expression.text))
+      ) {
+        return true;
+      }
+    }
+    return ts.forEachChild(n, visit) === true;
+  };
+  return ts.forEachChild(fn, visit) === true;
+}
+
+/** `Child({ field: e })` or `Child({ e })` with e the expression: the child and the field it initializes. A component
+ *  is capitalized; a builder function taking an object is no child. */
+function childArgument(e: ts.Expression, names: BuilderNames): { child: string; field: string } | undefined {
   const prop = e.parent;
   const field =
     ts.isShorthandPropertyAssignment(prop) || (ts.isPropertyAssignment(prop) && prop.initializer === e)
       ? memberName(prop.name)
       : undefined;
   const options = prop.parent;
-  const call = field !== undefined && ts.isObjectLiteralExpression(options) ? argumentOf(options) : undefined;
-  return call && call.arguments[0] === options && ts.isIdentifier(call.expression) && field !== undefined
-    ? { child: call.expression.text, field }
-    : undefined;
-}
-
-/** The property and index path below an expression, through `!`, parentheses and casts, and the outermost access. */
-function pathBelow(e: ts.Expression, scan: FileScan): { top: ts.Expression; path: PathSegment[] } {
-  const path: PathSegment[] = [];
-  let top = e;
-  for (;;) {
-    const p = top.parent;
-    if (ts.isPropertyAccessExpression(p) && p.expression === top) {
-      path.push(p.questionDotToken ? { prop: p.name.text, optional: true } : { prop: p.name.text });
-    } else if (ts.isElementAccessExpression(p) && p.expression === top) {
-      const index = scan.text(p.argumentExpression);
-      path.push(p.questionDotToken ? { index, optional: true } : { index });
-    } else if (!(isWrapper(p) && p.expression === top)) {
-      return { top, path };
-    }
-    top = p;
+  if (field === undefined || !ts.isObjectLiteralExpression(options)) {
+    return undefined;
   }
+  const call = argumentOf(options);
+  const callee = call?.arguments[0] === options ? call.expression : undefined;
+  return callee && ts.isIdentifier(callee) && COMPONENT_NAME.test(callee.text) && !names.functions.has(callee.text)
+    ? { child: callee.text, field }
+    : undefined;
 }
 
 /** An identifier that refers to a variable: not a property name, a declared name or a parameter. */
@@ -280,18 +293,22 @@ function isReference(id: ts.Identifier): boolean {
   return !(
     ((ts.isPropertyAccessExpression(p) || ts.isPropertyAssignment(p)) && p.name === id) ||
     ((ts.isParameter(p) || ts.isVariableDeclaration(p) || ts.isBindingElement(p)) && p.name === id) ||
-    (isFunction(p) && p.name === id)
+    ((isFunction(p) || ts.isMethodDeclaration(p) || ts.isGetAccessor(p) || ts.isSetAccessor(p)) && p.name === id)
   );
 }
 
 /** A function declares `name` as a parameter, which hides an outer variable of that name. */
-function declares(fn: ts.Node, name: string): boolean {
+function shadows(fn: ts.Node, name: string): boolean {
   return isFunction(fn) && fn.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === name);
 }
 
 function paramName(fn: ts.SignatureDeclarationBase, i: number): string | undefined {
   const p = fn.parameters[i];
   return p && ts.isIdentifier(p.name) ? p.name.text : undefined;
+}
+
+function isNullish(e: ts.Expression): boolean {
+  return e.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(e) && e.text === 'undefined');
 }
 
 function noUses(): ValueUses {

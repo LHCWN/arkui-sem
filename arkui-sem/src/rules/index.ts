@@ -8,7 +8,7 @@ export type {
   Candidate,
   CandidateKind,
   CandidateOf,
-  FieldCandidates,
+  FieldCandidate,
   RuleId,
   UnsetEffect,
   Unwired,

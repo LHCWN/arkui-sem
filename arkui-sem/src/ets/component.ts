@@ -22,6 +22,7 @@ import {
   isAssignment,
   isFunction,
   memberName,
+  pathBelow,
   thisMember,
   unwrap,
 } from './syntax.js';
@@ -66,8 +67,12 @@ export interface MethodScan {
   calls: ts.CallExpression[];
 }
 
-/** functions: the file's builder functions and imported names, which a row may call as builders. */
-export function component(s: ts.StructDeclaration, scan: FileScan, functions: Set<string>): ComponentFact | undefined {
+/** fileNames: the file's builder functions and imported names, which a row may call as builders. */
+export function component(
+  s: ts.StructDeclaration,
+  scan: FileScan,
+  fileNames: Omit<BuilderNames, 'methods'>,
+): ComponentFact | undefined {
   const decorators = decoratorNames(s);
   if (!s.name || !COMPONENT_DECORATORS.some((d) => decorators.includes(d))) {
     return undefined;
@@ -96,8 +101,8 @@ export function component(s: ts.StructDeclaration, scan: FileScan, functions: Se
       ts.isMethodDeclaration(m) && decoratorNames(m).some((d) => UI_BUILDERS.has(d)),
   );
   const builderNames: BuilderNames = {
+    ...fileNames,
     methods: new Set(builderMethods.flatMap((m) => memberName(m.name) ?? [])),
-    functions,
   };
   const members = membersOf(scans, byName);
   return {
@@ -127,7 +132,9 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>): Members
     for (let m = todo.pop(); m !== undefined; m = todo.pop()) {
       const walk = byName.get(m);
       for (const a of walk?.accesses ?? []) {
-        out.add(a.name.text);
+        if (walk && !climb(a, walk.method.body).inHandler) {
+          out.add(a.name.text);
+        }
       }
       for (const u of walk?.uses ?? []) {
         if (!u.inHandler && isHelper(u.name, u.called) && !seen.has(u.name)) {
@@ -336,20 +343,7 @@ interface AccessContext {
 
 /** One `this.<field>…` access: the path below the field, then whether it writes (assignment, update, mutating call). */
 function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: AccessContext) {
-  const segments: PathSegment[] = [];
-  let top: ts.Expression = base;
-  for (;;) {
-    const p = top.parent;
-    if (ts.isPropertyAccessExpression(p) && p.expression === top) {
-      segments.push(p.questionDotToken ? { prop: p.name.text, optional: true } : { prop: p.name.text });
-    } else if (ts.isElementAccessExpression(p) && p.expression === top) {
-      const index = ctx.scan.text(p.argumentExpression);
-      segments.push(p.questionDotToken ? { index, optional: true } : { index });
-    } else if (!(ts.isNonNullExpression(p) && p.expression === top)) {
-      break;
-    }
-    top = p;
-  }
+  const { top, path: segments } = pathBelow(base, ctx.scan.sf, ts.isNonNullExpression);
   const parent = top.parent;
   const last = segments.at(-1);
   const called = ts.isCallExpression(parent) && parent.expression === top;

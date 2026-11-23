@@ -1,5 +1,5 @@
-// When a function written inside a component method runs: later (a deferred callback), on an event (a handler), or while
-// build() describes the UI. A denylist: a function no rule here names counts as running while the UI is described.
+// When a function in a component method runs (later, on an event, or while build() describes the UI), and where an
+// access sits (climb). A denylist: a function no rule here names counts as running while the UI is described.
 import type { BuildRead } from '../facts.js';
 import { ts } from './parse.js';
 import { argumentOf, calleeName, isFunction, memberName, onComponent } from './syntax.js';

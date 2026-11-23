@@ -67,6 +67,11 @@ describe('loop source', () => {
     assert.deepEqual(source('this.all', members), { text: 'this.all', shape: 'call', fields: ['songs'] });
   });
 
+  test("a helper's accesses in its handlers are left out", () => {
+    const members = '  list(): Song[] { setTimeout(() => { this.shelf++ }, 1)\n    return this.songs }';
+    assert.deepEqual(source('this.list()', members).fields, ['songs']);
+  });
+
   test('a new expression, and an expression that reads no field', () => {
     assert.equal(source('new SongSource(this.songs)').shape, 'new');
     assert.deepEqual(source('SHELVES[0]'), { text: 'SHELVES[0]', shape: 'other', fields: [] });
@@ -95,6 +100,14 @@ describe('loop key', () => {
     assert.equal(key(row, '(s: Song) => JSON.stringify(s)').kind, 'whole');
     assert.equal(key(row, '(s: Song) => s.toString()').kind, 'other');
     assert.equal(key(row, 'keyOf').kind, 'other');
+  });
+
+  test('block bodies, function expressions, shadowing, and an explicit undefined or null', () => {
+    assert.deepEqual(key(row, 'function (s: Song): string { const k = s.id; return k + "" }').props, ['id']);
+    assert.equal(key(row, '(s: Song) => { const f = (s: number) => s; return f(1) + "" }').kind, 'other');
+    assert.equal(key(row, '(s: Song) => JSON.stringify({ s() { return 1 } })').kind, 'other');
+    assert.deepEqual(key(row, 'undefined'), { kind: 'default', withIndex: true });
+    assert.deepEqual(key(row, 'null'), { kind: 'default', withIndex: true });
   });
 
   test('the index joins the key when the row declares it and the key generator does not', () => {
@@ -270,6 +283,39 @@ struct SongRow {
         ['.artist', 'inline'],
         ['.title', 'inline'],
       ],
+    );
+  });
+
+  test('the attribute holding a pass is kept when its target is not found; a lowercase call is no child', () => {
+    const facts = extract(
+      page(
+        '',
+        "      ForEach(this.songs, (s: Song) => { Text('a').width(calc(s.id)).opacity(fmt({ v: s.liked })) })",
+        `import { calc } from './calc'\n${HEAD}`,
+      ),
+    );
+    const [loop] = facts.components[1].loops;
+    assert.deepEqual(loop.row.children, []);
+    assert.deepEqual(
+      reads(facts).map((r) => [pathText(r.path), r.attribute]),
+      [
+        ['.liked', 'opacity'],
+        ['.id', 'width'],
+      ],
+    );
+  });
+
+  test('a builder called in a closure that fills a @BuilderParam draws the row', () => {
+    const facts = extract(
+      page(
+        '  @Builder Card(s: Song) { Text(s.title) }',
+        '      ForEach(this.songs, (s: Song) => { Sheet({ content: () => { this.Card(s) }, onClose: () => { s.liked = false } }) })',
+        HEAD,
+      ),
+    );
+    assert.deepEqual(
+      reads(facts).map((r) => [pathText(r.path), r.via]),
+      [['.title', { kind: 'builder', name: 'Card' }]],
     );
   });
 

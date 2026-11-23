@@ -26,7 +26,7 @@ import {
   typeClass,
   typeKind,
 } from './queries.js';
-import type { Candidate, CandidateKind, FieldCandidates } from './rules/index.js';
+import type { Candidate, CandidateKind, FieldCandidate } from './rules/index.js';
 
 // --- System One interface, Jev, Clef ---
 
@@ -338,7 +338,7 @@ function excerpt(facts: FileFacts, line: number): string {
 }
 
 /** Function-typed fields of the component that it invokes as this.name(...): the callbacks the child calls back on. */
-function invokedCallbacks(c: FieldCandidates): string[] {
+function invokedCallbacks(c: FieldCandidate): string[] {
   return c.component.fields
     .filter((f) => f.name !== c.field.name && f.calls.length > 0 && f.typeRef !== undefined && holdsFunction(f.typeRef))
     .map((f) => `${f.name}: ${f.type}`)

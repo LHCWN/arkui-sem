@@ -148,7 +148,8 @@ export interface LoopSource {
   shape: 'field' | 'derived' | 'call' | 'new' | 'other';
   /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`). */
   root?: string;
-  /** The component's fields the source reads, through the methods and getters it calls, transitively. */
+  /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
+   *  transitively. */
   fields: string[];
 }
 
@@ -195,6 +196,8 @@ export interface BuilderPass {
   argument: number;
   /** The path below the value that is passed. */
   path: PathSegment[];
+  /** As for BuildRead: kept for a builder that can't be found, whose pass then counts as a read. */
+  attribute?: string;
 }
 
 export interface ChildPass {
@@ -204,6 +207,8 @@ export interface ChildPass {
   field: string;
   /** The path below the value that is passed. */
   path: PathSegment[];
+  /** As for BuilderPass. */
+  attribute?: string;
 }
 
 /** A @Builder or @LocalBuilder method, or a file-level @Builder function. */

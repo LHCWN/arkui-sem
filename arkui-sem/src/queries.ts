@@ -79,11 +79,11 @@ function valueReads(
     const found = builderOf(pass.builder, pass.method, scope, resolver);
     const param = found?.builder.params[pass.argument];
     if (!found || !param) {
-      read(pass.line, pass.path);
+      read(pass.line, pass.path, pass.attribute);
       continue;
     }
     // A builder that passes the value back to itself adds nothing more.
-    const key = `${found.scope.facts.file}#${found.builder.name}`;
+    const key = `${found.scope.facts.file}#${pass.method ? 'this.' : ''}${found.builder.name}`;
     if (!seen.has(key)) {
       const next: RowRead['via'] = via.kind === 'inline' ? { kind: 'builder', name: pass.builder } : via;
       out.push(
@@ -95,7 +95,7 @@ function valueReads(
     const decl = declarationOf(pass.child, scope.facts, resolver);
     const field = decl?.facts.components.find((c) => c.name === decl.name)?.fields.find((f) => f.name === pass.field);
     if (!decl || !field) {
-      read(pass.line, pass.path);
+      read(pass.line, pass.path, pass.attribute);
       continue;
     }
     for (const r of renderingReads(field)) {

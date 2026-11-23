@@ -394,29 +394,7 @@ interface Checked {
 
 /** Exported for callers that build candidates themselves (R2 ownership) and for tests. */
 export function toFinding(c: Candidate, p: number | null, band: Band, backend: string): Finding {
-  return described(c.kind, c, p, band, backend);
-}
-
-type Decision = { facts: Band } | { facts?: undefined; judge: { questions: Questions; violation: string } };
-
-/** How c becomes a finding: the band when the facts decide, else what to ask the judge. */
-function pathOf<K extends CandidateKind>(kind: K, c: CandidateOf<K>): Decision {
-  const path: KindPath<CandidateOf<K>> = KINDS[kind].path;
-  if ('facts' in path) {
-    return { facts: typeof path.facts === 'function' ? path.facts(c) : path.facts };
-  }
-  return path;
-}
-
-/** kind is c's own: indexing KINDS with it gives the spec for c's type. */
-function described<K extends CandidateKind>(
-  kind: K,
-  c: CandidateOf<K>,
-  p: number | null,
-  band: Band,
-  backend: string,
-): Finding {
-  const spec: KindSpec<CandidateOf<K>> = KINDS[kind];
+  const spec = specOf(c.kind);
   return {
     fingerprint: c.fingerprint,
     rule: c.rule,
@@ -430,6 +408,11 @@ function described<K extends CandidateKind>(
     ...spec.describe(c),
     ...(spec.related ? { related: spec.related(c) } : {}),
   };
+}
+
+/** The spec of a kind, typed for that kind's candidates. */
+function specOf<K extends CandidateKind>(kind: K): KindSpec<CandidateOf<K>> {
+  return KINDS[kind];
 }
 
 export async function checkFiles(
@@ -475,9 +458,9 @@ export async function checkFiles(
   );
 
   const decide = async ({ facts, c }: Checked) => {
-    const path = pathOf(c.kind, c);
-    if (path.facts !== undefined) {
-      findings.push(toFinding(c, null, path.facts, FACTS));
+    const { path } = specOf(c.kind);
+    if ('facts' in path) {
+      findings.push(toFinding(c, null, typeof path.facts === 'function' ? path.facts(c) : path.facts, FACTS));
       return;
     }
     const { questions, violation } = path.judge;

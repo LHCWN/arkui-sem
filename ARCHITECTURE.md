@@ -50,7 +50,10 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/ets/extract.ts   fact extractor on the syntax tree (single file, no type checker): file visit, imports, types
   src/ets/component.ts a component: fields, one walk per method for reads, writes and their context, reachability,
                        the methods that draw the UI (build(), @Builders and the helpers they call)
-  src/ets/callbacks.ts when a function in a method runs: deferred, on an event (a handler), or while drawing
+  src/ets/callbacks.ts when a function in a method runs: deferred, on an event (a handler), or while drawing;
+                       where an access sits (climb: handler, loop, attribute)
+  src/ets/loops.ts     loop facts (ForEach/LazyForEach: source, key, what the row does with the item) and builder
+                       facts (what each @Builder parameter is read for, passed to a builder or to a child)
   src/ets/resources.ts R3 facts: listeners, subscriptions, timers and their release
   src/ets/uses.ts      where a file instantiates components: parent, method, arguments and how each is written
   src/ets/types.ts     type annotations → TypeRef, object literals, per-type records (classes, interfaces, aliases)

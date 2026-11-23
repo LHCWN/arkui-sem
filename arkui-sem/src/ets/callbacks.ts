@@ -1,7 +1,8 @@
 // When a function written inside a component method runs: later (a deferred callback), on an event (a handler), or while
 // build() describes the UI. A denylist: a function no rule here names counts as running while the UI is described.
+import type { BuildRead } from '../facts.js';
 import { ts } from './parse.js';
-import { argumentOf, calleeName, memberName } from './syntax.js';
+import { argumentOf, calleeName, isFunction, memberName, onComponent } from './syntax.js';
 
 /** Calls whose function arguments run later, after the calling code has returned. */
 const DEFERRING_CALLS = new Set(['then', 'catch', 'finally', 'setTimeout', 'setInterval', 'on', 'subscribe']);
@@ -11,6 +12,7 @@ const ANIMATIONS = new Set(['animateTo', 'animateToImmediately']);
 const EVENT_NAME = /^on[A-Z]/;
 /** Event callbacks that return UI: `onDragStart` may return the builder of the drag preview. */
 const DRAWING_EVENTS = new Set(['onDragStart']);
+const LOOPS = new Set(['ForEach', 'LazyForEach', 'Repeat']);
 const BUILTIN_FUNCTIONS = new Set([
   'String',
   'Number',
@@ -76,4 +78,42 @@ function describesUi(fn: ts.Node): boolean {
 /** Components are capitalized by ArkUI convention; the JS built-ins called as functions are not components. */
 function isComponentName(e: ts.Expression): boolean {
   return ts.isIdentifier(e) && /^[A-Z]/.test(e.text) && !BUILTIN_FUNCTIONS.has(e.text);
+}
+
+/** What lies between an access and its method's body: the functions holding it (innermost first), whether one of them is
+ *  passed to a deferring call, the nearest attribute call holding it (not through a callback such as an event handler),
+ *  whether a loop holds it, and whether one of the functions is a handler. */
+export function climb(
+  node: ts.Node,
+  body: ts.Node,
+): Pick<BuildRead, 'attribute' | 'inForEach' | 'inHandler'> & { functions: ts.Node[]; deferringCall: boolean } {
+  const functions: ts.Node[] = [];
+  let deferringCall = false;
+  let inHandler = false;
+  let attribute: string | undefined;
+  let inForEach = false;
+  for (let n: ts.Node = node; n !== body && n.parent; n = n.parent) {
+    const call = argumentOf(n);
+    if (isFunction(n)) {
+      functions.push(n);
+      deferringCall ||= defers(n);
+      inHandler ||= isHandler(n);
+    }
+    if (!call) {
+      continue;
+    }
+    const callee = call.expression;
+    if (
+      attribute === undefined &&
+      functions.length === 0 &&
+      ts.isPropertyAccessExpression(callee) &&
+      onComponent(callee)
+    ) {
+      attribute = callee.name.text;
+    }
+    if (ts.isIdentifier(callee) && LOOPS.has(callee.text)) {
+      inForEach = true;
+    }
+  }
+  return { functions, deferringCall, attribute, inForEach, inHandler };
 }

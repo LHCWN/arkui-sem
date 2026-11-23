@@ -9,20 +9,19 @@ import type {
   WriteContext,
   WriteFact,
 } from '../facts.js';
-import { defers, isHandler } from './callbacks.js';
+import { climb } from './callbacks.js';
 import { LIFECYCLE } from './lifecycle.js';
+import { type BuilderNames, builderFact, loopsIn, type Members } from './loops.js';
 import { ts } from './parse.js';
 import { resources } from './resources.js';
 import type { FileScan } from './scan.js';
 import {
-  argumentOf,
   decoratorNames,
   expressionName,
   hasModifier,
   isAssignment,
   isFunction,
   memberName,
-  onComponent,
   thisMember,
   unwrap,
 } from './syntax.js';
@@ -46,7 +45,6 @@ const MUTATING_CALLS = new Set([
 ]);
 const CLOCKS = new Set(['Date.now', 'performance.now']);
 const TIMERS = new Set(['setTimeout', 'setInterval']);
-const LOOPS = new Set(['ForEach', 'LazyForEach', 'Repeat']);
 const UI_BUILDERS = new Set(['@Builder', '@LocalBuilder']);
 
 /** Code the component runs: a method, a getter, or a field holding a function (a handler, `onTap = () => { … }`). */
@@ -68,7 +66,8 @@ export interface MethodScan {
   calls: ts.CallExpression[];
 }
 
-export function component(s: ts.StructDeclaration, scan: FileScan): ComponentFact | undefined {
+/** functions: the file's builder functions and imported names, which a row may call as builders. */
+export function component(s: ts.StructDeclaration, scan: FileScan, functions: Set<string>): ComponentFact | undefined {
   const decorators = decoratorNames(s);
   if (!s.name || !COMPONENT_DECORATORS.some((d) => decorators.includes(d))) {
     return undefined;
@@ -92,6 +91,15 @@ export function component(s: ts.StructDeclaration, scan: FileScan): ComponentFac
       w.external = external.has(w.method);
     }
   }
+  const builderMethods = s.members.filter(
+    (m): m is ts.MethodDeclaration & { name: ts.PropertyName } =>
+      ts.isMethodDeclaration(m) && decoratorNames(m).some((d) => UI_BUILDERS.has(d)),
+  );
+  const builderNames: BuilderNames = {
+    methods: new Set(builderMethods.flatMap((m) => memberName(m.name) ?? [])),
+    functions,
+  };
+  const members = membersOf(scans, byName);
   return {
     name: s.name.text,
     file: scan.file,
@@ -100,7 +108,37 @@ export function component(s: ts.StructDeclaration, scan: FileScan): ComponentFac
     version: decorators.includes('@ComponentV2') ? 'V2' : 'V1',
     fields,
     resources: resources(scans, scan),
+    loops: methods.filter((m) => drawing.has(m)).flatMap((m) => loopsIn(m.name, m.body, scan, builderNames, members)),
+    builders: builderMethods.flatMap((m) => {
+      const name = memberName(m.name);
+      return name === undefined ? [] : [builderFact(name, m, scan, builderNames)];
+    }),
   };
+}
+
+/** The component's fields and helpers, and the fields each helper reads through the helpers it uses. */
+function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>): Members {
+  const byName = new Map(scans.map((s) => [s.method.name, s]));
+  const isHelper = (name: string, called: boolean) => byName.get(name)?.method.kind === (called ? 'method' : 'getter');
+  const fieldsOf = (name: string): string[] => {
+    const out = new Set<string>();
+    const seen = new Set([name]);
+    const todo = [name];
+    for (let m = todo.pop(); m !== undefined; m = todo.pop()) {
+      const walk = byName.get(m);
+      for (const a of walk?.accesses ?? []) {
+        out.add(a.name.text);
+      }
+      for (const u of walk?.uses ?? []) {
+        if (!u.inHandler && isHelper(u.name, u.called) && !seen.has(u.name)) {
+          seen.add(u.name);
+          todo.push(u.name);
+        }
+      }
+    }
+    return [...out];
+  };
+  return { fields: new Set(fields.keys()), isHelper, fieldsOf };
 }
 
 export function methodsOf(s: ts.StructDeclaration): Method[] {
@@ -372,44 +410,6 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     disabledRules: ctx.scan.disabledAt(line),
   };
   field.writes.push(write);
-}
-
-/** What lies between an access and its method's body: the functions holding it (innermost first), whether one of them is
- *  passed to a deferring call, the nearest attribute call holding it (not through a callback such as an event handler),
- *  whether a loop holds it, and whether one of the functions is a handler. */
-function climb(
-  node: ts.Node,
-  body: ts.Node,
-): Pick<BuildRead, 'attribute' | 'inForEach' | 'inHandler'> & { functions: ts.Node[]; deferringCall: boolean } {
-  const functions: ts.Node[] = [];
-  let deferringCall = false;
-  let inHandler = false;
-  let attribute: string | undefined;
-  let inForEach = false;
-  for (let n: ts.Node = node; n !== body && n.parent; n = n.parent) {
-    const call = argumentOf(n);
-    if (isFunction(n)) {
-      functions.push(n);
-      deferringCall ||= defers(n);
-      inHandler ||= isHandler(n);
-    }
-    if (!call) {
-      continue;
-    }
-    const callee = call.expression;
-    if (
-      attribute === undefined &&
-      functions.length === 0 &&
-      ts.isPropertyAccessExpression(callee) &&
-      onComponent(callee)
-    ) {
-      attribute = callee.name.text;
-    }
-    if (ts.isIdentifier(callee) && LOOPS.has(callee.text)) {
-      inForEach = true;
-    }
-  }
-  return { functions, deferringCall, attribute, inForEach, inHandler };
 }
 
 /** The assignment's new value depends on the field's old one: `+=` and the like, or `this.f = g(this.f)`. */

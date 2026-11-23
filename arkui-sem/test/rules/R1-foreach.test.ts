@@ -171,6 +171,20 @@ struct SongRow {
     assert.deepEqual(stale(unknown), []);
   });
 
+  test('a nested change: stale only where the row reads it, named by its path', async () => {
+    const retitle =
+      "  retitle(i: number) {\n    this.songs[i] = { ...this.songs[i], album: { ...this.songs[i].album, title: 'x' } }\n  }";
+    assert.deepEqual(stale(playlist(retitle, { row: 'Text(s.album.year)' })), []);
+    const src = playlist(retitle, { row: 'Row() { Text(s.album.title); Text(s.album.year) }' });
+    assert.deepEqual(
+      stale(src).map((c) => c.rebuilds.map((r) => r.stale)),
+      [[['album.title']]],
+    );
+    const [f] = (await findingsOf(src)).filter((x) => x.kind === 'foreach-key-stale');
+    assert.match(f.evidence, /still shows the old album\.title/);
+    assert.match(f.fix, /e\.g\. \(s\) => `\$\{s\.id\}-\$\{s\.album\.title\}`/);
+  });
+
   test('a new instance under the key: the key property the row shows is not stale', () => {
     const src = playlist('  reset(i: number) {\n    this.songs[i] = new SongItem(this.songs[i].id)\n  }', {
       row: 'Row() { Text(`#${s.id}`); Text(s.title) }',
@@ -361,5 +375,14 @@ struct Board {
 }`;
     const [f] = (await findingsOf(src)).filter((x) => x.kind === 'nested-write-unobserved');
     assert.match(f.fix, /^change it at the first layer instead/);
+  });
+
+  test('a write two properties below the element: the example key holds the whole path', async () => {
+    const src = playlist('  rate(i: number) {\n    this.songs[i].album.year++\n  }', {
+      row: 'Text(`${s.album.year}`)',
+    });
+    const [f] = (await findingsOf(src)).filter((x) => x.kind === 'nested-write-unobserved');
+    assert.match(f.fix, /\{ \.\.\.old, album: … \}/);
+    assert.match(f.fix, /e\.g\. \(s\) => `\$\{s\.id\}-\$\{s\.album\.year\}`/);
   });
 });

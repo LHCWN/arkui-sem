@@ -61,7 +61,8 @@ export interface RebuiltElement {
   value: 'object-literal' | 'new';
   /** Properties that keep the element's value: `p: e.p`, or `p: X` under a guard `e.p === X`. */
   kept: string[];
-  /** The other properties the literal sets. */
+  /** What else the literal sets, as paths below the element: `liked`, or `cell.title` for a nested literal over the
+   *  element's own property (`cell: { ...e.cell, title: … }`). */
   changed: string[];
   /** The literal spreads the element (`{ ...e, … }`, `Object.assign({}, e, …)`): properties it doesn't set are kept. */
   keepsRest: boolean;

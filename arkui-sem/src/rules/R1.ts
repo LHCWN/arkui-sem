@@ -400,13 +400,13 @@ function keyStaleCandidates(
       continue;
     }
     const reads = rowReads(loop, component, facts, resolver);
-    const rendered = new Set(reads.flatMap((read) => firstProp(read.path) ?? []));
+    const rendered = new Set(reads.flatMap((read) => propPath(read.path) ?? []));
     // A key property is the same under a kept key; a filtered one moves the element instead of leaving it stale.
     const fixed = new Set([...(loop.key.props ?? []), ...(loop.source.filteredBy ?? [])]);
     const rebuilds: KeyStaleRebuild[] = writes.flatMap((write) =>
       (write.rebuilt ?? []).flatMap((element) => {
         const stale = keepsKey(element, loop.key)
-          ? [...rendered].filter((prop) => !keeps(element, prop) && !fixed.has(prop))
+          ? [...rendered].filter((path) => !fixed.has(path.split('.')[0]) && changes(element, path))
           : [];
         return stale.length ? [{ write, element, stale }] : [];
       }),
@@ -425,7 +425,7 @@ function keyStaleCandidates(
       loop,
       rebuilds,
       opaque: rebuilds.every((rebuild) => rebuild.element.value === 'new'),
-      staleReads: reads.filter((read) => stale.has(firstProp(read.path) ?? '')),
+      staleReads: reads.filter((read) => stale.has(propPath(read.path) ?? '')),
       statefulRow: rowHoldsState(loop, component, facts, resolver),
       fingerprint: fingerprint(
         facts.file,
@@ -437,9 +437,11 @@ function keyStaleCandidates(
   return out;
 }
 
-function firstProp(path: PathSegment[]): string | undefined {
-  const [first] = path;
-  return first && !isIndex(first) ? first.prop : undefined;
+/** The properties a read path starts with, dotted (`cell.views`), up to the first index. */
+function propPath(path: PathSegment[]): string | undefined {
+  const end = path.findIndex(isIndex);
+  const props = (end < 0 ? path : path.slice(0, end)).map((segment) => ('prop' in segment ? segment.prop : ''));
+  return props.length ? props.join('.') : undefined;
 }
 
 /** The new object gives the row the same key: an index key, or every key property kept. A `new T(…)`, whose
@@ -450,5 +452,21 @@ function keepsKey(element: RebuiltElement, key: LoopKey): boolean {
 
 /** The new object holds the element's value of the property; never known for a `new T(…)`. */
 function keeps(element: RebuiltElement, prop: string): boolean {
-  return element.kept.includes(prop) || (element.keepsRest && !element.changed.includes(prop));
+  return element.kept.includes(prop) || (element.keepsRest && !element.changed.some((path) => within(path, prop)));
+}
+
+/** The new object may show something else at a read path: it changes the path, something below it or above it, or
+ *  drops its top property; a `new T(…)` may change anything. */
+function changes(element: RebuiltElement, read: string): boolean {
+  const top = read.split('.')[0];
+  return (
+    element.value === 'new' ||
+    element.changed.some((path) => within(path, read) || within(read, path)) ||
+    (!element.keepsRest && !element.kept.includes(top) && !element.changed.some((path) => within(path, top)))
+  );
+}
+
+/** path is prop or below it: `cell.title` is within `cell`. */
+function within(path: string, prop: string): boolean {
+  return path === prop || path.startsWith(`${prop}.`);
 }

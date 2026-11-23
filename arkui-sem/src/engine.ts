@@ -255,13 +255,18 @@ function describeNested(c: CandidateOf<'nested-write-unobserved'>): Description 
   const evidence = `${f.decorators.join(' ')} field written ${nestedDepth(w?.path)} levels deep (${at}); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that`;
   const { loop } = c;
   if (loop) {
-    const second = w?.path?.[1];
-    const prop = second && 'prop' in second ? second.prop : undefined;
+    // The properties below the element, up to the next index: `cell.views` in `this.rows[i].cell.views`.
+    const below = w?.path?.slice(1) ?? [];
+    const end = below.findIndex((segment) => !('prop' in segment));
+    const props = (end < 0 ? below : below.slice(0, end)).flatMap((segment) =>
+      'prop' in segment ? [segment.prop] : [],
+    );
+    const prop = props.length ? props.join('.') : undefined;
     const example = prop === undefined ? '' : `, e.g. ${keyExample(loop, prop)}`;
     return {
       subject: `${c.component.name}.${f.name}${path}`,
       evidence,
-      fix: `replace the element with a new object (this.${f.name}[i] = { ...old, ${prop ?? '<property>'}: … }, or reassign this.${f.name}) and make the ForEach key at line ${loop.line} (${loop.key.text}) change with it${example}: a new object under an unchanged key keeps the old row. Or render the element in a child component that receives it as @ObjectLink (its class @Observed) and change it there; anything the parent itself renders from it (a total) still needs a first-layer write.`,
+      fix: `replace the element with a new object (this.${f.name}[i] = { ...old, ${props[0] ?? '<property>'}: … }, or reassign this.${f.name}) and make the ForEach key at line ${loop.line} (${loop.key.text}) change with it${example}: a new object under an unchanged key keeps the old row. Or render the element in a child component that receives it as @ObjectLink (its class @Observed) and change it there; anything the parent itself renders from it (a total) still needs a first-layer write.`,
     };
   }
   return {

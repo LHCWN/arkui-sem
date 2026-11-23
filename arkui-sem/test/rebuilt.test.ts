@@ -142,6 +142,21 @@ describe('kept properties', () => {
     );
   });
 
+  test('a nested literal over a property of the element changes only what it sets', () => {
+    assert.deepEqual(
+      rebuilt(`retitle(i: number) {
+    this.songs[i] = { ...this.songs[i], album: { ...this.songs[i].album, title: 'x' } }
+    this.songs[i] = { ...this.songs[i], album: { ...this.songs[i].album } }
+    this.songs[i] = { ...this.songs[i], album: { title: 'x' } }
+  }`),
+      [
+        literal('index', [], ['album.title'], true),
+        literal('index', ['album'], [], true),
+        literal('index', [], ['album'], true),
+      ],
+    );
+  });
+
   test('Object.assign lays its sources over one another in order', () => {
     assert.deepEqual(
       rebuilt(`like(i: number) {

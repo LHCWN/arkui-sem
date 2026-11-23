@@ -191,25 +191,41 @@ function objectFact(expr: ts.Expression, elements: Elements): Omit<RebuiltElemen
 }
 
 /** The kept and changed properties of an object built from parts in order: object literals, whose own spreads count
- *  in place, and other objects copied whole. A copy of the element keeps every property set before it. */
+ *  in place, and other objects copied whole. A copy of the element keeps every property set before it. base: where the
+ *  object sits below the element, for a literal nested in another (`cell: { ...e.cell, title: … }` changes
+ *  `cell.title` only). */
 function laidOver(
   parts: ts.Expression[],
   at: ts.Node,
   elements: Elements,
+  base: string[] = [],
 ): Pick<RebuiltElement, 'kept' | 'changed' | 'keepsRest'> {
   let keepsRest = false;
-  const keeps = new Map<string, boolean>();
+  // Per property: kept, or the paths it changes below the element.
+  const props = new Map<string, 'kept' | string[]>();
   let guards: Map<string, string> | undefined;
   const guarded = () => {
-    guards ??= guardsAt(at, elements);
+    guards ??= base.length === 0 ? guardsAt(at, elements) : new Map();
     return guards;
   };
   const copy = (expr: ts.Expression) => {
-    if (isElement(expr, elements)) {
+    if (samePath(pathBelowElement(expr, elements), base)) {
       keepsRest = true;
-      for (const name of keeps.keys()) {
-        keeps.set(name, true);
+      for (const name of props.keys()) {
+        props.set(name, 'kept');
       }
+    }
+  };
+  const set = (name: string, value: ts.Expression) => {
+    const path = [...base, name];
+    const given = unwrap(value);
+    if (samePath(pathBelowElement(given, elements), path) || guarded().get(name) === given.getText()) {
+      props.set(name, 'kept');
+    } else if (ts.isObjectLiteralExpression(given)) {
+      const inner = laidOver([given], at, elements, path);
+      props.set(name, !inner.keepsRest ? [path.join('.')] : inner.changed.length ? inner.changed : 'kept');
+    } else {
+      props.set(name, [path.join('.')]);
     }
   };
   for (const part of parts) {
@@ -223,29 +239,33 @@ function laidOver(
       } else if (ts.isPropertyAssignment(prop)) {
         const name = memberName(prop.name);
         if (name !== undefined) {
-          keeps.set(name, keepsValue(name, prop.initializer, elements, guarded));
+          set(name, prop.initializer);
         }
       } else if (ts.isShorthandPropertyAssignment(prop)) {
-        keeps.set(prop.name.text, guarded().get(prop.name.text) === prop.name.text);
+        set(prop.name.text, prop.name);
       }
     }
   }
-  const names = [...keeps.keys()];
-  return { kept: names.filter((n) => keeps.get(n)), changed: names.filter((n) => !keeps.get(n)), keepsRest };
+  const entries = [...props];
+  return {
+    kept: entries.flatMap(([name, value]) => (value === 'kept' ? [name] : [])),
+    changed: entries.flatMap(([, value]) => (value === 'kept' ? [] : value)),
+    keepsRest,
+  };
 }
 
-/** `p: e.p`, or `p: X` under a guard `e.p === X`. */
-function keepsValue(
-  name: string,
-  value: ts.Expression,
-  elements: Elements,
-  guards: () => Map<string, string>,
-): boolean {
-  const given = unwrap(value);
-  if (ts.isPropertyAccessExpression(given) && given.name.text === name && isElement(given.expression, elements)) {
-    return true;
+/** The properties below the element an expression reads: [] for the element, ['cell'] for `e.cell`. */
+function pathBelowElement(expr: ts.Expression, elements: Elements): string[] | undefined {
+  const value = unwrap(expr);
+  if (ts.isPropertyAccessExpression(value)) {
+    const owner = pathBelowElement(value.expression, elements);
+    return owner && [...owner, value.name.text];
   }
-  return guards().get(name) === given.getText();
+  return isElement(value, elements) ? [] : undefined;
+}
+
+function samePath(a: string[] | undefined, b: string[]): boolean {
+  return a !== undefined && a.length === b.length && a.every((name, i) => name === b[i]);
 }
 
 /** The element's property values the code holding a node has checked: `e.p === X` (or `==`) in an enclosing `if` or

@@ -40,7 +40,8 @@ evaluates each PR on its committed tree (regression over recorded agent sessions
 
 - Step 1: done (#32).
 - Step 2: done (#33).
-- Steps 3–6: not started.
+- Step 3: done (#N).
+- Steps 4–6: not started.
 
 ## Open decisions
 

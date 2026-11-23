@@ -11,7 +11,7 @@ import type {
   WriteFact,
 } from '../facts.js';
 import { type BuilderNames, climb } from './callbacks.js';
-import { type FoundInput, inputsIn } from './inputs.js';
+import { type FoundInput, inputsIn, type Typing, typing } from './inputs.js';
 import { LIFECYCLE } from './lifecycle.js';
 import { builderFact, loopsIn, type Members } from './loops.js';
 import { ts } from './parse.js';
@@ -135,27 +135,39 @@ export function component(
       const name = memberName(m.name);
       return name === undefined ? [] : [builderFact(name, m, scan, builderNames)];
     }),
-    inputs: inputFacts(found, scans, fields),
+    inputs: inputFacts(found, scans, scan, { fields: members.fields, methods: names }),
     ...(initializers.escapes || scans.some((walk) => walk.escapes) ? { thisEscapes: true as const } : {}),
   };
 }
 
-/** The inputs, with the writes of each handler method only inputs use joined to theirs. */
-function inputFacts(found: FoundInput[], scans: MethodScan[], fields: FieldFact[]): InputFact[] {
+/** The inputs, with the typing of each handler method only inputs use joined to theirs; a handler used elsewhere too
+ *  counts as an effect. */
+function inputFacts(
+  found: FoundInput[],
+  scans: MethodScan[],
+  scan: FileScan,
+  members: { fields: Set<string>; methods: Set<string> },
+): InputFact[] {
   const references = new Map<string, number>();
   for (const name of found.flatMap((input) => input.handlers)) {
     references.set(name, (references.get(name) ?? 0) + 1);
   }
   const uses = (name: string) => scans.reduce((n, s) => n + s.uses.filter((use) => use.name === name).length, 0);
-  const onlyInputs = new Set([...references].filter(([name, count]) => uses(name) === count).map(([name]) => name));
+  const typingOf = new Map<string, Typing>();
+  for (const { method } of scans) {
+    const fn = method.kind === 'handler' ? method.body : method.body.parent;
+    const handler = fn && (isFunction(fn) || ts.isMethodDeclaration(fn)) ? fn : undefined;
+    if (handler && references.get(method.name) === uses(method.name)) {
+      typingOf.set(method.name, typing(handler, scan, members));
+    }
+  }
   return found.map(({ fact, handlers }) => {
-    const methods = new Set(handlers.filter((name) => onlyInputs.has(name)));
-    const joined = fields.flatMap((f) =>
-      f.writes
-        .filter((w) => methods.has(w.method) && w.path === undefined)
-        .map((w) => ({ field: f.name, line: w.line })),
-    );
-    return { ...fact, writes: [...fact.writes, ...joined] };
+    const joined = handlers.flatMap((name) => typingOf.get(name) ?? []);
+    return {
+      ...fact,
+      writes: [...fact.writes, ...joined.flatMap((t) => t.writes)],
+      effects: fact.effects || joined.some((t) => t.effects) || handlers.some((name) => !typingOf.has(name)),
+    };
   });
 }
 

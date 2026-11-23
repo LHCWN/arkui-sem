@@ -167,9 +167,12 @@ export interface InputFact {
   /** The text option (`value` for Search). none: absent. field: `this.f`, `$$this.f` or `this.f!!` (twoWay). other:
    *  any other expression, or options that can't be read (`TextInput(this.options)`, a spread). */
   binding: { kind: 'none' } | { kind: 'field'; field: string; twoWay: boolean } | { kind: 'other' };
-  /** Whole-field assignments (`this.f = …`) in its onChange, or in a component method the onChange calls or passes
-   *  (`.onChange(this.setName)`) that nothing else uses. */
+  /** Whole-field assignments of the typed text (`this.f = value`, `this.f = value.trim()`) in its onChange, or in a
+   *  component method the onChange calls or passes (`.onChange(this.setName)`) that nothing else uses. */
   writes: { field: string; line: number }[];
+  /** The onChange does more than store the typed text: a statement other than those writes and `console` calls, or a
+   *  handler that can't be read. */
+  effects: boolean;
   disabledRules: string[];
 }
 

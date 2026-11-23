@@ -147,6 +147,23 @@ struct Filter {
   assert.deepEqual(kinds(searchBox({ extra: 'load(q: string) { this.query = q }' })), ['input-unbound 8']);
 });
 
+test('input-never-read: only fields that store the typed text, and only when typing does nothing else', () => {
+  // A clear on empty text stores nothing typed; the search runs elsewhere.
+  const clearOnEmpty = searchBox().replace(
+    '.onChange((value: string) => { this.query = value })',
+    ".onChange((value: string) => { if (value == '') { this.query = '' } })",
+  );
+  assert.deepEqual(kinds(clearOnEmpty), []);
+  // The text also feeds another field that is shown: typing has an effect, the unread copy is a harmless dead store.
+  const feedsOther = searchBox({ extra: '@State length: number = 0', build: 'Text(this.length.toString())' }).replace(
+    'this.query = value })',
+    'this.query = value; this.length = value.length })',
+  );
+  assert.deepEqual(kinds(feedsOther), []);
+  const logs = searchBox().replace('this.query = value })', 'this.query = value; console.info(value) })');
+  assert.deepEqual(kinds(logs), ['input-never-read 3']);
+});
+
 test('input-never-read: a Swiper or Tabs onChange is not an input', () => {
   const src = `@Component
 struct Banner {

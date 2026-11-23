@@ -4,16 +4,70 @@ import type { InputFact } from '../facts.js';
 import { type BuilderNames, climb } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
-import { isFunction, memberName, thisMember, unwrap } from './syntax.js';
+import { identifiersIn, isFunction, memberName, thisMember, unwrap } from './syntax.js';
 
 /** The option that sets the shown text, by component (OpenHarmony TextInputOptions, TextAreaOptions, SearchOptions). */
 const TEXT_OPTION: Record<InputFact['kind'], string> = { TextInput: 'text', TextArea: 'text', Search: 'value' };
 
-/** An input, with the component methods its onChange calls or passes; their writes join `writes` when nothing else
- *  uses them. */
+/** An input, with the component methods its onChange calls or passes; their typing joins the input's when nothing
+ *  else uses them. */
 export interface FoundInput {
   fact: InputFact;
   handlers: string[];
+}
+
+/** What a change handler does with the typed text, its first parameter. */
+export interface Typing {
+  /** Whole-field assignments whose value reads the text (`this.f = value`, `this.f = value.trim()`), anywhere in it. */
+  writes: InputFact['writes'];
+  /** It does more than store the text: a statement other than those writes and `console` calls. */
+  effects: boolean;
+  /** The component methods it calls. */
+  calls: string[];
+}
+
+type Handler = ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | ts.MethodDeclaration;
+
+export function typing(fn: Handler, scan: FileScan, members: { fields: Set<string>; methods: Set<string> }): Typing {
+  const [first] = fn.parameters;
+  const text = first && ts.isIdentifier(first.name) ? first.name.text : undefined;
+  const typed = (n: ts.Node): string | undefined => {
+    const field = assignedField(n);
+    const storesText = text !== undefined && ts.isBinaryExpression(n) && identifiersIn(n.right).includes(text);
+    return field !== undefined && members.fields.has(field) && storesText ? field : undefined;
+  };
+  const out: Typing = { writes: [], effects: false, calls: [] };
+  const visit = (n: ts.Node) => {
+    const field = typed(n);
+    if (field !== undefined) {
+      out.writes.push({ field, line: scan.line(n) });
+    }
+    const called = calledMethod(n);
+    if (called !== undefined && members.methods.has(called)) {
+      out.calls.push(called);
+    }
+    ts.forEachChild(n, visit);
+  };
+  const body = fn.body;
+  if (body === undefined) {
+    return out;
+  }
+  visit(body);
+  const statements = ts.isBlock(body) ? [...body.statements] : [body];
+  out.effects = statements.some((statement) => {
+    const e = ts.isExpressionStatement(statement) ? statement.expression : statement;
+    return typed(e) === undefined && !isConsoleCall(e);
+  });
+  return out;
+}
+
+function isConsoleCall(n: ts.Node): boolean {
+  return (
+    ts.isCallExpression(n) &&
+    ts.isPropertyAccessExpression(n.expression) &&
+    ts.isIdentifier(n.expression.expression) &&
+    n.expression.expression.text === 'console'
+  );
 }
 
 function isInputKind(name: string): name is InputFact['kind'] {
@@ -50,26 +104,21 @@ function inputFact(
 ): FoundInput {
   const writes: InputFact['writes'] = [];
   const handlers = new Set<string>();
+  let effects = false;
   for (const handler of attributeArguments(call, 'onChange')) {
     const fn = unwrap(handler);
+    const passed = isFunction(fn) ? undefined : boundMethod(fn);
     if (isFunction(fn)) {
-      const visit = (n: ts.Node) => {
-        const field = assignedField(n);
-        if (field !== undefined && members.fields.has(field)) {
-          writes.push({ field, line: scan.line(n) });
-        }
-        const called = calledMethod(n);
-        if (called !== undefined && members.methods.has(called)) {
-          handlers.add(called);
-        }
-        ts.forEachChild(n, visit);
-      };
-      visit(fn);
-    } else {
-      const passed = boundMethod(fn);
-      if (passed !== undefined && members.methods.has(passed)) {
-        handlers.add(passed);
+      const found = typing(fn, scan, members);
+      writes.push(...found.writes);
+      effects ||= found.effects;
+      for (const name of found.calls) {
+        handlers.add(name);
       }
+    } else if (passed !== undefined && members.methods.has(passed)) {
+      handlers.add(passed);
+    } else {
+      effects = true;
     }
   }
   return {
@@ -79,6 +128,7 @@ function inputFact(
       method,
       binding: binding(call.arguments[0], TEXT_OPTION[kind], members.fields),
       writes,
+      effects,
       disabledRules: scan.disabledFor(call),
     },
     handlers: [...handlers],

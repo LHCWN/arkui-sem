@@ -1,6 +1,6 @@
 // R4, state that doesn't do its job: a text input wired to its field in one direction only (input-unbound,
 // input-never-read).
-import type { ComponentFact, FieldFact, FileFacts, WriteFact } from '../facts.js';
+import type { ComponentFact, FieldFact, FileFacts, InputFact, WriteFact } from '../facts.js';
 import { renderingReads } from '../queries.js';
 import { type Candidate, fingerprint } from './candidate.js';
 
@@ -27,7 +27,7 @@ export function r4Candidates(c: ComponentFact, facts: FileFacts): Candidate[] {
     const others = field.writes.filter((w) => !typed.has(w.line));
     const base = { rule: 'R4' as const, file: facts.file, component: c, field, line: writing[0].line, inputs: writing };
     const subject = `${c.name}.${field.name}`;
-    if (others.every(isReset) && neverRead(field, c, facts)) {
+    if (others.every(isReset) && writing.every((input) => hasNoEffect(input, c, facts))) {
       return [
         {
           ...base,
@@ -66,6 +66,17 @@ function setsValue(w: WriteFact): boolean {
     !w.accumulates &&
     w.context !== 'render' &&
     !w.disabledRules.includes('R4')
+  );
+}
+
+/** Typing changes nothing: the onChange only stores the text, in fields that are never read. */
+function hasNoEffect(input: InputFact, c: ComponentFact, facts: FileFacts): boolean {
+  return (
+    !input.effects &&
+    input.writes.every((w) => {
+      const stored = c.fields.find((f) => f.name === w.field);
+      return stored !== undefined && neverRead(stored, c, facts);
+    })
   );
 }
 

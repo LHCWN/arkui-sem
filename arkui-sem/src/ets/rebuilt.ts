@@ -2,165 +2,162 @@
 import type { RebuiltElement } from '../facts.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
-import { argumentOf, isFunction, memberName, thisMember, unwrap } from './syntax.js';
-
-const LOOPS = new Set(['ForEach', 'LazyForEach']);
+import { argumentOf, isFunction, isKeyedLoop, memberName, thisMember, unwrap } from './syntax.js';
 
 type Form = RebuiltElement['form'];
 
+/** One write's search: the field it writes and where its rebuilt elements go. */
+interface Context {
+  isField(e: ts.Expression): boolean;
+  scan: FileScan;
+  out: RebuiltElement[];
+}
+
 /** What denotes the old element where a new object is built: names bound to it (a map or loop parameter, a ForEach
- *  item), and arrays whose `a[i]` is one (`this.F`, a copy of it). */
+ *  item), and `a[index]` of an element array (`this.F`, a copy of it); any index when index is undefined. */
 interface Elements {
   names: Set<string>;
   isArray(e: ts.Expression): boolean;
+  index?: string;
 }
 
 /** The new objects a write of `field` puts at existing elements' positions. top: the written expression (`this.F`,
  *  `this.F[i]`) or the receiver of a call (`this.F.splice`). */
 export function rebuiltElements(field: string, top: ts.Expression, scan: FileScan): RebuiltElement[] {
-  const isField = (e: ts.Expression) => thisMember(unwrap(e)) === field;
-  const out: RebuiltElement[] = [];
+  const cx: Context = { isField: (e) => thisMember(unwrap(e)) === field, scan, out: [] };
   const parent = top.parent;
+  const target = unwrap(top);
   if (ts.isBinaryExpression(parent) && parent.left === top && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-    const target = unwrap(top);
-    if (isField(target)) {
-      reassigned(parent.right, isField, scan, out);
-    } else if (ts.isElementAccessExpression(target) && isField(target.expression)) {
-      objectsIn(parent.right, positional(top, isField), 'index', scan, out);
+    if (cx.isField(target)) {
+      reassigned(parent.right, cx);
+    } else if (ts.isElementAccessExpression(target) && cx.isField(target.expression)) {
+      objectsIn(parent.right, elementsAt(target, cx.isField, target.argumentExpression), 'index', cx);
     }
   } else if (
     ts.isCallExpression(parent) &&
     parent.expression === top &&
-    ts.isPropertyAccessExpression(top) &&
-    top.name.text === 'splice' &&
-    isField(top.expression)
+    ts.isPropertyAccessExpression(target) &&
+    target.name.text === 'splice' &&
+    cx.isField(target.expression)
   ) {
-    spliced(parent, positional(top, isField), 'splice', scan, out);
+    spliced(parent, cx.isField, 'splice', cx);
   }
-  return out;
+  return cx.out;
 }
 
 /** `this.F = value`: a map of this.F, or a local array built from this.F (pushed to in a loop over it, or a copy written
  *  at an index). */
-function reassigned(
-  value: ts.Expression,
-  isField: (e: ts.Expression) => boolean,
-  scan: FileScan,
-  out: RebuiltElement[],
-) {
+function reassigned(value: ts.Expression, cx: Context) {
   const v = unwrap(value);
-  const alias = ts.isIdentifier(v) ? local(v) : undefined;
+  const name = ts.isIdentifier(v) ? v : undefined;
+  const alias = name && local(name);
   const source = alias ? unwrap(alias.value) : v;
-  const map = mapOf(source, isField);
+  const map = mapCallback(source, cx);
   if (map) {
-    mapped(map, isField, scan, out);
-  } else if (alias && ts.isIdentifier(v)) {
+    mapped(map, cx);
+  } else if (name && alias) {
     if (ts.isArrayLiteralExpression(source) && source.elements.length === 0) {
-      pushedInLoops(v.text, alias.scope, isField, scan, out);
-    } else if (isCopy(source, isField)) {
-      copyWrites(v.text, alias.scope, isField, scan, out);
+      pushedInLoops(name.text, alias.scope, cx);
+    } else if (isCopy(source, cx)) {
+      copyWrites(name.text, alias.scope, cx);
     }
   }
 }
 
 /** The callback of `this.F.map(cb)`. */
-function mapOf(e: ts.Expression, isField: (e: ts.Expression) => boolean): ts.Expression | undefined {
+function mapCallback(e: ts.Expression, cx: Context): ts.Expression | undefined {
   return ts.isCallExpression(e) &&
     ts.isPropertyAccessExpression(e.expression) &&
     e.expression.name.text === 'map' &&
-    isField(e.expression.expression)
+    cx.isField(e.expression.expression)
     ? e.arguments[0]
     : undefined;
 }
 
-function mapped(cb: ts.Expression, isField: (e: ts.Expression) => boolean, scan: FileScan, out: RebuiltElement[]) {
+function mapped(cb: ts.Expression, cx: Context) {
   const fn = unwrap(cb);
   if (!isFunction(fn) || !fn.body) {
     return;
   }
-  const elements = { names: paramNames(fn), isArray: isField };
-  const returned = ts.isBlock(fn.body) ? returnsOf(fn.body) : [fn.body];
-  for (const e of returned) {
-    objectsIn(e, elements, 'map', scan, out);
+  const elements = { names: itemName(fn), isArray: cx.isField };
+  for (const e of ts.isBlock(fn.body) ? returnsOf(fn.body) : [fn.body]) {
+    objectsIn(e, elements, 'map', cx);
   }
 }
 
-/** `copy.push(obj)` inside a loop over this.F (for-of, an index loop, forEach). A push outside one appends. */
-function pushedInLoops(
-  name: string,
-  scope: ts.Node,
-  isField: (e: ts.Expression) => boolean,
-  scan: FileScan,
-  out: RebuiltElement[],
-) {
+/** `out.push(obj)` directly inside a loop over this.F (for-of, an index loop, forEach). A push outside one appends; a
+ *  push in a loop nested in it flattens. */
+function pushedInLoops(name: string, scope: ts.Node, cx: Context) {
   for (const call of callsOn(name, 'push', scope)) {
-    const names = loopOver(call, scope, isField);
-    if (names) {
+    const elements = loopOver(call, scope, cx);
+    if (elements) {
       for (const arg of call.arguments) {
-        objectsIn(arg, { names, isArray: isField }, 'loop', scan, out);
+        objectsIn(arg, elements, 'loop', cx);
       }
     }
   }
 }
 
 /** `copy[i] = obj` and `copy.splice(i, n, obj)` on a copy of this.F. */
-function copyWrites(
-  name: string,
-  scope: ts.Node,
-  isField: (e: ts.Expression) => boolean,
-  scan: FileScan,
-  out: RebuiltElement[],
-) {
-  const isArray = (e: ts.Expression) => isField(e) || isNamed(e, name);
+function copyWrites(name: string, scope: ts.Node, cx: Context) {
+  const isArray = (e: ts.Expression) => cx.isField(e) || isNamed(e, name);
   const visit = (n: ts.Node) => {
-    if (
-      ts.isBinaryExpression(n) &&
-      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(unwrap(n.left)) &&
-      isNamed((unwrap(n.left) as ts.ElementAccessExpression).expression, name)
-    ) {
-      objectsIn(n.right, { names: forEachItems(n, isField), isArray }, 'copy-index', scan, out);
+    const left = ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && unwrap(n.left);
+    if (left && ts.isElementAccessExpression(left) && isNamed(left.expression, name)) {
+      objectsIn(n.right, elementsAt(n, isArray, left.argumentExpression), 'copy-index', cx);
     }
     ts.forEachChild(n, visit);
   };
   visit(scope);
   for (const call of callsOn(name, 'splice', scope)) {
-    spliced(call, { names: forEachItems(call, isField), isArray }, 'copy-index', scan, out);
+    spliced(call, isArray, 'copy-index', cx);
   }
 }
 
-/** `a.splice(start, n, …items)`: the first n items replace elements. */
-function spliced(call: ts.CallExpression, elements: Elements, form: Form, scan: FileScan, out: RebuiltElement[]) {
-  const count = call.arguments[1] && unwrap(call.arguments[1]);
+/** `a.splice(start, n, …items)`: the first n items replace elements from start on. */
+function spliced(call: ts.CallExpression, isArray: (e: ts.Expression) => boolean, form: Form, cx: Context) {
+  const [start, count] = call.arguments.map(unwrap);
   const n = count && ts.isNumericLiteral(count) ? Number(count.text) : 0;
   for (const item of call.arguments.slice(2, 2 + n)) {
-    objectsIn(item, elements, form, scan, out);
+    objectsIn(item, elementsAt(call, isArray, n === 1 ? start : undefined), form, cx);
   }
 }
 
-/** For a write at an index of this.F or of its copy: the item of a ForEach over this.F that holds the write. */
-function positional(at: ts.Node, isField: (e: ts.Expression) => boolean): Elements {
-  return { names: forEachItems(at, isField), isArray: isField };
+/** For a write at an index: the element is `a[index]` of the arrays, or the item of a ForEach row over them that holds
+ *  the write. */
+function elementsAt(at: ts.Node, isArray: (e: ts.Expression) => boolean, index?: ts.Expression): Elements {
+  const names = new Set<string>();
+  for (let p = at.parent; p; p = p.parent) {
+    if (!isFunction(p)) {
+      continue;
+    }
+    const call = argumentOf(p);
+    const [source, row] = call?.arguments ?? [];
+    if (call && ts.isIdentifier(call.expression) && isKeyedLoop(call.expression.text) && row === p && isArray(source)) {
+      for (const name of itemName(p)) {
+        names.add(name);
+      }
+    }
+  }
+  return { names, isArray, ...(index ? { index: unwrap(index).getText() } : {}) };
 }
 
 /** The objects an expression evaluates to, through conditionals and single-assignment locals. */
-function objectsIn(e: ts.Expression, elements: Elements, form: Form, scan: FileScan, out: RebuiltElement[], depth = 0) {
+function objectsIn(e: ts.Expression, elements: Elements, form: Form, cx: Context, depth = 0) {
   const v = unwrap(e);
   if (ts.isConditionalExpression(v)) {
-    objectsIn(v.whenTrue, elements, form, scan, out, depth);
-    objectsIn(v.whenFalse, elements, form, scan, out, depth);
-    return;
-  }
-  if (ts.isIdentifier(v)) {
+    objectsIn(v.whenTrue, elements, form, cx, depth);
+    objectsIn(v.whenFalse, elements, form, cx, depth);
+  } else if (ts.isIdentifier(v)) {
     const l = elements.names.has(v.text) || depth > 2 ? undefined : local(v);
     if (l) {
-      objectsIn(l.value, elements, form, scan, out, depth + 1);
+      objectsIn(l.value, elements, form, cx, depth + 1);
     }
-    return;
-  }
-  const fact = objectFact(v, elements);
-  if (fact) {
-    out.push({ line: scan.line(v), form, ...fact });
+  } else {
+    const fact = objectFact(v, elements);
+    if (fact) {
+      cx.out.push({ line: cx.scan.line(v), form, ...fact });
+    }
   }
 }
 
@@ -168,65 +165,80 @@ function objectFact(e: ts.Expression, elements: Elements): Omit<RebuiltElement, 
   if (ts.isNewExpression(e)) {
     return { value: 'new', kept: [], changed: [], keepsRest: false };
   }
-  const guards = guardsAt(e, elements);
   if (ts.isObjectLiteralExpression(e)) {
-    return { value: 'object-literal', ...literalProps([e], [], elements, guards) };
+    return { value: 'object-literal', ...laidOver([e], e, elements) };
   }
-  // Object.assign({}, e, { … }): a new object with the element's properties, then the literal's.
+  // Object.assign({}, a, b, …): a new object with the properties of a, then b, …
   if (
     ts.isCallExpression(e) &&
     ts.isPropertyAccessExpression(e.expression) &&
-    ts.isIdentifier(e.expression.expression) &&
-    e.expression.expression.text === 'Object' &&
+    isNamed(e.expression.expression, 'Object') &&
     e.expression.name.text === 'assign'
   ) {
     const [target, ...sources] = e.arguments.map(unwrap);
     if (target && ts.isObjectLiteralExpression(target) && target.properties.length === 0) {
-      const literals = sources.filter(ts.isObjectLiteralExpression);
-      const spread = sources.filter((s) => !ts.isObjectLiteralExpression(s));
-      return { value: 'object-literal', ...literalProps(literals, spread, elements, guards) };
+      return { value: 'object-literal', ...laidOver(sources, e, elements) };
     }
   }
   return undefined;
 }
 
-/** The kept and changed properties of literals laid over the spread sources, in order. */
-function literalProps(
-  literals: ts.ObjectLiteralExpression[],
-  spread: ts.Expression[],
+/** The kept and changed properties of an object built from parts in order: object literals, whose own spreads count
+ *  in place, and other objects copied whole. A copy of the element keeps every property set before it. */
+function laidOver(
+  parts: ts.Expression[],
+  at: ts.Node,
   elements: Elements,
-  guards: Map<string, string>,
 ): Pick<RebuiltElement, 'kept' | 'changed' | 'keepsRest'> {
-  let keepsRest = spread.some((s) => isElement(s, elements));
-  const kept = new Set<string>();
-  const changed = new Set<string>();
-  const set = (name: string, keeps: boolean) => {
-    kept.delete(name);
-    changed.delete(name);
-    (keeps ? kept : changed).add(name);
+  let keepsRest = false;
+  const keeps = new Map<string, boolean>();
+  let guards: Map<string, string> | undefined;
+  const guarded = () => {
+    guards ??= guardsAt(at, elements);
+    return guards;
   };
-  for (const p of literals.flatMap((l) => [...l.properties])) {
-    if (ts.isSpreadAssignment(p)) {
-      keepsRest ||= isElement(p.expression, elements);
-    } else if (ts.isPropertyAssignment(p)) {
-      const name = memberName(p.name);
-      if (name !== undefined) {
-        set(name, keepsValue(name, p.initializer, elements, guards));
+  const copy = (e: ts.Expression) => {
+    if (isElement(e, elements)) {
+      keepsRest = true;
+      for (const name of keeps.keys()) {
+        keeps.set(name, true);
       }
-    } else if (ts.isShorthandPropertyAssignment(p)) {
-      set(p.name.text, guards.get(p.name.text) === p.name.text);
+    }
+  };
+  for (const part of parts) {
+    if (!ts.isObjectLiteralExpression(part)) {
+      copy(part);
+      continue;
+    }
+    for (const p of part.properties) {
+      if (ts.isSpreadAssignment(p)) {
+        copy(p.expression);
+      } else if (ts.isPropertyAssignment(p)) {
+        const name = memberName(p.name);
+        if (name !== undefined) {
+          keeps.set(name, keepsValue(name, p.initializer, elements, guarded));
+        }
+      } else if (ts.isShorthandPropertyAssignment(p)) {
+        keeps.set(p.name.text, guarded().get(p.name.text) === p.name.text);
+      }
     }
   }
-  return { kept: [...kept], changed: [...changed], keepsRest };
+  const names = [...keeps.keys()];
+  return { kept: names.filter((n) => keeps.get(n)), changed: names.filter((n) => !keeps.get(n)), keepsRest };
 }
 
 /** `p: e.p`, or `p: X` under a guard `e.p === X`. */
-function keepsValue(name: string, value: ts.Expression, elements: Elements, guards: Map<string, string>): boolean {
+function keepsValue(
+  name: string,
+  value: ts.Expression,
+  elements: Elements,
+  guards: () => Map<string, string>,
+): boolean {
   const v = unwrap(value);
   if (ts.isPropertyAccessExpression(v) && v.name.text === name && isElement(v.expression, elements)) {
     return true;
   }
-  return guards.get(name) === v.getText();
+  return guards().get(name) === v.getText();
 }
 
 /** The element's property values the code holding e has checked: `e.p === X` (or `==`) in an enclosing `if` or `?:`,
@@ -292,7 +304,7 @@ function exits(s: ts.Statement): boolean {
   return ts.isReturnStatement(s) || ts.isContinueStatement(s);
 }
 
-/** e is the old element: a name bound to it, `a[i]` of an element array, or a local assigned once from either. */
+/** e is the old element: a name bound to it, `a[index]` of an element array, or a local assigned once from either. */
 function isElement(e: ts.Expression, elements: Elements, depth = 0): boolean {
   const v = unwrap(e);
   if (ts.isIdentifier(v)) {
@@ -302,37 +314,62 @@ function isElement(e: ts.Expression, elements: Elements, depth = 0): boolean {
     const l = depth > 2 ? undefined : local(v);
     return l !== undefined && isElement(l.value, elements, depth + 1);
   }
-  return ts.isElementAccessExpression(v) && elements.isArray(v.expression);
+  return (
+    ts.isElementAccessExpression(v) &&
+    elements.isArray(v.expression) &&
+    (elements.index === undefined || unwrap(v.argumentExpression).getText() === elements.index)
+  );
 }
 
+/** A function body's locals by name: their declarations there, and every value assigned to the name in it. */
+type Locals = Map<string, { declarations: ts.VariableDeclaration[]; values: ts.Expression[] }>;
+const localsCache = new WeakMap<ts.Node, Locals>();
+
 /** A local `const`/`let` given one value (its initializer, or one later assignment), with the function body that
- *  declares it. */
+ *  declares it: the innermost body holding id that declares the name. */
 function local(id: ts.Identifier): { value: ts.Expression; scope: ts.Node } | undefined {
-  const scope = scopeOf(id);
-  if (!scope) {
-    return undefined;
+  for (let scope = scopeOf(id); scope?.parent; scope = scopeOf(scope.parent)) {
+    const found = localsOf(scope).get(id.text);
+    const [decl] = found?.declarations ?? [];
+    if (found && decl) {
+      const blockScoped = (ts.getCombinedNodeFlags(decl) & ts.NodeFlags.BlockScoped) !== 0;
+      const single = found.declarations.length === 1 && found.values.length === 1;
+      return blockScoped && single ? { value: found.values[0], scope } : undefined;
+    }
   }
-  const declarations: ts.VariableDeclaration[] = [];
-  const values: ts.Expression[] = [];
+  return undefined;
+}
+
+/** One walk per body, cached: lookups for every identifier would otherwise walk it again each time. */
+function localsOf(scope: ts.Node): Locals {
+  const cached = localsCache.get(scope);
+  if (cached) {
+    return cached;
+  }
+  const locals: Locals = new Map();
+  const entry = (name: string) => {
+    const e = locals.get(name) ?? { declarations: [], values: [] };
+    locals.set(name, e);
+    return e;
+  };
   const visit = (n: ts.Node) => {
-    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === id.text && scopeOf(n) === scope) {
-      declarations.push(n);
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && scopeOf(n) === scope) {
+      const e = entry(n.name.text);
+      e.declarations.push(n);
       if (n.initializer) {
-        values.push(n.initializer);
+        e.values.push(n.initializer);
       }
-    } else if (
-      ts.isBinaryExpression(n) &&
-      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      isNamed(n.left, id.text)
-    ) {
-      values.push(n.right);
+    } else if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const left = unwrap(n.left);
+      if (ts.isIdentifier(left)) {
+        entry(left.text).values.push(n.right);
+      }
     }
     ts.forEachChild(n, visit);
   };
   visit(scope);
-  const [decl] = declarations;
-  const blockScoped = decl && (ts.getCombinedNodeFlags(decl) & ts.NodeFlags.BlockScoped) !== 0;
-  return declarations.length === 1 && blockScoped && values.length === 1 ? { value: values[0], scope } : undefined;
+  localsCache.set(scope, locals);
+  return locals;
 }
 
 /** The body of the function or method that holds n. */
@@ -346,73 +383,61 @@ function scopeOf(n: ts.Node): ts.Node | undefined {
 }
 
 /** `[...this.F]` or `this.F.slice()`. */
-function isCopy(e: ts.Expression, isField: (e: ts.Expression) => boolean): boolean {
+function isCopy(e: ts.Expression, cx: Context): boolean {
   if (ts.isArrayLiteralExpression(e)) {
     const [only] = e.elements;
-    return e.elements.length === 1 && ts.isSpreadElement(only) && isField(only.expression);
+    return e.elements.length === 1 && ts.isSpreadElement(only) && cx.isField(only.expression);
   }
   return (
     ts.isCallExpression(e) &&
     e.arguments.length === 0 &&
     ts.isPropertyAccessExpression(e.expression) &&
     e.expression.name.text === 'slice' &&
-    isField(e.expression.expression)
+    cx.isField(e.expression.expression)
   );
 }
 
-/** The loop over this.F that holds n inside scope, as the names bound to its element (none for an index loop, whose
- *  `this.F[i]` the element arrays cover); undefined outside such a loop. */
-function loopOver(n: ts.Node, scope: ts.Node, isField: (e: ts.Expression) => boolean): Set<string> | undefined {
+/** The loop over this.F that directly holds n inside scope, as the element it binds: the for-of variable, the forEach
+ *  parameter, or `this.F[i]` of an index loop. Undefined outside such a loop, or with another loop or function between. */
+function loopOver(n: ts.Node, scope: ts.Node, cx: Context): Elements | undefined {
   for (let p = n.parent; p && p !== scope; p = p.parent) {
-    if (ts.isForOfStatement(p) && isField(p.expression)) {
-      const init = p.initializer;
-      const decl = ts.isVariableDeclarationList(init) ? init.declarations[0] : undefined;
-      return new Set(decl && ts.isIdentifier(decl.name) ? [decl.name.text] : []);
+    if (ts.isForOfStatement(p) && cx.isField(p.expression)) {
+      return { names: declaredName(p.initializer), isArray: cx.isField };
     }
-    if (ts.isForStatement(p) && p.condition && readsLength(p.condition, isField)) {
-      return new Set();
+    if (ts.isForStatement(p) && p.condition && p.initializer && readsLength(p.condition, cx)) {
+      const [index] = declaredName(p.initializer);
+      return { names: new Set(), isArray: cx.isField, ...(index === undefined ? {} : { index }) };
     }
     if (isFunction(p)) {
       const call = argumentOf(p);
-      const callee = call && ts.isCallExpression(call) ? call.expression : undefined;
-      if (
-        callee &&
+      const callee = call?.expression;
+      const overField =
+        callee !== undefined &&
         ts.isPropertyAccessExpression(callee) &&
         callee.name.text === 'forEach' &&
-        isField(callee.expression) &&
-        call?.arguments[0] === p
-      ) {
-        return paramNames(p, 1);
-      }
+        cx.isField(callee.expression) &&
+        call?.arguments[0] === p;
+      return overField ? { names: itemName(p), isArray: cx.isField } : undefined;
+    }
+    if (ts.isIterationStatement(p, false)) {
+      return undefined;
     }
   }
   return undefined;
 }
 
-/** `this.F.length` in a for loop's condition. */
-function readsLength(cond: ts.Node, isField: (e: ts.Expression) => boolean): boolean {
-  const visit = (n: ts.Node): boolean =>
-    (ts.isPropertyAccessExpression(n) && n.name.text === 'length' && isField(n.expression)) ||
-    ts.forEachChild(n, visit) === true;
-  return visit(cond);
+/** The name a `const x` or `let i = 0` declaration list binds. */
+function declaredName(init: ts.Node): Set<string> {
+  const decl = ts.isVariableDeclarationList(init) ? init.declarations[0] : undefined;
+  return new Set(decl && ts.isIdentifier(decl.name) ? [decl.name.text] : []);
 }
 
-/** The item parameters of the ForEach or LazyForEach rows over this.F that hold n. */
-function forEachItems(n: ts.Node, isField: (e: ts.Expression) => boolean): Set<string> {
-  const out = new Set<string>();
-  for (let p = n.parent; p; p = p.parent) {
-    if (!isFunction(p)) {
-      continue;
-    }
-    const call = argumentOf(p);
-    const [source, row] = call?.arguments ?? [];
-    if (call && ts.isIdentifier(call.expression) && LOOPS.has(call.expression.text) && row === p && isField(source)) {
-      for (const name of paramNames(p, 1)) {
-        out.add(name);
-      }
-    }
-  }
-  return out;
+/** `this.F.length` in a for loop's condition. */
+function readsLength(cond: ts.Node, cx: Context): boolean {
+  const visit = (n: ts.Node): boolean =>
+    (ts.isPropertyAccessExpression(n) && n.name.text === 'length' && cx.isField(n.expression)) ||
+    ts.forEachChild(n, visit) === true;
+  return visit(cond);
 }
 
 /** `name.method(…)` calls in scope. */
@@ -447,8 +472,10 @@ function returnsOf(body: ts.Block): ts.Expression[] {
   return out;
 }
 
-function paramNames(fn: ts.SignatureDeclarationBase, count = 1): Set<string> {
-  return new Set(fn.parameters.slice(0, count).flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : [])));
+/** The first parameter's name, unless it is destructured. */
+function itemName(fn: ts.SignatureDeclarationBase): Set<string> {
+  const [p] = fn.parameters;
+  return new Set(p && ts.isIdentifier(p.name) ? [p.name.text] : []);
 }
 
 function isNamed(e: ts.Expression, name: string): boolean {

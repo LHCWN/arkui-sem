@@ -338,8 +338,11 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
 
     const { writes: nested, gaps } = isReactive(f) ? unobservedWrites(f, facts, resolver) : { writes: [] };
     if (nested.length > 0 && rendered) {
-      const loops =
-        c.version === 'V1' && nested.some((w) => isIndex(w.path?.[0] ?? { prop: '' })) ? keyedLoops(c, f) : [];
+      const belowElement = nested.some((w) => {
+        const first = w.path?.[0];
+        return first !== undefined && isIndex(first);
+      });
+      const [loop] = c.version === 'V1' && belowElement ? keyedLoops(c, f) : [];
       out.push({
         rule: 'R1',
         kind: 'nested-write-unobserved',
@@ -349,7 +352,7 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
         line: nested[0].line,
         writes: nested,
         gaps,
-        ...(loops.length ? { loops } : {}),
+        ...(loop ? { loop } : {}),
         fingerprint: fingerprint(facts.file, subject, 'R1-nested'),
       });
     }
@@ -372,7 +375,9 @@ function keyedLoops(c: ComponentFact, f: FieldFact): LoopFact[] {
  *  one candidate per keyed loop over the field whose row renders a property that new objects under its key change. The
  *  fingerprint names the key as written, plus a counter when the field has two loops with the same key. */
 function keyStaleCandidates(c: ComponentFact, f: FieldFact, facts: FileFacts, resolver?: ClassResolver): Candidate[] {
-  const writes = f.writes.filter((w) => w.rebuilt && !feedsRender(w) && !w.disabledRules.includes('R1'));
+  const writes = f.writes.filter(
+    (w) => w.rebuilt && !feedsRender(w) && !beforeFirstRender(w) && !w.disabledRules.includes('R1'),
+  );
   if (writes.length === 0) {
     return [];
   }
@@ -382,15 +387,18 @@ function keyStaleCandidates(c: ComponentFact, f: FieldFact, facts: FileFacts, re
     const keyText = loop.key.text ?? loop.key.kind;
     const n = (seen.get(keyText) ?? 0) + 1;
     seen.set(keyText, n);
+    if (loop.disabledRules.includes('R1')) {
+      continue;
+    }
     const reads = rowReads(loop, c, facts, resolver);
     const rendered = new Set(reads.flatMap((r) => firstProp(r.path) ?? []));
     const rebuilds: KeyStaleRebuild[] = writes.flatMap((write) =>
       (write.rebuilt ?? []).flatMap((element) => {
-        const stale = keepsKey(element, loop.key) ? [...rendered].filter((p) => changes(element, p)) : [];
+        const stale = keepsKey(element, loop.key) ? [...rendered].filter((p) => !keeps(element, p)) : [];
         return stale.length ? [{ write, element, stale }] : [];
       }),
     );
-    if (rebuilds.length === 0 || loop.disabledRules.includes('R1')) {
+    if (rebuilds.length === 0) {
       continue;
     }
     const stale = new Set(rebuilds.flatMap((r) => r.stale));
@@ -403,6 +411,7 @@ function keyStaleCandidates(c: ComponentFact, f: FieldFact, facts: FileFacts, re
       line: loop.line,
       loop,
       rebuilds,
+      opaque: rebuilds.every((r) => r.element.value === 'new'),
       staleReads: reads.filter((r) => stale.has(firstProp(r.path) ?? '')),
       statefulRow: rowHoldsState(loop, c, facts, resolver),
       fingerprint: fingerprint(facts.file, `${c.name}.${f.name}`, `R1-foreach-key@${keyText}${n > 1 ? `~${n}` : ''}`),
@@ -416,16 +425,18 @@ function firstProp(path: PathSegment[]): string | undefined {
   return first && !isIndex(first) ? first.prop : undefined;
 }
 
-/** The new object gives the row the same key: an index key, or every key property kept. A `new T(…)` is taken to. */
+/** The new object gives the row the same key: an index key, or every key property kept. A `new T(…)`, whose
+ *  properties are unknown, is taken to. */
 function keepsKey(e: RebuiltElement, key: LoopKey): boolean {
-  return key.kind === 'index' || (key.props ?? []).every((p) => e.value === 'new' || keeps(e, p));
+  return key.kind === 'index' || e.value === 'new' || (key.props ?? []).every((p) => keeps(e, p));
 }
 
+/** The new object holds the element's value of the property; never known for a `new T(…)`. */
 function keeps(e: RebuiltElement, prop: string): boolean {
   return e.kept.includes(prop) || (e.keepsRest && !e.changed.includes(prop));
 }
 
-/** The new object may hold another value for the property: it sets or drops it, or is a `new T(…)`. */
-function changes(e: RebuiltElement, prop: string): boolean {
-  return e.value === 'new' || !keeps(e, prop);
+/** aboutToAppear runs before the first build(), so no row exists yet; its deferred callbacks are async writes. */
+function beforeFirstRender(w: WriteFact): boolean {
+  return w.context === 'lifecycle' && w.method === 'aboutToAppear';
 }

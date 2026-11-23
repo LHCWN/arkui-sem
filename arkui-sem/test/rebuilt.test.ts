@@ -142,6 +142,16 @@ describe('kept properties', () => {
     );
   });
 
+  test('Object.assign lays its sources over one another in order', () => {
+    assert.deepEqual(
+      rebuilt(`like(i: number) {
+    this.songs[i] = Object.assign({}, { liked: true }, this.songs[i])
+    this.songs[i] = Object.assign({}, this.songs[i], { liked: true })
+  }`),
+      [literal('index', ['liked'], [], true), literal('index', [], ['liked'], true)],
+    );
+  });
+
   test('a value from another object, a later override and a guard that does not hold are changes', () => {
     assert.deepEqual(
       rebuilt(`like(o: Song, sel: number) {

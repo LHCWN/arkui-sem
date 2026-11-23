@@ -253,14 +253,15 @@ function describeNested(c: CandidateOf<'nested-write-unobserved'>): Description 
     };
   }
   const evidence = `${f.decorators.join(' ')} field written ${nestedDepth(w?.path)} levels deep (${at}); V1 state decorators observe only first-layer changes, and @Observed on the classes alone does not change that`;
-  const [loop] = c.loops ?? [];
+  const { loop } = c;
   if (loop) {
     const second = w?.path?.[1];
-    const prop = second && 'prop' in second ? second.prop : 'changed';
+    const prop = second && 'prop' in second ? second.prop : undefined;
+    const example = prop === undefined ? '' : `, e.g. ${keyExample(loop, prop)}`;
     return {
       subject: `${c.component.name}.${f.name}${path}`,
       evidence,
-      fix: `replace the element with a new object (this.${f.name}[i] = { ...old, ${prop}: … }, or reassign this.${f.name}) and make the ForEach key at line ${loop.line} (${loop.key.text}) change with it, e.g. ${keyExample(loop, prop)}: a new object under an unchanged key keeps the old row. Or render the element in a child component that receives it as @ObjectLink (its class @Observed) and change it there; anything the parent itself renders from it (a total) still needs a first-layer write.`,
+      fix: `replace the element with a new object (this.${f.name}[i] = { ...old, ${prop ?? '<property>'}: … }, or reassign this.${f.name}) and make the ForEach key at line ${loop.line} (${loop.key.text}) change with it${example}: a new object under an unchanged key keeps the old row. Or render the element in a child component that receives it as @ObjectLink (its class @Observed) and change it there; anything the parent itself renders from it (a total) still needs a first-layer write.`,
     };
   }
   return {
@@ -283,20 +284,22 @@ function describeKeyStale(c: CandidateOf<'foreach-key-stale'>): Description {
   const f = c.field;
   const { loop } = c;
   const methods = [...new Set(c.rebuilds.map((r) => `${r.write.method}()`))].join(', ');
-  const lines = [...new Set(c.rebuilds.map((r) => r.element.line))];
   const stale = [...new Set(c.rebuilds.flatMap((r) => r.stale))];
-  const opaque = c.rebuilds.every((r) => r.element.value === 'new');
-  const objects = opaque ? 'new class instances, which may keep' : 'new objects that keep';
+  const objects = c.opaque ? 'new class instances, which may keep' : 'new objects that keep';
   const rows = [...new Set(c.staleReads.map((r) => rowKind(r.via)))].join(', ');
   const keyRoute = `make the key change with what the row shows, e.g. ${keyExample(loop, stale[0])}, and keep replacing the element (a write below it doesn't re-render either); this rebuilds the row, so what the row holds itself (typed text, focus, an animation) resets`;
   const linkRoute = `keep the key, make the items instances of an @Observed class shown by a row child that takes the item as @ObjectLink, and change the property on that object instead of replacing it; values the parent computes from the items (totals) then need their own first-layer update`;
   return {
     subject: `${c.component.name}.${f.name}`,
-    evidence: `${methods} put ${objects} the ForEach key (${loop.key.text}, line ${loop.line}) where elements of this.${f.name} were (${lineList(lines)}); ForEach keeps the existing row for an unchanged key and does not pass it the new item, so the row still shows the old ${stale.join(', ')} (row: ${rows})`,
+    evidence: `${methods} put ${objects} the ForEach key (${loop.key.text}, line ${loop.line}) where elements of this.${f.name} were (${lineList(rebuiltLines(c))}); ForEach keeps the existing row for an unchanged key and does not pass it the new item, so the row still shows the old ${stale.join(', ')} (row: ${rows})`,
     fix: c.statefulRow
       ? `the row holds state of its own, so ${linkRoute}. Or ${keyRoute}.`
       : `${keyRoute}. Or ${linkRoute}.`,
   };
+}
+
+function rebuiltLines(c: CandidateOf<'foreach-key-stale'>): number[] {
+  return [...new Set(c.rebuilds.map((r) => r.element.line))];
 }
 
 function rowKind(via: RowRead['via']): string {
@@ -369,11 +372,11 @@ const KINDS: { [K in CandidateKind]: KindSpec<CandidateOf<K>> } = {
     disableWhere: "above each write it lists, or above the field's decorators for all of them",
   },
   'foreach-key-stale': {
-    path: { facts: (c) => (c.rebuilds.every((r) => r.element.value === 'new') ? 'question' : 'finding') },
+    path: { facts: (c) => (c.opaque ? 'question' : 'finding') },
     describe: describeKeyStale,
     ask: 'If the row should show the change',
     disableWhere: "above the ForEach call, or above the field's decorators for every R1 kind",
-    related: (c) => [...new Set(c.rebuilds.map((r) => r.element.line))].map((line) => ({ file: c.file, line })),
+    related: (c) => rebuiltLines(c).map((line) => ({ file: c.file, line })),
   },
   // The label assumes the @Link → @Prop mismatch (shared intent); callers map the other intent × decorator pairs.
   'ownership-intent': {

@@ -46,9 +46,9 @@ export interface NestedWriteCandidate extends FieldCandidateBase<'R1', 'nested-w
   writes: WriteFact[];
   /** V2: why V2 misses the writes, one entry per distinct gap. */
   gaps?: V2Gap[];
-  /** V1: the keyed ForEach loops over the field, when a write is below an element: replacing the element instead keeps
-   *  the row under the same key. */
-  loops?: LoopFact[];
+  /** V1: a keyed ForEach loop over the field, when a write is below an element: replacing the element instead keeps the
+   *  row under the same key. */
+  loop?: LoopFact;
 }
 
 /** R1: a write puts new objects where a ForEach's items were, under the same key, and the row renders a property they
@@ -57,9 +57,11 @@ export interface ForEachKeyStaleCandidate extends FieldCandidateBase<'R1', 'fore
   loop: LoopFact;
   /** In source order. */
   rebuilds: KeyStaleRebuild[];
+  /** Every rebuilt object is a `new T(…)`, whose properties are unknown. */
+  opaque: boolean;
   /** The row's reads of the properties the rebuilds change. */
   staleReads: RowRead[];
-  /** The row holds state of its own (rowHoldsState). */
+  /** Rebuilding the row would reset state it holds: the fix leads with @ObjectLink. */
   statefulRow: boolean;
 }
 

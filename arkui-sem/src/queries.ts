@@ -2,6 +2,7 @@
 import { relative } from 'node:path';
 import type {
   BuilderFact,
+  BuilderPass,
   BuildRead,
   ClassMember,
   ClassResolver,
@@ -81,24 +82,22 @@ function valueReads(
     read(use.line, use.path, use.attribute);
   }
   for (const pass of uses.builders) {
-    const found = builderOf(pass.builder, pass.method, scope, resolver);
-    const param = found?.builder.params[pass.argument];
-    if (!found || !param) {
+    const target = passTarget(pass, scope, resolver);
+    if (!target) {
       read(pass.line, pass.path, pass.attribute);
       continue;
     }
     // A builder that passes the value back to itself adds nothing more.
-    const key = `${found.scope.facts.file}#${pass.method ? 'this.' : ''}${found.builder.name}`;
-    if (!seen.has(key)) {
+    if (!seen.has(target.key)) {
       const next: RowRead['via'] = via.kind === 'inline' ? { kind: 'builder', name: pass.builder } : via;
-      out.push(
-        ...valueReads(param.uses, [...prefix, ...pass.path], found.scope, next, resolver, new Set([...seen, key])),
-      );
+      const inner = new Set([...seen, target.key]);
+      out.push(...valueReads(target.param.uses, [...prefix, ...pass.path], target.scope, next, resolver, inner));
     }
   }
   for (const pass of uses.children) {
-    const decl = declarationOf(pass.child, scope.facts, resolver);
-    const field = decl?.facts.components.find((c) => c.name === decl.name)?.fields.find((f) => f.name === pass.field);
+    const child = componentOf(pass.child, scope.facts, resolver);
+    const field = child?.component.fields.find((f) => f.name === pass.field);
+    const decl = child?.decl;
     if (!decl || !field) {
       read(pass.line, pass.path, pass.attribute);
       continue;
@@ -149,24 +148,44 @@ export function rowHoldsState(loop: LoopFact, c: ComponentFact, facts: FileFacts
   const holds = (creates: string[], uses: ValueUses, scope: UseScope, seen: Set<string>): boolean =>
     creates.some((name) => STATEFUL_COMPONENTS.has(name) || ownsState(name, scope.facts, resolver)) ||
     uses.builders.some((pass) => {
-      const found = builderOf(pass.builder, pass.method, scope, resolver);
-      const key = found && `${found.scope.facts.file}#${pass.method ? 'this.' : ''}${found.builder.name}`;
-      const param = found?.builder.params[pass.argument];
+      const target = passTarget(pass, scope, resolver);
       return (
-        found !== undefined &&
-        key !== undefined &&
-        param !== undefined &&
-        !seen.has(key) &&
-        holds(found.builder.creates, param.uses, found.scope, new Set([...seen, key]))
+        target !== undefined &&
+        !seen.has(target.key) &&
+        holds(target.builder.creates, target.param.uses, target.scope, new Set([...seen, target.key]))
       );
     });
   return holds(loop.creates, loop.row, { facts, component: c }, new Set());
 }
 
 function ownsState(name: string, facts: FileFacts, resolver?: ClassResolver): boolean {
-  const decl = declarationOf(name, facts, resolver);
-  const child = decl?.facts.components.find((x) => x.name === decl.name);
+  const child = componentOf(name, facts, resolver)?.component;
   return child?.fields.some((f) => f.decorators.some((d) => OWN_STATE.includes(d))) ?? false;
+}
+
+function componentOf(
+  name: string,
+  facts: FileFacts,
+  resolver: ClassResolver | undefined,
+): { decl: Declaration; component: ComponentFact } | undefined {
+  const decl = declarationOf(name, facts, resolver);
+  const component = decl?.facts.components.find((c) => c.name === decl.name);
+  return decl && component && { decl, component };
+}
+
+/** The builder a pass gives the value to, the parameter that receives it, where the builder's own uses resolve, and a
+ *  key that names the builder across files. */
+function passTarget(
+  pass: BuilderPass,
+  scope: UseScope,
+  resolver: ClassResolver | undefined,
+): { builder: BuilderFact; param: BuilderFact['params'][number]; scope: UseScope; key: string } | undefined {
+  const found = builderOf(pass.builder, pass.method, scope, resolver);
+  const param = found?.builder.params[pass.argument];
+  return (
+    found &&
+    param && { ...found, param, key: `${found.scope.facts.file}#${pass.method ? 'this.' : ''}${found.builder.name}` }
+  );
 }
 
 function builderOf(

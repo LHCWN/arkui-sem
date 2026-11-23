@@ -47,9 +47,10 @@ const TOGGLE_MAP =
 
 describe('foreach-key-stale fires', () => {
   test('a map that rebuilds under an id key, inline row', () => {
-    const [c, ...rest] = stale(playlist(TOGGLE_MAP));
+    const src = playlist(TOGGLE_MAP);
+    const [c, ...rest] = stale(src);
     assert.equal(rest.length, 0);
-    assert.equal(c.line, 18);
+    assert.equal(c.line, src.split('\n').findIndex((l) => l.includes('ForEach(')) + 1);
     assert.equal(c.fingerprint, 'T.ets#Playlist.songs#R1-foreach-key@(s: Song) => `${s.id}`');
     assert.deepEqual(
       c.rebuilds.map((r) => [r.write.method, r.element.form, r.stale]),
@@ -199,6 +200,38 @@ describe('foreach-key-stale does not fire', () => {
   test('a loop over something else that starts from the field', () => {
     const src = playlist(TOGGLE_MAP).replace('ForEach(this.songs,', 'ForEach(this.songs.map((s: Song) => s),');
     assert.deepEqual(stale(src), []);
+  });
+
+  test('a rebuild before the first render, at another index, or flattening nested items', () => {
+    for (const members of [
+      `  aboutToAppear() {
+    this.songs = this.songs.map((s: Song) => ({ ...s, liked: true }))
+  }`,
+      `  move(i: number, j: number) {
+    const c = [...this.songs]
+    if (c[j].id === 5) {
+      c[i] = { id: 5, title: '', liked: true, plays: 0 }
+    }
+    c[i] = { ...c[j], liked: true }
+    this.songs = c
+  }`,
+      `  split(parts: string[]) {
+    const out: Song[] = []
+    for (const s of this.songs) {
+      for (const t of parts) { out.push({ ...s, title: t, liked: false }) }
+    }
+    this.songs = out
+  }`,
+    ]) {
+      assert.deepEqual(stale(playlist(members)), [], members);
+    }
+  });
+
+  test('a rebuild in a deferred callback of aboutToAppear fires', () => {
+    const members = `  aboutToAppear() {
+    setTimeout(() => { this.songs = this.songs.map((s: Song) => ({ ...s, liked: true })) }, 10)
+  }`;
+    assert.equal(stale(playlist(members)).length, 1);
   });
 
   test('a disable comment above the ForEach call, above the field, or above the write', () => {

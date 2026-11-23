@@ -45,7 +45,9 @@ evaluates each PR on its committed tree (regression over recorded agent sessions
 - Step 1: done (#32).
 - Step 2: done (#33).
 - Step 3: done (#34).
-- Steps 4–7: not started.
+- Step 4: done (branch `r4-input-kinds`): `InputFact`, field reads in any method, constant writes, `input-unbound`
+  and `input-never-read` as questions; R4 widened in the roadmap and design docs; demo page `Notes.ets`.
+- Steps 5–7: not started.
 
 ## Open decisions
 

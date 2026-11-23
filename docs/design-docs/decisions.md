@@ -1,5 +1,11 @@
 # Decisions made
 
+- **R4 widened (2026-11-19):** R4 is "state that doesn't do its job": wiring gaps (a text input whose field no input
+  shows while code sets it, `input-unbound`; one whose field nothing reads, `input-never-read`; a selection nothing
+  sets) as well as the original over-reactive cases. The wiring kinds are decided by the facts and asked as questions
+  (V1, owned `@State` without `@Watch`); `input-unbound` may become a finding after the noise check. An input counts
+  only the writes that store its typed text, and `input-never-read` fires only when typing has no other effect (an
+  unread copy beside other work is a harmless dead store).
 - **Judge fallback chain:** Jev → Clef-flash → Clef → DeepSeek flash as System One (2026-10-05).
   - The DeepSeek step uses structured output only (strict tool schema, then `json_object`). The logprobs mode was removed on 2026-10-07: the user found it doesn't make sense. Don't reintroduce it without asking.
   - DeepSeek only ever uses `deepseek-flash`, with thinking disabled.

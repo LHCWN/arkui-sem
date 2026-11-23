@@ -26,7 +26,7 @@ import {
   typeClass,
   typeKind,
 } from './queries.js';
-import type { Candidate, CandidateKind } from './rules/index.js';
+import type { Candidate, CandidateKind, FieldCandidate } from './rules/index.js';
 
 // --- System One interface, Jev, Clef ---
 
@@ -338,11 +338,9 @@ function excerpt(facts: FileFacts, line: number): string {
 }
 
 /** Function-typed fields of the component that it invokes as this.name(...): the callbacks the child calls back on. */
-function invokedCallbacks(c: Candidate): string[] {
+function invokedCallbacks(c: FieldCandidate): string[] {
   return c.component.fields
-    .filter(
-      (f) => f.name !== c.field?.name && f.calls.length > 0 && f.typeRef !== undefined && holdsFunction(f.typeRef),
-    )
+    .filter((f) => f.name !== c.field.name && f.calls.length > 0 && f.typeRef !== undefined && holdsFunction(f.typeRef))
     .map((f) => `${f.name}: ${f.type}`)
     .slice(0, 5);
 }
@@ -384,9 +382,10 @@ export function buildSlice(
   const lines = new Set<number>([comp.line]);
   let candidate: { [key: string]: JsonValue };
 
-  if (c.field) {
+  if (c.kind !== 'unreleased-resource') {
     const f = c.field;
-    const shown = c.writes ?? f.writes; // a nested-write candidate shows the writes it flags
+    const nested = c.kind === 'nested-write-unobserved' ? c : undefined;
+    const shown = nested?.writes ?? f.writes; // a nested-write candidate shows the writes it flags
     lines.add(f.line);
     for (const l of readLines(f).slice(0, 2)) {
       lines.add(l);
@@ -436,8 +435,8 @@ export function buildSlice(
         time_value: f.timeValue ?? null,
         object_link_types_in_file: objectLinkTypes(facts),
         // V2 gaps name the classes the writes miss; the field's own class would contradict them for deeper writes.
-        ...(c.gaps
-          ? { v2_gaps: c.gaps.map((g) => ({ ...g })) }
+        ...(nested?.gaps
+          ? { v2_gaps: nested.gaps.map((g) => ({ ...g })) }
           : {
               type_is_observed_v2_class: typeName !== undefined ? isClassWith(facts, typeName, '@ObservedV2') : null,
               type_declared_in_file: typeName !== undefined ? declaresClass(facts, typeName) : null,

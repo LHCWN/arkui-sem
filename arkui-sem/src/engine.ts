@@ -10,6 +10,7 @@ import { feedsRender, nestedDepth, pathText, renderingReads } from './queries.js
 import {
   type Candidate,
   type CandidateKind,
+  type CandidateOf,
   candidates,
   hasUnsetCallbacks,
   omitsCallback,
@@ -217,11 +218,8 @@ interface Description {
   fix: string;
 }
 
-function describeResource(c: Candidate): Description {
+function describeResource(c: CandidateOf<'unreleased-resource'>): Description {
   const r = c.resource;
-  if (!r) {
-    throw new Error(`${c.kind} candidate without a resource`);
-  }
   return {
     subject: `${c.component.name} ${r.key}`,
     evidence: `${r.kind} acquired in ${r.acquireIn}() at line ${r.acquireLine}; no matching release in aboutToDisappear/onPageHide`,
@@ -229,16 +227,9 @@ function describeResource(c: Candidate): Description {
   };
 }
 
-function fieldOf(c: Candidate): FieldFact {
-  if (!c.field) {
-    throw new Error(`${c.kind} candidate without a field`);
-  }
-  return c.field;
-}
-
-function describeNested(c: Candidate): Description {
-  const f = fieldOf(c);
-  const [w, ...rest] = c.writes?.length ? c.writes : f.writes;
+function describeNested(c: CandidateOf<'nested-write-unobserved'>): Description {
+  const f = c.field;
+  const [w, ...rest] = c.writes.length ? c.writes : f.writes;
   const path = pathText(w?.path);
   const head = w?.path?.[0];
   const first = head && 'prop' in head ? head.prop : undefined;
@@ -259,8 +250,8 @@ function describeNested(c: Candidate): Description {
   };
 }
 
-function describeUndecorated(c: Candidate): Description {
-  const f = fieldOf(c);
+function describeUndecorated(c: CandidateOf<'undecorated-mutated-rendered'>): Description {
+  const f = c.field;
   const writes = f.writes
     .filter((w) => !feedsRender(w))
     .slice(0, 2)
@@ -277,8 +268,8 @@ function describeUndecorated(c: Candidate): Description {
 }
 
 /** R2 a–c: a field the parent initializes, whose sync direction may not be the one the UI needs. */
-function describeOwnership(c: Candidate): Description {
-  const f = fieldOf(c);
+function describeOwnership(c: CandidateOf<'ownership-intent'>): Description {
+  const f = c.field;
   return {
     subject: `${c.component.name}.${f.name}`,
     evidence: `${[...f.decorators, f.name].join(' ')} is initialized by the parent; its sync direction may not match how the parent and this component use it`,
@@ -291,23 +282,25 @@ function describeOwnership(c: Candidate): Description {
 
 /** How a kind becomes a finding. judge: P(violation) is the judge's probability of `violation` for `questions`, and the
  *  thresholds set the band. facts: the facts decide alone (p null) at a fixed band. */
-type KindPath = { judge: { questions: Questions; violation: string } } | { facts: Band | ((c: Candidate) => Band) };
+type KindPath<C extends Candidate = Candidate> =
+  | { judge: { questions: Questions; violation: string } }
+  | { facts: Band | ((c: C) => Band) };
 
-interface KindSpec {
-  path: KindPath;
-  describe(c: Candidate): Description;
+interface KindSpec<C extends Candidate> {
+  path: KindPath<C>;
+  describe(c: C): Description;
   /** Where the question tells the agent to put a disable comment; above the finding's line when absent. */
   disableWhere?: string;
   /** The question's lead-in to the fix, e.g. "If it should behave reactively". */
   ask: string;
-  related?(c: Candidate): Finding['related'];
+  related?(c: C): Finding['related'];
 }
 
 const R1_JUDGE: KindPath = { judge: { questions: Q_R1, violation: 'desync_bug' } };
 const R1_ASK = 'If it should behave reactively';
 
 /** Every kind a rule emits. A kind also picks its judge slice in FIELD_SLICE (judge.ts). */
-const KINDS: Record<CandidateKind, KindSpec> = {
+const KINDS: { [K in CandidateKind]: KindSpec<CandidateOf<K>> } = {
   'undecorated-mutated-rendered': { path: R1_JUDGE, describe: describeUndecorated, ask: R1_ASK },
   'nested-write-unobserved': {
     path: R1_JUDGE,
@@ -323,14 +316,9 @@ const KINDS: Record<CandidateKind, KindSpec> = {
   },
   'event-unwired': {
     path: { facts: 'finding' },
-    describe: (c) => {
-      if (!c.unwired) {
-        throw new Error('event-unwired candidate without call sites');
-      }
-      return describeUnwired(c.component, fieldOf(c), c.unwired);
-    },
+    describe: (c) => describeUnwired(c.component, c.field, c.unwired),
     ask: 'If the call should do something',
-    related: (c) => c.unwired?.omitted.map((s) => ({ file: s.file, line: s.line })),
+    related: (c) => c.unwired.omitted.map((s) => ({ file: s.file, line: s.line })),
   },
   'unreleased-resource': {
     path: { judge: { questions: Q_R3, violation: 'leak_bug' } },
@@ -406,7 +394,7 @@ interface Checked {
 
 /** Exported for callers that build candidates themselves (R2 ownership) and for tests. */
 export function toFinding(c: Candidate, p: number | null, band: Band, backend: string): Finding {
-  const spec = KINDS[c.kind];
+  const spec = specOf(c.kind);
   return {
     fingerprint: c.fingerprint,
     rule: c.rule,
@@ -420,6 +408,11 @@ export function toFinding(c: Candidate, p: number | null, band: Band, backend: s
     ...spec.describe(c),
     ...(spec.related ? { related: spec.related(c) } : {}),
   };
+}
+
+/** The spec of a kind, typed for that kind's candidates. */
+function specOf<K extends CandidateKind>(kind: K): KindSpec<CandidateOf<K>> {
+  return KINDS[kind];
 }
 
 export async function checkFiles(
@@ -465,7 +458,7 @@ export async function checkFiles(
   );
 
   const decide = async ({ facts, c }: Checked) => {
-    const { path } = KINDS[c.kind];
+    const { path } = specOf(c.kind);
     if ('facts' in path) {
       findings.push(toFinding(c, null, typeof path.facts === 'function' ? path.facts(c) : path.facts, FACTS));
       return;

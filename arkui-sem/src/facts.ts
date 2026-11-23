@@ -114,6 +114,109 @@ export interface ComponentFact {
   version: StateMgmtVersion;
   fields: FieldFact[];
   resources: ResourceFact[];
+  /** ForEach and LazyForEach calls in the methods that draw the UI, in source order. */
+  loops: LoopFact[];
+  /** The struct's @Builder and @LocalBuilder methods. */
+  builders: BuilderFact[];
+}
+
+/** A ForEach or LazyForEach call: `ForEach(source, (item, index) => row, (item, index) => key)`. */
+export interface LoopFact {
+  kind: 'ForEach' | 'LazyForEach';
+  line: number;
+  method: string;
+  /** Absent when the item generator is not a function written in place or its parameter is destructured. */
+  itemParam?: string;
+  indexParam?: string;
+  /** The item generator declares an index parameter: with a key generator that declares none, ForEach joins the index
+   *  to the key. */
+  itemDeclaresIndex: boolean;
+  source: LoopSource;
+  key: LoopKey;
+  /** What the row does with the item outside handlers. */
+  row: ValueUses;
+  disabledRules: string[];
+}
+
+/**
+ * The loop's data source. field: `this.F`. derived: an expression over fields (`this.F.filter(…)`, `this.F[i].p`,
+ * `X[this.S].p`). call: a method call or a getter of the component (`this.visible()`, `this.visible`). new: a `new`
+ * expression (a LazyForEach data source).
+ */
+export interface LoopSource {
+  text: string;
+  shape: 'field' | 'derived' | 'call' | 'new' | 'other';
+  /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`). */
+  root?: string;
+  /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
+   *  transitively. */
+  fields: string[];
+}
+
+/**
+ * The key generator. default: none given (ForEach: index and JSON of the item; LazyForEach: view id and index). index:
+ * reads only the index. props: reads properties of the item (`item.id`). whole: reads the item itself
+ * (`JSON.stringify(item)`, a primitive item). other: anything else (a method of the item, nothing of the loop).
+ */
+export interface LoopKey {
+  kind: 'default' | 'index' | 'props' | 'whole' | 'other';
+  /** The key generator as written, on one line. */
+  text?: string;
+  /** The item properties a props key reads, first level. */
+  props?: string[];
+  /** The final key includes the index: the default key, a generator reading it, or the ForEach join rule. */
+  withIndex: boolean;
+}
+
+/** What a function does with one value (a loop item, a builder parameter) outside handlers. */
+export interface ValueUses {
+  /** The value or a path below it read where it draws (`Text(item.name)`, `.opacity(item.on ? 1 : 0)`), or passed to
+   *  anything that is neither a builder nor a child's argument. */
+  reads: ValueRead[];
+  /** Passed to a builder: `this.B(item)` for a builder method, `B(item.p)` for a function, possibly imported. */
+  builders: BuilderPass[];
+  /** Passed to a component: `Child({ f: item })`, `Child({ f: item.p })`. */
+  children: ChildPass[];
+}
+
+export interface ValueRead {
+  line: number;
+  /** Below the value. */
+  path: PathSegment[];
+  /** As for BuildRead. */
+  attribute?: string;
+}
+
+export interface BuilderPass {
+  line: number;
+  builder: string;
+  /** Called as `this.B(…)`: a builder method of the component; else a builder function. */
+  method: boolean;
+  /** The parameter's position. */
+  argument: number;
+  /** The path below the value that is passed. */
+  path: PathSegment[];
+  /** As for BuildRead: kept for a builder that can't be found, whose pass then counts as a read. */
+  attribute?: string;
+}
+
+export interface ChildPass {
+  line: number;
+  /** As written in the file, an alias included. */
+  child: string;
+  field: string;
+  /** The path below the value that is passed. */
+  path: PathSegment[];
+  /** As for BuilderPass. */
+  attribute?: string;
+}
+
+/** A @Builder or @LocalBuilder method, or a file-level @Builder function. */
+export interface BuilderFact {
+  name: string;
+  line: number;
+  /** In declaration order; a destructured parameter is unnamed and its uses are empty. */
+  params: { name?: string; uses: ValueUses }[];
 }
 
 /** A class, an interface or an object type alias (`type T = { … }`) declared in the file. */
@@ -147,6 +250,8 @@ export interface FileFacts {
   /** Name of the class or struct behind `export default`. */
   defaultExport?: string;
   componentUses: ComponentUse[];
+  /** File-level @Builder functions. */
+  builders: BuilderFact[];
   /** The parser reported syntax errors; some valid ArkTS does too (`.attr()` after the closure of `Child() { … }`). */
   parseErrors: boolean;
   lines: string[];

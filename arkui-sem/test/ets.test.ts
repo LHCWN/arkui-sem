@@ -85,6 +85,33 @@ test('a disable comment above a statement covers its arguments but not statement
   assert.deepEqual(scan.disabledFor(inBlock), []);
 });
 
+test('a disable comment above a statement covers the methods and accessors of an object literal in it', () => {
+  const source = [
+    'function f() {',
+    '  // arkui-sem-disable-next-line R4',
+    '  const o = {',
+    '    m(x: number = g(1)) {},',
+    '    get v(): number { return 0 },',
+    '  }',
+    '}',
+    'function g(x: number): number { return x }',
+  ].join('\n');
+  const scan = new FileScan('Page.ets', source, new EtsParser());
+  const members: ts.Node[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isObjectLiteralElement(n) || (ts.isCallExpression(n) && n.parent && ts.isParameter(n.parent))) {
+      members.push(n);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scan.sf);
+  assert.equal(members.length, 3);
+  assert.deepEqual(
+    members.map((m) => scan.disabledFor(m)),
+    [['R4'], ['R4'], ['R4']],
+  );
+});
+
 test('a disable comment covers an else-if condition, an unbraced branch and a field initializer', () => {
   const source = [
     'function f(a: boolean) {',

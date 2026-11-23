@@ -1,6 +1,7 @@
 // Queries derived from the facts: paths, rendering reads, declared types and class hierarchies.
 import { relative } from 'node:path';
 import type {
+  BuilderFact,
   BuildRead,
   ClassMember,
   ClassResolver,
@@ -8,9 +9,11 @@ import type {
   Declaration,
   FieldFact,
   FileFacts,
+  LoopFact,
   PathSegment,
   TypeFact,
   TypeRef,
+  ValueUses,
   WriteFact,
 } from './facts.js';
 
@@ -24,6 +27,108 @@ export function feedsRender(w: WriteFact): boolean {
 export function renderingReads(f: FieldFact): BuildRead[] {
   const reads = f.buildReads.filter((r) => !r.inHandler);
   return [...reads.filter((r) => r.via === undefined), ...reads.filter((r) => r.via !== undefined)];
+}
+
+/** A read of a loop item that draws its row, followed into the builders and children the row passes the item to. */
+export interface RowRead {
+  file: string;
+  line: number;
+  /** Below the item. */
+  path: PathSegment[];
+  attribute?: string;
+  /** Where the read sits: in the item generator, in a builder it calls (the first one), or in a child's build reads of
+   *  the field the item initializes. */
+  via:
+    | { kind: 'inline' }
+    | { kind: 'builder'; name: string }
+    | { kind: 'child'; child: string; field: string; decorators: string[] };
+}
+
+/** What a loop's row renders of the item. A builder or child that can't be found counts as a read of what it is passed. */
+export function rowReads(
+  loop: LoopFact,
+  component: ComponentFact,
+  facts: FileFacts,
+  resolver?: ClassResolver,
+): RowRead[] {
+  return valueReads(loop.row, [], { facts, component }, { kind: 'inline' }, resolver, new Set());
+}
+
+/** Where a value's uses sit: builder methods resolve in the component, builder functions in the file. */
+interface UseScope {
+  facts: FileFacts;
+  component?: ComponentFact;
+}
+
+function valueReads(
+  uses: ValueUses,
+  prefix: PathSegment[],
+  scope: UseScope,
+  via: RowRead['via'],
+  resolver: ClassResolver | undefined,
+  seen: Set<string>,
+): RowRead[] {
+  const out: RowRead[] = [];
+  const read = (line: number, path: PathSegment[], attribute?: string) =>
+    out.push({
+      file: scope.facts.file,
+      line,
+      path: [...prefix, ...path],
+      ...(attribute === undefined ? {} : { attribute }),
+      via,
+    });
+  for (const use of uses.reads) {
+    read(use.line, use.path, use.attribute);
+  }
+  for (const pass of uses.builders) {
+    const found = builderOf(pass.builder, pass.method, scope, resolver);
+    const param = found?.builder.params[pass.argument];
+    if (!found || !param) {
+      read(pass.line, pass.path, pass.attribute);
+      continue;
+    }
+    // A builder that passes the value back to itself adds nothing more.
+    const key = `${found.scope.facts.file}#${pass.method ? 'this.' : ''}${found.builder.name}`;
+    if (!seen.has(key)) {
+      const next: RowRead['via'] = via.kind === 'inline' ? { kind: 'builder', name: pass.builder } : via;
+      out.push(
+        ...valueReads(param.uses, [...prefix, ...pass.path], found.scope, next, resolver, new Set([...seen, key])),
+      );
+    }
+  }
+  for (const pass of uses.children) {
+    const decl = declarationOf(pass.child, scope.facts, resolver);
+    const field = decl?.facts.components.find((c) => c.name === decl.name)?.fields.find((f) => f.name === pass.field);
+    if (!decl || !field) {
+      read(pass.line, pass.path, pass.attribute);
+      continue;
+    }
+    for (const childRead of renderingReads(field)) {
+      out.push({
+        file: decl.facts.file,
+        line: childRead.line,
+        path: [...prefix, ...pass.path, ...childRead.path],
+        ...(childRead.attribute === undefined ? {} : { attribute: childRead.attribute }),
+        via: { kind: 'child', child: decl.name, field: field.name, decorators: field.decorators },
+      });
+    }
+  }
+  return out;
+}
+
+function builderOf(
+  name: string,
+  method: boolean,
+  scope: UseScope,
+  resolver: ClassResolver | undefined,
+): { builder: BuilderFact; scope: UseScope } | undefined {
+  if (method) {
+    const builder = scope.component?.builders.find((b) => b.name === name);
+    return builder && { builder, scope };
+  }
+  const decl = declarationOf(name, scope.facts, resolver);
+  const builder = decl?.facts.builders.find((b) => b.name === decl.name);
+  return decl && builder && { builder, scope: { facts: decl.facts } };
 }
 
 export function own<T>(map: Record<string, T>, key: string): T | undefined {
@@ -116,9 +221,14 @@ export function heldClass(t: TypeRef): string | undefined {
   return className(held.kind === 'array' ? held.element : held);
 }
 
-/** Whether the file itself declares `name`: a class, an interface or object type alias, or a component. */
+/** Whether the file itself declares `name`: a class, an interface or object type alias, a component, or a builder
+ *  function. */
 export function declares(facts: FileFacts, name: string): boolean {
-  return own(facts.types, name) !== undefined || facts.components.some((c) => c.name === name);
+  return (
+    own(facts.types, name) !== undefined ||
+    facts.components.some((c) => c.name === name) ||
+    facts.builders.some((b) => b.name === name)
+  );
 }
 
 /** Where `name`, as written in `scope`, is declared: in `scope` itself, else through the resolver. */

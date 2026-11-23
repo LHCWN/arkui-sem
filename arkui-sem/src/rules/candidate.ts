@@ -3,16 +3,50 @@ import type { CallSite, ComponentFact, FieldFact, ResourceFact, WriteFact } from
 
 export type RuleId = 'R1' | 'R2' | 'R3';
 
-export type CandidateKind =
-  | 'undecorated-mutated-rendered' // R1: plain member written after init and read in build()
-  | 'nested-write-unobserved' // R1: in-place write deeper than the state decorator observes
-  | 'ownership-intent' // R2: passed-in field; candidates() does not emit it (callers build it)
-  | 'event-unwired' // R2: a callback the component calls and its call sites don't pass (unwiredCallbacks)
-  | 'unreleased-resource'; // R3: acquired in a lifecycle hook, no matching release
+/** A candidate of each kind, keyed by kind: the facts its rule found. */
+export type Candidate =
+  | FieldCandidateBase<'R1', 'undecorated-mutated-rendered'> // plain member written after init and read in build()
+  | NestedWriteCandidate
+  | FieldCandidateBase<'R2', 'ownership-intent'> // passed-in field; candidates() does not emit it (callers build it)
+  | EventUnwiredCandidate
+  | ResourceCandidate;
 
-/** A field candidate (R1, R2) or a resource candidate (R3). */
-export type Candidate = CandidateBase &
-  ({ field: FieldFact; resource?: never } | { resource: ResourceFact; field?: never });
+export type CandidateKind = Candidate['kind'];
+export type CandidateOf<K extends CandidateKind> = Extract<Candidate, { kind: K }>;
+/** A candidate about one field of the component: every kind but R3's. */
+export type FieldCandidate = Extract<Candidate, { field: FieldFact }>;
+
+interface CandidateBase<R extends RuleId, K extends string> {
+  rule: R;
+  kind: K;
+  file: string;
+  component: ComponentFact;
+  line: number;
+  /** Stable across runs: dedupe, cache, dismissals. */
+  fingerprint: string;
+}
+
+interface FieldCandidateBase<R extends RuleId, K extends string> extends CandidateBase<R, K> {
+  field: FieldFact;
+}
+
+/** R1: in-place writes deeper than the state decorator observes. */
+export interface NestedWriteCandidate extends FieldCandidateBase<'R1', 'nested-write-unobserved'> {
+  /** Every unobserved write, in source order. */
+  writes: WriteFact[];
+  /** V2: why V2 misses the writes, one entry per distinct gap. */
+  gaps?: V2Gap[];
+}
+
+/** R2: a callback the component calls and its call sites don't pass (unwiredCallbacks). */
+export interface EventUnwiredCandidate extends FieldCandidateBase<'R2', 'event-unwired'> {
+  unwired: Unwired;
+}
+
+/** R3: acquired in a lifecycle hook, no matching release. */
+export interface ResourceCandidate extends CandidateBase<'R3', 'unreleased-resource'> {
+  resource: ResourceFact;
+}
 
 /** Why V2 misses a write: its owner is a plain class, a plain object type (interface or object type alias), an object
  *  literal, an @ObservedV2 class whose property lacks @Trace, or a container nested in another. owner is the class that
@@ -21,22 +55,6 @@ export interface V2Gap {
   kind: 'class' | 'object-type' | 'object-literal' | 'untraced' | 'nested-container';
   owner: string;
   property: string;
-}
-
-interface CandidateBase {
-  rule: RuleId;
-  kind: CandidateKind;
-  file: string;
-  component: ComponentFact;
-  line: number;
-  /** Nested-write: every unobserved write, in source order. */
-  writes?: WriteFact[];
-  /** V2 nested-write: why V2 misses the writes, one entry per distinct gap. */
-  gaps?: V2Gap[];
-  /** Event-unwired: what the call sites show. */
-  unwired?: Unwired;
-  /** Stable across runs: dedupe, cache, dismissals. */
-  fingerprint: string;
 }
 
 export interface Unwired {

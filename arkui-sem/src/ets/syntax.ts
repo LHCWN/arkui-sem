@@ -1,4 +1,5 @@
 // Small readers of ohos-typescript nodes shared by the extractor.
+import type { PathSegment } from '../facts.js';
 import { ts } from './parse.js';
 
 export function decoratorNames(n: ts.Node): string[] {
@@ -133,4 +134,27 @@ export function hasParseErrors(sf: ts.SourceFile): boolean {
 
 export function oneLine(s: string): string {
   return s.replace(/\s+/g, ' ');
+}
+
+/** The property and index path below an expression, and the outermost access: through the nodes `through` accepts
+ *  (`!`, or any wrapper). */
+export function pathBelow(
+  expr: ts.Expression,
+  sf: ts.SourceFile,
+  through: (n: ts.Node) => n is ts.Expression & { expression: ts.Expression },
+): { top: ts.Expression; path: PathSegment[] } {
+  const path: PathSegment[] = [];
+  let top = expr;
+  for (;;) {
+    const parent = top.parent;
+    if (ts.isPropertyAccessExpression(parent) && parent.expression === top) {
+      path.push(parent.questionDotToken ? { prop: parent.name.text, optional: true } : { prop: parent.name.text });
+    } else if (ts.isElementAccessExpression(parent) && parent.expression === top) {
+      const index = oneLine(parent.argumentExpression.getText(sf));
+      path.push(parent.questionDotToken ? { index, optional: true } : { index });
+    } else if (!(through(parent) && parent.expression === top)) {
+      return { top, path };
+    }
+    top = parent;
+  }
 }

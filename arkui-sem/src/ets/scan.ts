@@ -43,11 +43,15 @@ export class FileScan {
   }
 }
 
-/** A statement in a block, a file or a case, or a class member. */
+/** A statement in a block, a file or a case, or a member of a class or struct; an object literal's methods and accessors
+ *  are part of the expression that holds them. */
 function isStatement(n: ts.Node): boolean {
   const p = n.parent;
-  return (
-    ts.isClassElement(n) ||
-    (p !== undefined && (ts.isBlock(p) || ts.isSourceFile(p) || ts.isModuleBlock(p) || ts.isCaseOrDefaultClause(p)))
-  );
+  if (p === undefined) {
+    return false;
+  }
+  if (ts.isClassLike(p) || ts.isStructDeclaration(p)) {
+    return ts.isClassElement(n);
+  }
+  return ts.isBlock(p) || ts.isSourceFile(p) || ts.isModuleBlock(p) || ts.isCaseOrDefaultClause(p);
 }

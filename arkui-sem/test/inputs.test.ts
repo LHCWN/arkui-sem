@@ -84,6 +84,18 @@ test('onChange effects: only typed writes and console calls do nothing else', ()
   assert.equal(effects('(value: string) => { this.name = value; this.other = value }'), false);
   assert.equal(effects('(value: string) => { this.name = value; this.other = "" }'), true);
   assert.equal(effects('handleChange'), true);
+  // A value derived from the text is not the text: no typed write, and an effect.
+  const derived = component(
+    FIELDS,
+    '      TextInput().onChange((value: string) => { this.other = value.length > 3 ? "long" : "" })',
+  );
+  assert.deepEqual([derived.inputs[0].writes, derived.inputs[0].effects], [[], true]);
+  // A setter only the input calls is joined: calling it does nothing more than its own body.
+  const setter = component(
+    `${FIELDS}\n  setName(value: string) { this.name = value.trim().toLowerCase() }`,
+    '      TextInput().onChange((value: string) => this.setName(value))',
+  );
+  assert.deepEqual([setter.inputs[0].writes.map((w) => w.field), setter.inputs[0].effects], [['name'], false]);
 });
 
 test('inputs in handlers are not drawn; disable comments above an input are kept', () => {

@@ -4,7 +4,7 @@ import type { InputFact } from '../facts.js';
 import { type BuilderNames, climb } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
-import { identifiersIn, isFunction, memberName, thisMember, unwrap } from './syntax.js';
+import { isFunction, memberName, thisMember, unwrap } from './syntax.js';
 
 /** The option that sets the shown text, by component (OpenHarmony TextInputOptions, TextAreaOptions, SearchOptions). */
 const TEXT_OPTION: Record<InputFact['kind'], string> = { TextInput: 'text', TextArea: 'text', Search: 'value' };
@@ -16,11 +16,29 @@ export interface FoundInput {
   handlers: string[];
 }
 
+/** String methods whose result is still the typed text, normalized. */
+const NORMALIZERS = new Set([
+  'trim',
+  'trimStart',
+  'trimEnd',
+  'toLowerCase',
+  'toUpperCase',
+  'toLocaleLowerCase',
+  'toLocaleUpperCase',
+  'replace',
+  'replaceAll',
+  'slice',
+  'substring',
+  'normalize',
+]);
+
 /** What a change handler does with the typed text, its first parameter. */
 export interface Typing {
-  /** Whole-field assignments whose value reads the text (`this.f = value`, `this.f = value.trim()`), anywhere in it. */
+  /** Whole-field assignments of the text itself, possibly normalized (`this.f = value`, `this.f = value.trim()`),
+   *  anywhere in it; a value derived from it (`value.length > 0`) is not the text. */
   writes: InputFact['writes'];
-  /** It does more than store the text: a statement other than those writes and `console` calls. */
+  /** It does more than store the text: a statement other than those writes, calls of component methods (whose own
+   *  typing is joined) and `console` calls. */
   effects: boolean;
   /** The component methods it calls. */
   calls: string[];
@@ -33,7 +51,7 @@ export function typing(fn: Handler, scan: FileScan, members: { fields: Set<strin
   const text = first && ts.isIdentifier(first.name) ? first.name.text : undefined;
   const typed = (n: ts.Node): string | undefined => {
     const field = assignedField(n);
-    const storesText = text !== undefined && ts.isBinaryExpression(n) && identifiersIn(n.right).includes(text);
+    const storesText = text !== undefined && ts.isBinaryExpression(n) && isText(n.right, text);
     return field !== undefined && members.fields.has(field) && storesText ? field : undefined;
   };
   const out: Typing = { writes: [], effects: false, calls: [] };
@@ -56,9 +74,24 @@ export function typing(fn: Handler, scan: FileScan, members: { fields: Set<strin
   const statements = ts.isBlock(body) ? [...body.statements] : [body];
   out.effects = statements.some((statement) => {
     const e = ts.isExpressionStatement(statement) ? statement.expression : statement;
-    return typed(e) === undefined && !isConsoleCall(e);
+    const methodCall = members.methods.has(calledMethod(e) ?? '');
+    return typed(e) === undefined && !methodCall && !isConsoleCall(e);
   });
   return out;
+}
+
+/** The expression is the text itself, possibly normalized (`value`, `value.trim().toLowerCase()`). */
+function isText(e: ts.Expression, text: string): boolean {
+  const value = unwrap(e);
+  if (ts.isIdentifier(value)) {
+    return value.text === text;
+  }
+  return (
+    ts.isCallExpression(value) &&
+    ts.isPropertyAccessExpression(value.expression) &&
+    NORMALIZERS.has(value.expression.name.text) &&
+    isText(value.expression.expression, text)
+  );
 }
 
 function isConsoleCall(n: ts.Node): boolean {

@@ -108,6 +108,20 @@ test('input-unbound: another input that shows the field leaves it alone (an add 
   assert.deepEqual(kinds(src), []);
 });
 
+test('input-unbound: a value derived from the text is not the text, so the input is not meant to show it', () => {
+  // `valid` is set from the typed text and from code, and never drawn: binding the input to it would be wrong advice.
+  const src = editDialog({
+    extra: '@State valid: boolean = false',
+    prefill: 'this.name = item.name\n    this.valid = item.name.length > 0',
+  }).replace('this.name = value', 'this.name = value.trim()\n            this.valid = value.length > 0');
+  assert.deepEqual(
+    found(src)
+      .filter((c) => c.rule === 'R4')
+      .map((c) => `${c.kind} ${'field' in c ? c.field.name : ''}`),
+    ['input-unbound name'],
+  );
+});
+
 test('R4 asks only about owned V1 state without @Watch, and honours disable comments', () => {
   assert.deepEqual(kinds(editDialog({ field: '@Link name: string' })), []);
   assert.deepEqual(kinds(editDialog({ field: "@State @Watch('onName') name: string = ''", extra: 'onName() {}' })), []);
@@ -162,6 +176,17 @@ test('input-never-read: only fields that store the typed text, and only when typ
   assert.deepEqual(kinds(feedsOther), []);
   const logs = searchBox().replace('this.query = value })', 'this.query = value; console.info(value) })');
   assert.deepEqual(kinds(logs), ['input-never-read 3']);
+  // A setter only the input calls, in a closure or passed: the same input.
+  const setter = (handler: string) =>
+    kinds(
+      searchBox({ extra: 'setQuery(value: string) { this.query = value }' }).replace(
+        '.onChange((value: string) => { this.query = value })',
+        `.onChange(${handler})`,
+      ),
+    );
+  assert.deepEqual(setter('(value: string) => this.setQuery(value)'), ['input-never-read 3']);
+  assert.deepEqual(setter('(value: string) => { this.setQuery(value) }'), ['input-never-read 3']);
+  assert.deepEqual(setter('this.setQuery'), ['input-never-read 3']);
 });
 
 test('input-never-read: a Swiper or Tabs onChange is not an input', () => {

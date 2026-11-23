@@ -5,11 +5,13 @@ import type {
   CallbackCall,
   ComponentFact,
   FieldFact,
+  InputFact,
   PathSegment,
   WriteContext,
   WriteFact,
 } from '../facts.js';
 import { type BuilderNames, climb } from './callbacks.js';
+import { type FoundInput, inputsIn } from './inputs.js';
 import { LIFECYCLE } from './lifecycle.js';
 import { builderFact, loopsIn, type Members } from './loops.js';
 import { ts } from './parse.js';
@@ -17,6 +19,7 @@ import { rebuiltElements } from './rebuilt.js';
 import { resources } from './resources.js';
 import type { FileScan } from './scan.js';
 import {
+  calleeName,
   decoratorNames,
   expressionName,
   hasModifier,
@@ -48,6 +51,8 @@ const MUTATING_CALLS = new Set([
 const CLOCKS = new Set(['Date.now', 'performance.now']);
 const TIMERS = new Set(['setTimeout', 'setInterval']);
 const UI_BUILDERS = new Set(['@Builder', '@LocalBuilder']);
+/** Calls that take `this` without reading the component's fields: the UI context, and binding a method to it. */
+const THIS_TAKERS = new Set(['getContext', 'bind', 'call', 'apply']);
 
 /** Code the component runs: a method, a getter, or a field holding a function (a handler, `onTap = () => { … }`). */
 export interface Method {
@@ -113,6 +118,10 @@ export function component(
     }
   }
   const members = membersOf(scans, byName, builderNames);
+  const initializers = initializerAccesses(s, byName, scan);
+  const found = methods
+    .filter((m) => drawing.has(m))
+    .flatMap((m) => inputsIn(m.name, m.body, scan, builderNames, { fields: members.fields, methods: names }));
   return {
     name: s.name.text,
     file: scan.file,
@@ -126,7 +135,67 @@ export function component(
       const name = memberName(m.name);
       return name === undefined ? [] : [builderFact(name, m, scan, builderNames)];
     }),
+    inputs: inputFacts(found, scans, fields),
+    ...(initializers.escapes || scans.some((walk) => walk.escapes) ? { thisEscapes: true as const } : {}),
   };
+}
+
+/** The inputs, with the writes of each handler method only inputs use joined to theirs. */
+function inputFacts(found: FoundInput[], scans: MethodScan[], fields: FieldFact[]): InputFact[] {
+  const references = new Map<string, number>();
+  for (const name of found.flatMap((input) => input.handlers)) {
+    references.set(name, (references.get(name) ?? 0) + 1);
+  }
+  const uses = (name: string) => scans.reduce((n, s) => n + s.uses.filter((use) => use.name === name).length, 0);
+  const onlyInputs = new Set([...references].filter(([name, count]) => uses(name) === count).map(([name]) => name));
+  return found.map(({ fact, handlers }) => {
+    const methods = new Set(handlers.filter((name) => onlyInputs.has(name)));
+    const joined = fields.flatMap((f) =>
+      f.writes
+        .filter((w) => methods.has(w.method) && w.path === undefined)
+        .map((w) => ({ field: f.name, line: w.line })),
+    );
+    return { ...fact, writes: [...fact.writes, ...joined] };
+  });
+}
+
+/** Reads of fields in other fields' initializers (`@State shown = this.all.slice(0, 5)`), recorded on the fields, and
+ *  whether an initializer uses `this` as a value. Initializers that are functions are handlers, scanned as methods. */
+function initializerAccesses(
+  s: ts.StructDeclaration,
+  fields: Map<string, FieldFact>,
+  scan: FileScan,
+): { escapes: boolean } {
+  let escapes = false;
+  for (const m of s.members) {
+    const owner = memberName(m.name);
+    const init = ts.isPropertyDeclaration(m) && m.initializer ? unwrap(m.initializer) : undefined;
+    if (owner === undefined || init === undefined || isFunction(init)) {
+      continue;
+    }
+    const visit = (n: ts.Node) => {
+      const field = fields.get(thisMember(n) ?? '');
+      if (field) {
+        field.reads.push({ line: scan.line(n), method: owner });
+      }
+      escapes ||= thisEscapes(n);
+      ts.forEachChild(n, visit);
+    };
+    visit(init);
+  }
+  return { escapes };
+}
+
+/** `this` used as a value rather than to access a member (see ComponentFact.thisEscapes). */
+function thisEscapes(n: ts.Node): boolean {
+  if (n.kind !== ts.SyntaxKind.ThisKeyword) {
+    return false;
+  }
+  const parent = n.parent;
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === n) {
+    return false;
+  }
+  return !(ts.isCallExpression(parent) && THIS_TAKERS.has(calleeName(parent) ?? ''));
 }
 
 /** The component's fields and helpers, and the fields each helper reads through the helpers it uses. */
@@ -188,6 +257,7 @@ function fieldFact(m: ts.PropertyDeclaration, name: string, scan: FileScan): Fie
     ...(m.questionToken ? { optional: true as const } : {}),
     literal: objectLiteral(m.initializer),
     buildReads: [],
+    reads: [],
     writes: [],
     calls: [],
     timeValue: timeValue(m.initializer),
@@ -203,18 +273,29 @@ interface MethodWalk extends MethodScan {
   awaits: Map<ts.Node, number[]>;
   /** The uses an await may delay: an await ends before the use in the method's body or in a function holding the use. */
   delayed: Set<MethodScan['uses'][number]>;
+  /** It uses `this` as a value (ComponentFact.thisEscapes). */
+  escapes: boolean;
 }
 
 /** One walk over a method's body: its uses of the component's methods, its calls, its awaits, and its accesses to
  *  fields. */
 function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string>, builders: BuilderNames): MethodWalk {
-  const out: MethodWalk = { method: m, uses: [], calls: [], accesses: [], awaits: new Map(), delayed: new Set() };
+  const out: MethodWalk = {
+    method: m,
+    uses: [],
+    calls: [],
+    accesses: [],
+    awaits: new Map(),
+    delayed: new Set(),
+    escapes: false,
+  };
   const scopes: ts.Node[] = [m.body];
   const visit = (n: ts.Node) => {
     const opens = n !== m.body && isFunction(n);
     if (opens) {
       scopes.push(n);
     }
+    out.escapes ||= thisEscapes(n);
     if (ts.isCallExpression(n)) {
       out.calls.push(n);
     } else if (ts.isAwaitExpression(n)) {
@@ -385,6 +466,7 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
   }
   const where = climb(base, ctx.method.body, ctx.builders);
   if (!mutatingCall && !assignment && !updated) {
+    field.reads.push({ line, method: ctx.method.name });
     if (ctx.drawn) {
       field.buildReads.push({
         line,
@@ -435,13 +517,33 @@ function accumulates(assignment: ts.BinaryExpression, field: string): boolean {
   return reads(assignment.right);
 }
 
-/** What an assignment assigns: an object literal, a `new` instance, or anything else (compound and update writes too). */
+/** What an assignment assigns: an object literal, a `new` instance, a constant, or anything else (compound and update
+ *  writes too). */
 function assignedValue(assignment: ts.BinaryExpression | undefined): WriteFact['value'] {
   if (assignment?.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return 'other';
   }
   const value = unwrap(assignment.right);
+  if (isConstant(value)) {
+    return 'constant';
+  }
   return ts.isObjectLiteralExpression(value) ? 'object-literal' : ts.isNewExpression(value) ? 'new' : 'other';
+}
+
+/** A string, number or boolean literal (`-1` included), `null` or `undefined`. */
+function isConstant(e: ts.Expression): boolean {
+  if (ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken) {
+    return ts.isNumericLiteral(e.operand);
+  }
+  return (
+    ts.isStringLiteral(e) ||
+    ts.isNoSubstitutionTemplateLiteral(e) ||
+    ts.isNumericLiteral(e) ||
+    e.kind === ts.SyntaxKind.TrueKeyword ||
+    e.kind === ts.SyntaxKind.FalseKeyword ||
+    e.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(e) && e.text === 'undefined')
+  );
 }
 
 /** What time value an initializer or assigned value holds (see FieldFact.timeValue). */

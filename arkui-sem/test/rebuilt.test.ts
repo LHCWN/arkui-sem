@@ -148,11 +148,13 @@ describe('kept properties', () => {
     this.songs[i] = { ...this.songs[i], album: { ...this.songs[i].album, title: 'x' } }
     this.songs[i] = { ...this.songs[i], album: { ...this.songs[i].album } }
     this.songs[i] = { ...this.songs[i], album: { title: 'x' } }
+    this.songs[i] = { ...this.songs[i], album: { id: this.songs[i].album.id, title: 'x' } }
   }`),
       [
         literal('index', [], ['album.title'], true),
         literal('index', ['album'], [], true),
         literal('index', [], ['album'], true),
+        literal('index', ['album.id'], ['album'], true),
       ],
     );
   });

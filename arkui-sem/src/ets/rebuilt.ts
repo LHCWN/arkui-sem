@@ -201,8 +201,9 @@ function laidOver(
   base: string[] = [],
 ): Pick<RebuiltElement, 'kept' | 'changed' | 'keepsRest'> {
   let keepsRest = false;
-  // Per property: kept, or the paths it changes below the element.
-  const props = new Map<string, 'kept' | string[]>();
+  // Per property: the paths below the element it keeps and the ones it changes.
+  const props = new Map<string, Pick<RebuiltElement, 'kept' | 'changed'>>();
+  const keptWhole = (name: string) => ({ kept: [[...base, name].join('.')], changed: [] });
   let guards: Map<string, string> | undefined;
   const guarded = () => {
     guards ??= base.length === 0 ? guardsAt(at, elements) : new Map();
@@ -212,7 +213,7 @@ function laidOver(
     if (samePath(pathBelowElement(expr, elements), base)) {
       keepsRest = true;
       for (const name of props.keys()) {
-        props.set(name, 'kept');
+        props.set(name, keptWhole(name));
       }
     }
   };
@@ -220,12 +221,14 @@ function laidOver(
     const path = [...base, name];
     const given = unwrap(value);
     if (samePath(pathBelowElement(given, elements), path) || guarded().get(name) === given.getText()) {
-      props.set(name, 'kept');
+      props.set(name, keptWhole(name));
     } else if (ts.isObjectLiteralExpression(given)) {
       const inner = laidOver([given], at, elements, path);
-      props.set(name, !inner.keepsRest ? [path.join('.')] : inner.changed.length ? inner.changed : 'kept');
+      // Without a copy of the old object, what the literal doesn't keep is gone.
+      const changed = inner.keepsRest ? inner.changed : [path.join('.')];
+      props.set(name, changed.length ? { kept: inner.kept, changed } : keptWhole(name));
     } else {
-      props.set(name, [path.join('.')]);
+      props.set(name, { kept: [], changed: [path.join('.')] });
     }
   };
   for (const part of parts) {
@@ -248,8 +251,8 @@ function laidOver(
   }
   const entries = [...props];
   return {
-    kept: entries.flatMap(([name, value]) => (value === 'kept' ? [name] : [])),
-    changed: entries.flatMap(([, value]) => (value === 'kept' ? [] : value)),
+    kept: entries.flatMap(([, value]) => value.kept),
+    changed: entries.flatMap(([, value]) => value.changed),
     keepsRest,
   };
 }

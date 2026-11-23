@@ -467,19 +467,21 @@ function readsTime(e: ts.Node): boolean {
  * or from lifecycle hooks (calls): entry points for listeners, callbacks and other classes.
  */
 /** The methods that run only before the first build(): aboutToAppear, and helpers whose every use is a call outside
- *  handlers in such a method. A helper of an aboutToAppear that awaits may run after the first build(). */
+ *  handlers in such a method that awaits nothing. Code after an await may run after the first build(). */
 function setupMethods(scans: MethodWalk[]): Set<string> {
   const first = scans.find((scan) => scan.method.name === 'aboutToAppear');
   if (!first) {
     return new Set();
   }
   const setup = new Set([first.method.name]);
-  const awaits = (first.awaits.get(first.method.body) ?? []).length > 0;
+  const awaits = (scan: MethodWalk) => [...scan.awaits.values()].some((ends) => ends.length > 0);
   const onlyFrom = (name: string) =>
     scans.every((scan) =>
-      scan.uses.every((use) => use.name !== name || (setup.has(scan.method.name) && use.called && !use.inHandler)),
+      scan.uses.every(
+        (use) => use.name !== name || (setup.has(scan.method.name) && !awaits(scan) && use.called && !use.inHandler),
+      ),
     );
-  for (let changed = !awaits; changed; ) {
+  for (let changed = true; changed; ) {
     changed = false;
     for (const scan of scans) {
       const name = scan.method.name;

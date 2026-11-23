@@ -59,7 +59,8 @@ export interface RebuiltElement {
   form: 'map' | 'loop' | 'copy-index' | 'index' | 'splice';
   /** new: a `new T(…)`, whose properties are unknown (kept and changed stay empty). */
   value: 'object-literal' | 'new';
-  /** Properties that keep the element's value: `p: e.p`, or `p: X` under a guard `e.p === X`. */
+  /** Paths below the element that keep its value: `p` for `p: e.p` or for `p: X` under a guard `e.p === X`, `cell.id`
+   *  for `cell: { id: e.cell.id, … }`. */
   kept: string[];
   /** What else the literal sets, as paths below the element: `liked`, or `cell.title` for a nested literal over the
    *  element's own property (`cell: { ...e.cell, title: … }`). */
@@ -176,7 +177,8 @@ export interface LoopSource {
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
    *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
   itemsOf?: string;
-  /** The item properties the filters in that chain read: a change to one can move an element into the items or out. */
+  /** The item properties the filters in that chain test as flags (`s.liked`, `!s.hidden`): a change to one moves the
+   *  element into the items or out of them. */
   filteredBy?: string[];
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */

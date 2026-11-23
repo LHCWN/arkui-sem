@@ -401,7 +401,7 @@ function keyStaleCandidates(
     }
     const reads = rowReads(loop, component, facts, resolver);
     const rendered = new Set(reads.flatMap((read) => propPath(read.path) ?? []));
-    // A key property is the same under a kept key; a filtered one moves the element instead of leaving it stale.
+    // A key property is the same under a kept key; a filter flag moves the element instead of leaving it stale.
     const fixed = new Set([...(loop.key.props ?? []), ...(loop.source.filteredBy ?? [])]);
     const rebuilds: KeyStaleRebuild[] = writes.flatMap((write) =>
       (write.rebuilt ?? []).flatMap((element) => {
@@ -459,6 +459,9 @@ function keeps(element: RebuiltElement, prop: string): boolean {
  *  drops its top property; a `new T(…)` may change anything. */
 function changes(element: RebuiltElement, read: string): boolean {
   const top = read.split('.')[0];
+  if (element.kept.some((path) => within(read, path))) {
+    return false;
+  }
   return (
     element.value === 'new' ||
     element.changed.some((path) => within(path, read) || within(read, path)) ||

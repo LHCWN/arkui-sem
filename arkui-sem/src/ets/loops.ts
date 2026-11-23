@@ -96,7 +96,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
 }
 
 /** For `this.F` through calls that keep its elements only (`this.F.filter(…).slice(…)`): the item properties the
- *  filter callbacks read. Undefined for any other chain, or a filter whose callback is not written in place. */
+ *  filter callbacks test as flags. Undefined for any other chain, or a filter whose callback is not written in place. */
 function elementFilters(expr: ts.Expression): string[] | undefined {
   const props = new Set<string>();
   for (let value = unwrap(expr); thisMember(value) === undefined; ) {
@@ -121,7 +121,7 @@ function elementFilters(expr: ts.Expression): string[] | undefined {
   return [...props];
 }
 
-/** The properties of its item a filter callback reads: `p` in `(s) => s.p > 0`. Undefined unless it is a function
+/** The properties of its item a filter callback tests as flags (flagsTested). Undefined unless it is a function
  *  written in place with a named item. */
 function predicateReads(expr: ts.Expression): string[] | undefined {
   const fn = unwrap(expr);
@@ -129,15 +129,31 @@ function predicateReads(expr: ts.Expression): string[] | undefined {
   if (!isFunction(fn) || !fn.body || item === undefined) {
     return undefined;
   }
-  const out = new Set<string>();
-  const visit = (node: ts.Node) => {
-    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === item) {
-      out.add(node.name.text);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(fn.body);
-  return [...out];
+  const [returned] = ts.isBlock(fn.body)
+    ? fn.body.statements.flatMap((statement) =>
+        ts.isReturnStatement(statement) && statement.expression ? [statement.expression] : [],
+      )
+    : [fn.body];
+  return returned ? flagsTested(returned, item) : [];
+}
+
+/** The item properties a condition tests as flags (`s.liked`, `!s.hidden`, joined by `&&` or `||`): a change to one
+ *  flips the condition. A comparison (`s.plays > 0`) may hold before and after a change, so it counts for nothing. */
+function flagsTested(cond: ts.Expression, item: string): string[] {
+  const value = unwrap(cond);
+  if (ts.isPrefixUnaryExpression(value) && value.operator === ts.SyntaxKind.ExclamationToken) {
+    return flagsTested(value.operand, item);
+  }
+  if (
+    ts.isBinaryExpression(value) &&
+    (value.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      value.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+  ) {
+    return [...flagsTested(value.left, item), ...flagsTested(value.right, item)];
+  }
+  return ts.isPropertyAccessExpression(value) && ts.isIdentifier(value.expression) && value.expression.text === item
+    ? [value.name.text]
+    : [];
 }
 
 /** The component's fields an expression reads, directly or through the helpers it uses. */

@@ -171,6 +171,31 @@ struct SongRow {
     assert.deepEqual(stale(unknown), []);
   });
 
+  test('a filter that compares the changed property: the row can stay, so it is stale', () => {
+    const src = playlist(
+      '  play(i: number) {\n    this.songs[i] = { ...this.songs[i], plays: this.songs[i].plays + 1 }\n  }',
+      {
+        row: 'Text(`${s.plays}`)',
+      },
+    ).replace('ForEach(this.songs,', 'ForEach(this.songs.filter((s: Song) => s.plays > 0),');
+    assert.deepEqual(
+      stale(src).map((c) => c.rebuilds.map((r) => r.stale)),
+      [[['plays']]],
+    );
+  });
+
+  test('a nested literal that lists what it keeps: only the rest is stale', () => {
+    const rename =
+      "  rename(i: number) {\n    this.songs[i] = { ...this.songs[i], album: { id: this.songs[i].album.id, title: 'x' } }\n  }";
+    assert.deepEqual(stale(playlist(rename, { row: 'Text(`${s.album.id}`)' })), []);
+    assert.deepEqual(
+      stale(playlist(rename, { row: 'Row() { Text(`${s.album.id}`); Text(s.album.title) }' })).map((c) =>
+        c.rebuilds.map((r) => r.stale),
+      ),
+      [[['album.title']]],
+    );
+  });
+
   test('a nested change: stale only where the row reads it, named by its path', async () => {
     const retitle =
       "  retitle(i: number) {\n    this.songs[i] = { ...this.songs[i], album: { ...this.songs[i].album, title: 'x' } }\n  }";
@@ -283,6 +308,8 @@ describe('foreach-key-stale does not fire', () => {
     assert.equal(stale(tapped).length, 1);
     const awaited = `  async aboutToAppear() {\n    await this.load()\n    this.init()\n  }\n  async load() {}\n${init}`;
     assert.equal(stale(playlist(awaited)).length, 1);
+    const chained = `  aboutToAppear() {\n    this.load()\n  }\n  async load() {\n    await this.fetch()\n    this.init()\n  }\n  async fetch() {}\n${init}`;
+    assert.equal(stale(playlist(chained)).length, 1);
   });
 
   test('a disable comment above the ForEach call, above the field, or above the write', () => {

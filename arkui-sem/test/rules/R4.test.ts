@@ -175,7 +175,7 @@ struct Banner {
   assert.deepEqual(kinds(src), []);
 });
 
-test('the engine reports R4 kinds as questions from the facts, with the input, the setters and the fix', async () => {
+test('the engine reports input-unbound as a finding and input-never-read as a question, from the facts', async () => {
   const dir = tempDir();
   const file = join(dir, 'Editor.ets');
   put(file, editDialog());
@@ -187,7 +187,7 @@ test('the engine reports R4 kinds as questions from the facts, with the input, t
   assert.deepEqual(
     r4.map((f) => [f.kind, f.band, f.backend, f.p, f.subject]),
     [
-      ['input-unbound', 'question', FACTS, null, 'Editor.name'],
+      ['input-unbound', 'finding', FACTS, null, 'Editor.name'],
       ['input-never-read', 'question', FACTS, null, 'Market.query'],
     ],
   );
@@ -198,6 +198,10 @@ test('the engine reports R4 kinds as questions from the facts, with the input, t
   assert.match(unbound.fix, /TextInput\(\{ text: this\.name, … \}\)/);
   assert.match(neverRead.evidence, /TextInput at line 8 writes this\.query on every change, other code only resets it/);
   const text = formatForAgent(r4, dir);
-  assert.match(text, /\[R4\?\] Editor\.ets:18 Editor\.name \(facts\)/);
+  assert.match(
+    text,
+    /\[R4 input-unbound\] Editor\.ets:18 Editor\.name \(facts\)\n {2}why: .*\n {2}at: Editor\.ets:8\n/,
+  );
+  assert.match(text, /\[R4\?\] Market\.ets:3 Market\.query \(facts\)/);
   assert.match(text, /disable-next-line R4 -- <reason>` above the field's decorators, or above the input/);
 });

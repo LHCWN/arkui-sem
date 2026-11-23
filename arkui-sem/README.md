@@ -8,8 +8,8 @@ that V1 `@State` does not observe, a callback or `@Event` a child calls and no p
 is never released, a text input wired to its field one way (the field is set by code but not shown, or
 typed into but read nowhere). A fact extractor finds candidates; a small "System One" judge model scores each one; scores
 of 0.8 and above become findings, scores from 0.5 to 0.8 become questions back to the agent. The unwired
-callback and the input wiring are decided by the facts alone, with no judge call; the input kinds are asked as
-questions.
+callback and the input wiring are decided by the facts alone, with no judge call; an input nothing reads is asked
+as a question.
 
 ## Build and test
 

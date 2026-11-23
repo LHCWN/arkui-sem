@@ -85,13 +85,13 @@ Checked on 2026-11-11 with the CLI: both baselines give their finding (R3: heuri
 
 ## R4 demo
 
-- **R4 input wiring, `Notes.ets`.** Two text inputs are wired to their fields in one direction only. `Edit` puts the note's title into `draft`, but the title `TextInput` has no `text` option, so the edit box opens empty; saving without typing keeps the old title, but the form looks blank. The `Search` box writes `query` on every keystroke and nothing reads it, so the list never filters. Both are questions from the facts (no judge call).
+- **R4 input wiring, `Notes.ets`.** Two text inputs are wired to their fields in one direction only. `Edit` puts the note's title into `draft`, but the title `TextInput` has no `text` option, so the edit box opens empty; saving without typing keeps the old title, but the form looks blank. The `Search` box writes `query` on every keystroke and nothing reads it, so the list never filters. Both come from the facts (no judge call): the first is a finding, the second a question.
   ```
   On the Notes page (entry/src/main/ets/pages/Notes.ets), show how many notes there are under the list. Keep the change minimal.
   ```
-  Expect `[R4?] …Notes.ets:37 Notes.draft` (input-unbound; the fix binds `TextInput({ text: this.draft })` or `$$this.draft`) and `[R4?] …Notes.ets:10 Notes.query` (input-never-read; the fix filters the list by `query`, or removes the search box).
+  Expect `[R4 input-unbound] …Notes.ets:37 Notes.draft` (a finding; the fix binds `TextInput({ text: this.draft })` or `$$this.draft`) and `[R4?] …Notes.ets:10 Notes.query` (input-never-read, a question; the fix filters the list by `query`, or removes the search box).
 
-Checked on 2026-11-23 with the CLI: `Notes.ets` gives both questions and nothing else; the other pages give no R4 output.
+Checked on 2026-11-23 with the CLI: `Notes.ets` gives the finding and the question and nothing else; the other pages give no R4 output.
 
 An agent that reads this file learns the bugs and the fixes. In a Counter session it read that the bug is the demo's baseline and left it in. For a fair take, tell the agent not to read `DEMO.md`.
 

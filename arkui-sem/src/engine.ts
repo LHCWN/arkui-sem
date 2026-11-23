@@ -438,7 +438,7 @@ const KINDS: { [K in CandidateKind]: KindSpec<CandidateOf<K>> } = {
     ask: 'If it should be released',
   },
   'input-unbound': {
-    path: { facts: 'question' },
+    path: { facts: 'finding' },
     describe: describeInputUnbound,
     ask: 'If the input should show the value',
     disableWhere: "above the input, or above the field's decorators",

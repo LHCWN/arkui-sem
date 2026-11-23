@@ -13,7 +13,7 @@ evaluation steps is private: `bench/docs/plans/coverage-extensions.md`.
 | `foreach-key-stale` | R1 | Elements replaced with new objects under an unchanged ForEach key, while the row renders a changed property: ForEach keeps the old row. | finding |
 | `foreach-index-key` | R1 | ForEach keyed by position while the items at a position can change: rows keep their old content. | finding (question for some writers) |
 | `lazyforeach-source-rebuilt` | R1 | A LazyForEach data source created while drawing, or reassigned: LazyForEach updates only through its listener. | finding or question |
-| `input-unbound` | R4 | A text input whose state is written by code but not bound to the input, so the input never shows it. | question |
+| `input-unbound` | R4 | A text input whose state is written by code but not bound to the input, so the input never shows it. | finding |
 | `input-never-read` | R4 | State an input writes that nothing renders or reads. | question |
 | `selection-never-written` | R4 | A selection the rows compare against that nothing sets. | question |
 
@@ -46,9 +46,9 @@ evaluates each PR on its committed tree (regression over recorded agent sessions
 - Step 2: done (#33).
 - Step 3: done (#34).
 - Step 4: done (branch `r4-input-kinds`): `InputFact`, field reads in any method, constant writes, `input-unbound`
-  and `input-never-read` as questions; R4 widened in the roadmap and design docs; demo page `Notes.ets`.
+  (a finding) and `input-never-read` (a question); R4 widened in the roadmap and design docs; demo page `Notes.ets`.
 - Steps 5–7: not started.
 
 ## Open decisions
 
-- Whether `input-unbound` moves from question to finding (after the noise check).
+- None for step 4 (`input-unbound` became a finding after the noise check, review and device check).

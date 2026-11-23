@@ -2,8 +2,10 @@
 
 - **R4 widened (2026-11-19):** R4 is "state that doesn't do its job": wiring gaps (a text input whose field no input
   shows while code sets it, `input-unbound`; one whose field nothing reads, `input-never-read`; a selection nothing
-  sets) as well as the original over-reactive cases. The wiring kinds are decided by the facts and asked as questions
-  (V1, owned `@State` without `@Watch`); `input-unbound` may become a finding after the noise check. An input counts
+  sets) as well as the original over-reactive cases. The wiring kinds are decided by the facts (V1, owned `@State`
+  without `@Watch`). `input-unbound` is a finding (2026-11-23: every case on the replay and the noise check was real,
+  two confirmed on an emulator and by a model of another family); `input-never-read` stays a question, since a field
+  left unread on purpose (a stubbed debug page) looks the same. An input counts
   only the writes that store its typed text, and `input-never-read` fires only when typing has no other effect (an
   unread copy beside other work is a harmless dead store).
 - **Judge fallback chain:** Jev → Clef-flash → Clef → DeepSeek flash as System One (2026-10-05).

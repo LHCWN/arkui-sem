@@ -402,11 +402,11 @@ function keyStaleCandidates(
     const reads = rowReads(loop, component, facts, resolver);
     const rendered = new Set(reads.flatMap((read) => propPath(read.path) ?? []));
     // A key property is the same under a kept key; a filter flag moves the element instead of leaving it stale.
-    const fixed = new Set([...(loop.key.props ?? []), ...(loop.source.filteredBy ?? [])]);
+    const fixed = [...(loop.key.props ?? []), ...(loop.source.filteredBy ?? [])];
     const rebuilds: KeyStaleRebuild[] = writes.flatMap((write) =>
       (write.rebuilt ?? []).flatMap((element) => {
         const stale = keepsKey(element, loop.key)
-          ? [...rendered].filter((path) => !fixed.has(path.split('.')[0]) && changes(element, path))
+          ? [...rendered].filter((path) => !fixed.some((prop) => within(path, prop)) && changes(element, path))
           : [];
         return stale.length ? [{ write, element, stale }] : [];
       }),
@@ -450,9 +450,13 @@ function keepsKey(element: RebuiltElement, key: LoopKey): boolean {
   return key.kind === 'index' || element.value === 'new' || (key.props ?? []).every((p) => keeps(element, p));
 }
 
-/** The new object holds the element's value of the property; never known for a `new T(…)`. */
+/** The new object holds the element's value of the property path: it keeps the path or a property above it, or keeps
+ *  the rest and changes nothing at, below or above the path; never known for a `new T(…)`. */
 function keeps(element: RebuiltElement, prop: string): boolean {
-  return element.kept.includes(prop) || (element.keepsRest && !element.changed.some((path) => within(path, prop)));
+  return (
+    element.kept.some((path) => within(prop, path)) ||
+    (element.keepsRest && !element.changed.some((path) => within(path, prop) || within(prop, path)))
+  );
 }
 
 /** The new object may show something else at a read path: it changes the path, something below it or above it, or

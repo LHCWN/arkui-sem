@@ -230,7 +230,10 @@ function loopKey(
         } else if (!('prop' in first) || (path.length === 1 && called)) {
           other = true;
         } else {
-          props.add(first.prop);
+          // The properties down to the first index or method call: `s.album.id` → album.id, `s.id.toString()` → id.
+          const end = path.findIndex((segment) => !('prop' in segment));
+          const chain = (end < 0 ? path : path.slice(0, end)).map((segment) => ('prop' in segment ? segment.prop : ''));
+          props.add((called && end < 0 ? chain.slice(0, -1) : chain).join('.'));
         }
       }
     }

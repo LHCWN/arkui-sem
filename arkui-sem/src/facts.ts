@@ -194,7 +194,7 @@ export interface LoopKey {
   kind: 'default' | 'index' | 'props' | 'whole' | 'other';
   /** The key generator as written, on one line. */
   text?: string;
-  /** The item properties a props key reads, first level. */
+  /** The item properties a props key reads, dotted down to the first index or method call (`album.id`). */
   props?: string[];
   /** The final key includes the index: the default key, a generator reading it, or the ForEach join rule. */
   withIndex: boolean;

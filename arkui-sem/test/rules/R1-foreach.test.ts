@@ -210,6 +210,19 @@ struct SongRow {
     assert.match(f.fix, /e\.g\. \(s\) => `\$\{s\.id\}-\$\{s\.album\.title\}`/);
   });
 
+  test('a key on a nested property: kept by a nested literal, changed with the object above it', () => {
+    const key = '(s: Song) => `${s.album.id}`';
+    const row = 'Row() { Text(`${s.album.id}`); Text(s.album.title) }';
+    const rename =
+      "  rename(i: number) {\n    this.songs[i] = { ...this.songs[i], album: { id: this.songs[i].album.id, title: 'x' } }\n  }";
+    assert.deepEqual(
+      stale(playlist(rename, { row, key })).map((c) => c.rebuilds.map((r) => r.stale)),
+      [[['album.title']]],
+    );
+    const replace = "  swap(i: number) {\n    this.songs[i] = { ...this.songs[i], album: { id: 7, title: 'x' } }\n  }";
+    assert.deepEqual(stale(playlist(replace, { row, key })), []);
+  });
+
   test('a new instance under the key: the key property the row shows is not stale', () => {
     const src = playlist('  reset(i: number) {\n    this.songs[i] = new SongItem(this.songs[i].id)\n  }', {
       row: 'Row() { Text(`#${s.id}`); Text(s.title) }',
@@ -310,6 +323,10 @@ describe('foreach-key-stale does not fire', () => {
     assert.equal(stale(playlist(awaited)).length, 1);
     const chained = `  aboutToAppear() {\n    this.load()\n  }\n  async load() {\n    await this.fetch()\n    this.init()\n  }\n  async fetch() {}\n${init}`;
     assert.equal(stale(playlist(chained)).length, 1);
+    const later = `  aboutToAppear() {\n    this.init()\n    setTimeout(async () => { await this.load() }, 0)\n  }\n  async load() {}\n${init}`;
+    assert.deepEqual(stale(playlist(later)), []);
+    const after = `  async aboutToAppear() {\n    this.init()\n    await this.load()\n  }\n  async load() {}\n${init}`;
+    assert.deepEqual(stale(playlist(after)), []);
   });
 
   test('a disable comment above the ForEach call, above the field, or above the write', () => {

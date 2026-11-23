@@ -201,12 +201,14 @@ interface MethodWalk extends MethodScan {
   accesses: ts.PropertyAccessExpression[];
   /** function → end of each await directly in it */
   awaits: Map<ts.Node, number[]>;
+  /** The uses an await may delay: an await ends before the use in the method's body or in a function holding the use. */
+  delayed: Set<MethodScan['uses'][number]>;
 }
 
 /** One walk over a method's body: its uses of the component's methods, its calls, its awaits, and its accesses to
  *  fields. */
 function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string>, builders: BuilderNames): MethodWalk {
-  const out: MethodWalk = { method: m, uses: [], calls: [], accesses: [], awaits: new Map() };
+  const out: MethodWalk = { method: m, uses: [], calls: [], accesses: [], awaits: new Map(), delayed: new Set() };
   const scopes: ts.Node[] = [m.body];
   const visit = (n: ts.Node) => {
     const opens = n !== m.body && isFunction(n);
@@ -223,13 +225,18 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
     if (member !== undefined && ts.isPropertyAccessExpression(n)) {
       if (names.has(member) && member !== m.name) {
         const { inHandler, inForEach, attribute } = climb(n, m.body, builders);
-        out.uses.push({
+        const use = {
           name: member,
           called: ts.isCallExpression(n.parent) && n.parent.expression === n,
           inHandler,
           inForEach,
           ...(attribute === undefined ? {} : { attribute }),
-        });
+        };
+        out.uses.push(use);
+        // The walk is in source order, so every await that ends before n is already recorded.
+        if (scopes.some((scope) => (out.awaits.get(scope) ?? []).some((end) => end <= n.getStart()))) {
+          out.delayed.add(use);
+        }
       }
       if (fields.has(member)) {
         out.accesses.push(n);
@@ -467,18 +474,19 @@ function readsTime(e: ts.Node): boolean {
  * or from lifecycle hooks (calls): entry points for listeners, callbacks and other classes.
  */
 /** The methods that run only before the first build(): aboutToAppear, and helpers whose every use is a call outside
- *  handlers in such a method that awaits nothing. Code after an await may run after the first build(). */
+ *  handlers in such a method, with no await before it in its scope. Code after an await may run after the first
+ *  build(); an await in another callback (`setTimeout(async () => …)`) doesn't delay the call. */
 function setupMethods(scans: MethodWalk[]): Set<string> {
   const first = scans.find((scan) => scan.method.name === 'aboutToAppear');
   if (!first) {
     return new Set();
   }
   const setup = new Set([first.method.name]);
-  const awaits = (scan: MethodWalk) => [...scan.awaits.values()].some((ends) => ends.length > 0);
   const onlyFrom = (name: string) =>
     scans.every((scan) =>
       scan.uses.every(
-        (use) => use.name !== name || (setup.has(scan.method.name) && !awaits(scan) && use.called && !use.inHandler),
+        (use) =>
+          use.name !== name || (setup.has(scan.method.name) && !scan.delayed.has(use) && use.called && !use.inHandler),
       ),
     );
   for (let changed = true; changed; ) {

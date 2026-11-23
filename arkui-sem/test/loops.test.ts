@@ -109,7 +109,7 @@ describe('loop key', () => {
     assert.deepEqual(key(row, '(s: Song) => `${s.id}-${s.artist.name}`'), {
       kind: 'props',
       text: '(s: Song) => `${s.id}-${s.artist.name}`',
-      props: ['id', 'artist'],
+      props: ['id', 'artist.name'],
       withIndex: false,
     });
     assert.deepEqual(key(row, '(s: Song) => s.id.toString()').props, ['id']);

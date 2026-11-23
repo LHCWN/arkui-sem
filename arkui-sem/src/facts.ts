@@ -42,6 +42,8 @@ export interface WriteFact {
   accumulates?: true;
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
+  /** The write runs before the first build(): in aboutToAppear before any await, or in a helper only that calls. */
+  beforeFirstRender?: true;
   /** The new objects the write puts where elements of the field were (absent when none). */
   rebuilt?: RebuiltElement[];
   disabledRules: string[];
@@ -173,6 +175,8 @@ export interface LoopSource {
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
    *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
   itemsOf?: string;
+  /** The item properties the filters in that chain read: a change to one can move an element into the items or out. */
+  filteredBy?: string[];
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */
   fields: string[];

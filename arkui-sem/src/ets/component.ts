@@ -103,9 +103,13 @@ export function component(
     });
   }
   const external = externalMethods(scans);
+  const setup = setupMethods(scans);
   for (const f of fields) {
     for (const w of f.writes) {
       w.external = external.has(w.method);
+      if (w.context !== 'async-callback' && setup.has(w.method)) {
+        w.beforeFirstRender = true;
+      }
     }
   }
   const members = membersOf(scans, byName, builderNames);
@@ -462,6 +466,35 @@ function readsTime(e: ts.Node): boolean {
  * Methods no code in the component reaches from build()/@Builder (calls or `this.m` references, e.g. `.onClick(this.m)`)
  * or from lifecycle hooks (calls): entry points for listeners, callbacks and other classes.
  */
+/** The methods that run only before the first build(): aboutToAppear, and helpers whose every use is a call outside
+ *  handlers in such a method. A helper of an aboutToAppear that awaits may run after the first build(). */
+function setupMethods(scans: MethodWalk[]): Set<string> {
+  const first = scans.find((s) => s.method.name === 'aboutToAppear');
+  if (!first) {
+    return new Set();
+  }
+  const setup = new Set([first.method.name]);
+  const awaits = (first.awaits.get(first.method.body) ?? []).length > 0;
+  const onlyFrom = (name: string) =>
+    scans.every((s) => s.uses.every((u) => u.name !== name || (setup.has(s.method.name) && u.called && !u.inHandler)));
+  for (let changed = !awaits; changed; ) {
+    changed = false;
+    for (const s of scans) {
+      const name = s.method.name;
+      if (
+        !setup.has(name) &&
+        s.method.kind === 'method' &&
+        scans.some((o) => o.uses.some((u) => u.name === name)) &&
+        onlyFrom(name)
+      ) {
+        setup.add(name);
+        changed = true;
+      }
+    }
+  }
+  return setup;
+}
+
 function externalMethods(scans: MethodScan[]): Set<string> {
   const edges = new Map(
     scans.map((s) => [

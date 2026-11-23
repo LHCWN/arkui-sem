@@ -54,6 +54,7 @@ describe('loop source', () => {
     assert.equal(s.shape, 'derived');
     assert.equal(s.root, 'songs');
     assert.equal(s.itemsOf, 'songs');
+    assert.deepEqual(s.filteredBy, ['liked']);
     assert.deepEqual(s.fields.sort(), ['shelf', 'songs']);
   });
 

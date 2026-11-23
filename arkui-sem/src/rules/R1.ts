@@ -338,9 +338,10 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
 
     const { writes: nested, gaps } = isReactive(f) ? unobservedWrites(f, facts, resolver) : { writes: [] };
     if (nested.length > 0 && rendered) {
+      // A property of an element, not an element of a nested array (`this.grid[i][j]`).
       const belowElement = nested.some((w) => {
-        const first = w.path?.[0];
-        return first !== undefined && isIndex(first);
+        const [first, second] = w.path ?? [];
+        return first !== undefined && isIndex(first) && second !== undefined && !isIndex(second);
       });
       const [loop] = c.version === 'V1' && belowElement ? keyedLoops(c, f) : [];
       out.push({
@@ -376,7 +377,7 @@ function keyedLoops(c: ComponentFact, f: FieldFact): LoopFact[] {
  *  fingerprint names the key as written, plus a counter when the field has two loops with the same key. */
 function keyStaleCandidates(c: ComponentFact, f: FieldFact, facts: FileFacts, resolver?: ClassResolver): Candidate[] {
   const writes = f.writes.filter(
-    (w) => w.rebuilt && !feedsRender(w) && !beforeFirstRender(w) && !w.disabledRules.includes('R1'),
+    (w) => w.rebuilt && !feedsRender(w) && !w.beforeFirstRender && !w.disabledRules.includes('R1'),
   );
   if (writes.length === 0) {
     return [];
@@ -392,9 +393,13 @@ function keyStaleCandidates(c: ComponentFact, f: FieldFact, facts: FileFacts, re
     }
     const reads = rowReads(loop, c, facts, resolver);
     const rendered = new Set(reads.flatMap((r) => firstProp(r.path) ?? []));
+    // A key property is the same under a kept key; a filtered one moves the element instead of leaving it stale.
+    const fixed = new Set([...(loop.key.props ?? []), ...(loop.source.filteredBy ?? [])]);
     const rebuilds: KeyStaleRebuild[] = writes.flatMap((write) =>
       (write.rebuilt ?? []).flatMap((element) => {
-        const stale = keepsKey(element, loop.key) ? [...rendered].filter((p) => !keeps(element, p)) : [];
+        const stale = keepsKey(element, loop.key)
+          ? [...rendered].filter((p) => !keeps(element, p) && !fixed.has(p))
+          : [];
         return stale.length ? [{ write, element, stale }] : [];
       }),
     );
@@ -434,9 +439,4 @@ function keepsKey(e: RebuiltElement, key: LoopKey): boolean {
 /** The new object holds the element's value of the property; never known for a `new T(…)`. */
 function keeps(e: RebuiltElement, prop: string): boolean {
   return e.kept.includes(prop) || (e.keepsRest && !e.changed.includes(prop));
-}
-
-/** aboutToAppear runs before the first build(), so no row exists yet; its deferred callbacks are async writes. */
-function beforeFirstRender(w: WriteFact): boolean {
-  return w.context === 'lifecycle' && w.method === 'aboutToAppear';
 }

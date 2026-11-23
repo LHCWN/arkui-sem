@@ -151,7 +151,7 @@ struct SongRow {
     const src = playlist(TOGGLE_MAP).replace(
       '    List() {',
       `    Column() {
-      ForEach(this.songs.filter((s: Song) => s.liked), (s: Song) => { Text(s.liked ? 'x' : '') }, ${ID_KEY})
+      ForEach(this.songs.filter((s: Song) => s.plays > 0), (s: Song) => { Text(s.liked ? 'x' : '') }, ${ID_KEY})
     }
     List() {`,
     );
@@ -159,6 +159,30 @@ struct SongRow {
       stale(src).map((c) => c.fingerprint.split('#').at(-1)),
       ['R1-foreach-key@(s: Song) => `${s.id}`', 'R1-foreach-key@(s: Song) => `${s.id}`~2'],
     );
+  });
+
+  test('a filtered loop: a change to a property the filter reads moves the element instead', () => {
+    const src = playlist(TOGGLE_MAP).replace(
+      'ForEach(this.songs,',
+      'ForEach(this.songs.filter((s: Song) => !s.liked),',
+    );
+    assert.deepEqual(stale(src), []);
+    const unknown = playlist(TOGGLE_MAP).replace('ForEach(this.songs,', 'ForEach(this.songs.filter(this.visible),');
+    assert.deepEqual(stale(unknown), []);
+  });
+
+  test('a new instance under the key: the key property the row shows is not stale', () => {
+    const src = playlist('  reset(i: number) {\n    this.songs[i] = new SongItem(this.songs[i].id)\n  }', {
+      row: 'Row() { Text(`#${s.id}`); Text(s.title) }',
+    });
+    assert.deepEqual(
+      stale(src).map((c) => c.rebuilds.map((r) => r.stale)),
+      [[['title']]],
+    );
+    const keyOnly = playlist('  reset(i: number) {\n    this.songs[i] = new SongItem(this.songs[i].id)\n  }', {
+      row: 'Text(`#${s.id}`)',
+    });
+    assert.deepEqual(stale(keyOnly), []);
   });
 });
 
@@ -234,6 +258,19 @@ describe('foreach-key-stale does not fire', () => {
     assert.equal(stale(playlist(members)).length, 1);
   });
 
+  test('a helper only aboutToAppear calls runs before the first render; one a handler also calls does not', () => {
+    const init = `  private init() {
+    this.songs = this.songs.map((s: Song) => ({ ...s, liked: false }))
+  }`;
+    assert.deepEqual(stale(playlist(`  aboutToAppear() {\n    this.init()\n  }\n${init}`)), []);
+    const tapped = playlist(`  aboutToAppear() {\n    this.init()\n  }\n${init}`, {
+      row: 'Row() { Text(s.liked ? "on" : "off").onClick(() => { this.init() }) }',
+    });
+    assert.equal(stale(tapped).length, 1);
+    const awaited = `  async aboutToAppear() {\n    await this.load()\n    this.init()\n  }\n  async load() {}\n${init}`;
+    assert.equal(stale(playlist(awaited)).length, 1);
+  });
+
   test('a disable comment above the ForEach call, above the field, or above the write', () => {
     const above = playlist(TOGGLE_MAP).replace(
       '      ForEach(this.songs,',
@@ -306,6 +343,23 @@ describe('nested-write fix text with a keyed ForEach', () => {
 
   test('keeps the first-layer text without a keyed ForEach over the field', async () => {
     const [f] = (await findingsOf(nested('undefined'))).filter((x) => x.kind === 'nested-write-unobserved');
+    assert.match(f.fix, /^change it at the first layer instead/);
+  });
+
+  test('keeps the first-layer text for an element of a nested array', async () => {
+    const src = `@Component
+struct Board {
+  @State grid: number[][] = []
+  set(i: number, j: number) {
+    this.grid[i][j] = 1
+  }
+  build() {
+    Column() {
+      ForEach(this.grid, (row: number[]) => { Text(row.join()) }, (row: number[], i: number) => i.toString())
+    }
+  }
+}`;
+    const [f] = (await findingsOf(src)).filter((x) => x.kind === 'nested-write-unobserved');
     assert.match(f.fix, /^change it at the first layer instead/);
   });
 });

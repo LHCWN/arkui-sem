@@ -90,22 +90,54 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     return { text, shape: 'other', fields };
   }
   const root = rootField(value, members);
-  const itemsOf = root !== undefined && keepsElements(value) ? { itemsOf: root } : {};
-  return { text, shape: 'derived', ...(root === undefined ? {} : { root }), ...itemsOf, fields };
+  const filteredBy = root === undefined ? undefined : elementFilters(value);
+  const items = filteredBy === undefined ? {} : { itemsOf: root, ...(filteredBy.length ? { filteredBy } : {}) };
+  return { text, shape: 'derived', ...(root === undefined ? {} : { root }), ...items, fields };
 }
 
-/** `this.F` through calls that keep its elements only: `this.F.filter(…).slice(…)`. */
-function keepsElements(expr: ts.Expression): boolean {
+/** For `this.F` through calls that keep its elements only (`this.F.filter(…).slice(…)`): the item properties the
+ *  filter callbacks read. Undefined for any other chain, or a filter whose callback is not written in place. */
+function elementFilters(expr: ts.Expression): string[] | undefined {
+  const props = new Set<string>();
   for (let value = unwrap(expr); thisMember(value) === undefined; ) {
     if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
-      return false;
+      return undefined;
     }
-    if (!KEEPS_ELEMENTS.has(value.expression.name.text)) {
-      return false;
+    const method = value.expression.name.text;
+    if (!KEEPS_ELEMENTS.has(method)) {
+      return undefined;
+    }
+    if (method === 'filter') {
+      const read = value.arguments[0] && predicateReads(value.arguments[0]);
+      if (!read) {
+        return undefined;
+      }
+      for (const prop of read) {
+        props.add(prop);
+      }
     }
     value = unwrap(value.expression.expression);
   }
-  return true;
+  return [...props];
+}
+
+/** The properties of its item a filter callback reads: `p` in `(s) => s.p > 0`. Undefined unless it is a function
+ *  written in place with a named item. */
+function predicateReads(e: ts.Expression): string[] | undefined {
+  const fn = unwrap(e);
+  const item = isFunction(fn) && fn.body ? paramName(fn, 0) : undefined;
+  if (!isFunction(fn) || !fn.body || item === undefined) {
+    return undefined;
+  }
+  const out = new Set<string>();
+  const visit = (n: ts.Node) => {
+    if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === item) {
+      out.add(n.name.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(fn.body);
+  return [...out];
 }
 
 /** The component's fields an expression reads, directly or through the helpers it uses. */

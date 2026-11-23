@@ -84,3 +84,38 @@ test('a disable comment above a statement covers its arguments but not statement
   assert.deepEqual(scan.disabledFor(after), []);
   assert.deepEqual(scan.disabledFor(inBlock), []);
 });
+
+test('a disable comment covers an else-if condition, an unbraced branch and a field initializer', () => {
+  const source = [
+    'function f(a: boolean) {',
+    '  // arkui-sem-disable-next-line R4',
+    '  if (a) {',
+    '  } else if (g(1)) {',
+    '  }',
+    '  // arkui-sem-disable-next-line R4',
+    '  if (a)',
+    '    g(2)',
+    '}',
+    '@Component',
+    'struct S {',
+    '  // arkui-sem-disable-next-line R4',
+    '  @State x: number =',
+    '    g(3)',
+    '  build() {}',
+    '}',
+    'function g(x: number): number { return x }',
+  ].join('\n');
+  const scan = new FileScan('Page.ets', source, new EtsParser());
+  const calls: ts.CallExpression[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'g') {
+      calls.push(n);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scan.sf);
+  assert.deepEqual(
+    calls.map((c) => scan.disabledFor(c)),
+    [['R4'], ['R4'], ['R4']],
+  );
+});

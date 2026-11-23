@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { checkFiles, formatForAgent } from '../src/engine.js';
-import { put, tempDir } from './helpers.js';
+import { checkFiles, formatForAgent, toFinding } from '../src/engine.js';
+import { extract, put, tempDir } from './helpers.js';
 
 const bug = {
   name: 'stub',
@@ -188,4 +188,33 @@ test('a missing file is reported once as an error', async () => {
   assert.deepEqual(findings, []);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /Missing\.ets: ENOENT/);
+});
+
+/** An R2 ownership-intent question about the first field of a component with the given decorator and field. */
+function ownershipQuestion(decorator: '@Component' | '@ComponentV2', field: string) {
+  const facts = extract(`${decorator}\nstruct C {\n  ${field}\n  build() {\n    Text(this.v)\n  }\n}`, 'C.ets');
+  const component = facts.components[0];
+  const f = component.fields[0];
+  const c = {
+    rule: 'R2',
+    kind: 'ownership-intent',
+    file: 'C.ets',
+    component,
+    field: f,
+    line: f.line,
+    fingerprint: 'x',
+  } as const;
+  const finding = toFinding(c, 0.6, 'question', 'stub');
+  return { finding, text: formatForAgent([finding], '.') };
+}
+
+test('an ownership question asks about the sync direction and names the V1 decorators', () => {
+  const { finding, text } = ownershipQuestion('@Component', '@Prop v: string');
+  assert.match(finding.evidence, /^@Prop v is initialized by the parent/);
+  assert.match(text, /Is this intended\? If the sync direction is wrong: use @Link to share it with the parent, @Prop/);
+});
+
+test('a V2 ownership question offers @Param with an @Event callback', () => {
+  const { text } = ownershipQuestion('@ComponentV2', "@Param v: string = ''");
+  assert.match(text, /If the sync direction is wrong: use @Param plus an @Event callback/);
 });

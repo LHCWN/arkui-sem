@@ -26,7 +26,7 @@ Semantic lint for ArkTS/ArkUI declarative state (opencode v1 plugin + CLI). See 
 - `src/project.ts`: project index for cross-file rules (package lookup from oh-package.json5 and build-profile.json5, re-exports, file cache) and call-site edges (`callSites`: whole-project scan; `searchCallSites`: one struct, from a text search).
 - `src/search.ts`: the text search behind `searchCallSites` (ripgrep, else Node). `scripts/compare-callsites.mjs` checks the search against the scan.
 - `src/judge.ts`: System One backends, questions, slices; the backend registry (`BACKENDS`).
-- `src/engine.ts`: candidates → slices → judge → findings (≥ 0.8) and questions (0.5–0.8). A facts-only kind is one entry in `KINDS` plus the rule that emits it; a judged kind also needs its slice in `judge.ts`.
+- `src/engine.ts`: candidates → slices → judge → findings (≥ 0.8) and questions (0.5–0.8). A kind is the rule that emits it plus one entry in `KINDS` and one in `FIELD_SLICE` (`judge.ts`); the compiler checks both.
 - `src/opencode.ts`: the plugin (post-edit feedback, idle gate, tool `arkui_check`, language server lifecycle).
 - `src/config.ts`: settings merge order; `src/cli.ts`: `check`, `config`, `lsp`.
 - `src/lsp/`: ace-server client (definition, references, call hierarchy) and `warm.ts`, which keeps one server per project running for the plugin (started on the first edit, stopped on dispose); tests use `test/fixtures/fake-ace-server.mjs`.

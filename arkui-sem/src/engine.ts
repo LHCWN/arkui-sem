@@ -57,7 +57,7 @@ export function formatForAgent(findings: Finding[], cwd = process.cwd()): string
   for (const f of questions) {
     out.push(`- [${f.rule}?] ${relative(cwd, f.file)}:${f.line} ${f.subject} (${source(f)})`);
     const { ask, disableWhere } = KINDS[f.kind];
-    out.push(`  ${f.evidence}. Is this intended? ${ask ?? 'If it should behave reactively/be released'}: ${f.fix}`);
+    out.push(`  ${f.evidence}. Is this intended? ${ask}: ${f.fix}`);
     const where = disableWhere ?? `above line ${f.line}`;
     out.push(
       `  If it is intentional, leave it and add \`// arkui-sem-disable-next-line ${f.rule} -- <reason>\` ${where}.`,
@@ -298,26 +298,28 @@ interface KindSpec {
   describe(c: Candidate): Description;
   /** Where the question tells the agent to put a disable comment; above the finding's line when absent. */
   disableWhere?: string;
-  /** The question's lead-in to the fix, e.g. "If it should behave reactively"; a generic one when absent. */
-  ask?: string;
+  /** The question's lead-in to the fix, e.g. "If it should behave reactively". */
+  ask: string;
   related?(c: Candidate): Finding['related'];
 }
 
 const R1_JUDGE: KindPath = { judge: { questions: Q_R1, violation: 'desync_bug' } };
+const R1_ASK = 'If it should behave reactively';
 
-/** Every kind a rule emits. A facts-only kind is one entry here plus the rule that emits it; a judged kind also needs its
- *  slice in judge.ts. */
+/** Every kind a rule emits. A kind also picks its judge slice in FIELD_SLICE (judge.ts). */
 const KINDS: Record<CandidateKind, KindSpec> = {
-  'undecorated-mutated-rendered': { path: R1_JUDGE, describe: describeUndecorated },
+  'undecorated-mutated-rendered': { path: R1_JUDGE, describe: describeUndecorated, ask: R1_ASK },
   'nested-write-unobserved': {
     path: R1_JUDGE,
     describe: describeNested,
+    ask: R1_ASK,
     disableWhere: "above each write it lists, or above the field's decorators for all of them",
   },
   // The label assumes the @Link → @Prop mismatch (shared intent); callers map the other intent × decorator pairs.
   'ownership-intent': {
     path: { judge: { questions: Q_R2, violation: 'shared_with_parent' } },
     describe: describeOwnership,
+    ask: 'If the sync direction is wrong',
   },
   'event-unwired': {
     path: { facts: 'finding' },
@@ -327,11 +329,13 @@ const KINDS: Record<CandidateKind, KindSpec> = {
       }
       return describeUnwired(c.component, fieldOf(c), c.unwired);
     },
+    ask: 'If the call should do something',
     related: (c) => c.unwired?.omitted.map((s) => ({ file: s.file, line: s.line })),
   },
   'unreleased-resource': {
     path: { judge: { questions: Q_R3, violation: 'leak_bug' } },
     describe: describeResource,
+    ask: 'If it should be released',
   },
 };
 
@@ -400,7 +404,8 @@ interface Checked {
   c: Candidate;
 }
 
-function toFinding(c: Candidate, p: number | null, band: Band, backend: string): Finding {
+/** Exported for callers that build candidates themselves (R2 ownership) and for tests. */
+export function toFinding(c: Candidate, p: number | null, band: Band, backend: string): Finding {
   const spec = KINDS[c.kind];
   return {
     fingerprint: c.fingerprint,
@@ -497,15 +502,19 @@ export async function checkFiles(
     }
   };
 
-  for (const { facts, candidates: fileCandidates } of found) {
-    for (const c of fileCandidates) {
-      await decide({ facts, c });
+  // Judge results already fetched are kept even if a candidate throws.
+  try {
+    for (const { facts, candidates: fileCandidates } of found) {
+      for (const c of fileCandidates) {
+        await decide({ facts, c });
+      }
     }
+    for (const checked of await unwired) {
+      await decide(checked);
+    }
+  } finally {
+    cache.save();
   }
-  for (const checked of await unwired) {
-    await decide(checked);
-  }
-  cache.save();
   return { findings, errors };
 }
 

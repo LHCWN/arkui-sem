@@ -38,7 +38,7 @@ evaluates each PR on its committed tree (regression over recorded agent sessions
 
 ## Status
 
-- Step 1: in review.
+- Step 1: done (#32).
 - Steps 2–6: not started.
 
 ## Open decisions

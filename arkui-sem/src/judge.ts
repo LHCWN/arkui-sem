@@ -26,7 +26,7 @@ import {
   typeClass,
   typeKind,
 } from './queries.js';
-import type { Candidate } from './rules/index.js';
+import type { Candidate, CandidateKind } from './rules/index.js';
 
 // --- System One interface, Jev, Clef ---
 
@@ -363,6 +363,16 @@ function renderContexts(f: FieldFact): { for_each: boolean; attributes: string[]
   };
 }
 
+/** The slice a field kind sends the judge: R2's intent slice (no decorators) or R1's state slice. A new kind must pick
+ *  one here; a resource kind gets the R3 slice. */
+const FIELD_SLICE: Record<CandidateKind, 'intent' | 'state' | null> = {
+  'undecorated-mutated-rendered': 'state',
+  'nested-write-unobserved': 'state',
+  'ownership-intent': 'intent',
+  'event-unwired': null, // decided by the facts, never judged
+  'unreleased-resource': null,
+};
+
 /** extras: harness-supplied facts merged into the slice (for example an R2 parent call site). */
 export function buildSlice(
   facts: FileFacts,
@@ -386,7 +396,7 @@ export function buildSlice(
     }
     // A type that names no class still has a name to check, so the answers are false rather than unknown.
     const typeName = f.typeRef && (typeClass(f.typeRef, facts) ?? '');
-    if (c.rule === 'R2') {
+    if (FIELD_SLICE[c.kind] === 'intent') {
       // No decorators: R2 asks for the intent the decorator should express.
       candidate = {
         kind: c.kind,

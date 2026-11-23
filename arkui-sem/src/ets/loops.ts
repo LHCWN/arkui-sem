@@ -1,6 +1,6 @@
 // ForEach and LazyForEach calls, and what rows and builders do with the values they are given.
 import type { BuilderFact, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
-import { climb, isHandler } from './callbacks.js';
+import { climb, isEvent, isHandler } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
 import { argumentOf, isFunction, isWrapper, memberName, pathBelow, thisMember, unwrap } from './syntax.js';
@@ -247,10 +247,10 @@ function recordUse(
   out.reads.push({ line, path, ...at });
 }
 
-/** A callback property that draws by calling a builder: `Child({ content: () => { this.B(item) } })` fills a
- *  @BuilderParam. */
+/** A callback property other than an event that draws by calling a builder: `Child({ content: () => { B(item) } })`
+ *  fills a @BuilderParam. */
 function passesBuilder(fn: ts.Node, names: BuilderNames): boolean {
-  if (!ts.isPropertyAssignment(fn.parent)) {
+  if (!ts.isPropertyAssignment(fn.parent) || isEvent(memberName(fn.parent.name) ?? '')) {
     return false;
   }
   const visit = (n: ts.Node): boolean => {
@@ -258,7 +258,8 @@ function passesBuilder(fn: ts.Node, names: BuilderNames): boolean {
       const method = thisMember(n.expression);
       if (
         (method !== undefined && names.methods.has(method)) ||
-        (ts.isIdentifier(n.expression) && names.functions.has(n.expression.text))
+        (ts.isIdentifier(n.expression) &&
+          (names.functions.has(n.expression.text) || names.imports.has(n.expression.text)))
       ) {
         return true;
       }

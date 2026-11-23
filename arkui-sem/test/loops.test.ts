@@ -305,17 +305,31 @@ struct SongRow {
     );
   });
 
-  test('a builder called in a closure that fills a @BuilderParam draws the row', () => {
+  test('a builder, local or imported, called in a closure that fills a @BuilderParam draws the row; an event does not', () => {
     const facts = extract(
       page(
         '  @Builder Card(s: Song) { Text(s.title) }',
-        '      ForEach(this.songs, (s: Song) => { Sheet({ content: () => { this.Card(s) }, onClose: () => { s.liked = false } }) })',
-        HEAD,
+        `      ForEach(this.songs, (s: Song) => {
+        Sheet({
+          content: () => { this.Card(s) },
+          footer: () => { Cover(s.artist) },
+          onOpen: () => { this.Card(s) },
+          onClose: () => { s.liked = false },
+        })
+      })`,
+        `import { Cover } from './Cover'\n${HEAD}`,
       ),
     );
     assert.deepEqual(
+      facts.components[1].loops[0].row.builders.map((b) => b.builder),
+      ['Card', 'Cover'],
+    );
+    assert.deepEqual(
       reads(facts).map((r) => [pathText(r.path), r.via]),
-      [['.title', { kind: 'builder', name: 'Card' }]],
+      [
+        ['.title', { kind: 'builder', name: 'Card' }],
+        ['.artist', { kind: 'inline' }],
+      ],
     );
   });
 

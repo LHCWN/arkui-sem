@@ -42,7 +42,7 @@ function callName(fn: ts.Node): string {
   return call !== undefined && ts.isCallExpression(call) ? (calleeName(call) ?? '') : '';
 }
 
-function isEvent(name: string): boolean {
+export function isEvent(name: string): boolean {
   return EVENT_NAME.test(name) && !DRAWING_EVENTS.has(name);
 }
 

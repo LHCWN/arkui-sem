@@ -40,7 +40,7 @@ export function defers(fn: ts.Node): boolean {
 
 /** fn runs on an event or later and draws nothing: a deferred callback, an event callback, an animation body. names:
  *  the component's builders, whose calls draw. */
-export function isHandler(fn: ts.Node, names?: BuilderNames): boolean {
+export function isHandler(fn: ts.Node, names: BuilderNames): boolean {
   const name = callName(fn);
   return DEFERRING_CALLS.has(name) || ANIMATIONS.has(name) || isEvent(name) || isCallbackProperty(fn, names);
 }
@@ -60,7 +60,7 @@ export function isEvent(name: string): boolean {
  *  (`Child({ sliderChangeCallback: … })`) or to a constructor (`new CustomDialogController({ cancel: … })`). A property
  *  that creates UI draws: `Child({ content: () => { Text(…) } })` (a @BuilderParam), `{ builder: () => { … } }`, and so
  *  does one other than an event that calls a builder: `Child({ content: () => { this.Row(item) } })`. */
-function isCallbackProperty(fn: ts.Node, names: BuilderNames | undefined): boolean {
+function isCallbackProperty(fn: ts.Node, names: BuilderNames): boolean {
   const prop = fn.parent;
   if (!ts.isPropertyAssignment(prop) || prop.initializer !== fn || describesUi(fn)) {
     return false;
@@ -68,7 +68,7 @@ function isCallbackProperty(fn: ts.Node, names: BuilderNames | undefined): boole
   if (isEvent(memberName(prop.name) ?? '')) {
     return true;
   }
-  if (names && callsBuilder(fn, names)) {
+  if (callsBuilder(fn, names)) {
     return false;
   }
   const options = prop.parent;
@@ -88,10 +88,12 @@ function describesUi(fn: ts.Node): boolean {
   return ts.forEachChild(fn, visit) === true;
 }
 
-/** fn's body calls one of the builders. */
+/** fn's body calls a builder method or a builder function of the file. Imported names are left to describesUi, which
+ *  counts the capitalized ones: a lowercase import is more often a plain helper (`save(…)`). */
 function callsBuilder(fn: ts.Node, names: BuilderNames): boolean {
+  const local = { ...names, imports: new Set<string>() };
   const visit = (n: ts.Node): boolean =>
-    ((ts.isCallExpression(n) || ts.isEtsComponentExpression(n)) && isBuilderCall(n, names)) ||
+    ((ts.isCallExpression(n) || ts.isEtsComponentExpression(n)) && isBuilderCall(n, local)) ||
     ts.forEachChild(n, visit) === true;
   return ts.forEachChild(fn, visit) === true;
 }
@@ -119,7 +121,7 @@ function isComponentName(e: ts.Expression): boolean {
 export function climb(
   node: ts.Node,
   body: ts.Node,
-  names?: BuilderNames,
+  names: BuilderNames,
 ): Pick<BuildRead, 'attribute' | 'inForEach' | 'inHandler'> & { functions: ts.Node[]; deferringCall: boolean } {
   const functions: ts.Node[] = [];
   let deferringCall = false;

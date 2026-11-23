@@ -3,7 +3,7 @@ import type { BuilderFact, LoopFact, LoopKey, LoopSource, ValueUses } from '../f
 import { type BuilderNames, climb, isBuilderCall } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
-import { argumentOf, isFunction, isWrapper, memberName, pathBelow, thisMember, unwrap } from './syntax.js';
+import { argumentOf, isFunction, isKeyedLoop, isWrapper, memberName, pathBelow, thisMember, unwrap } from './syntax.js';
 
 /** What the component's fields and helpers are, for a loop's source. */
 export interface Members {
@@ -32,7 +32,7 @@ export function loopsIn(
   const visit = (node: ts.Node) => {
     if ((ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) && ts.isIdentifier(node.expression)) {
       const callee = node.expression.text;
-      if ((callee === 'ForEach' || callee === 'LazyForEach') && !climb(node, body, names).inHandler) {
+      if (isKeyedLoop(callee) && !climb(node, body, names).inHandler) {
         out.push(loopFact(node, callee, method, scan, names, members));
       }
     }
@@ -64,7 +64,7 @@ function loopFact(
     ...(indexParam === undefined ? {} : { indexParam }),
     itemDeclaresIndex,
     source: source ? loopSource(source, scan, members) : { text: '', shape: 'other', fields: [] },
-    key: loopKey(kind, keyGenerator, itemDeclaresIndex, scan),
+    key: loopKey(kind, keyGenerator, itemDeclaresIndex, scan, names),
     row: row?.body && itemParam !== undefined ? valueUses(itemParam, row.body, scan, names) : noUses(),
     creates: row?.body ? componentsIn(row.body, names) : [],
     disabledRules: scan.disabledFor(call),
@@ -149,6 +149,7 @@ function loopKey(
   generator: ts.Expression | undefined,
   itemDeclaresIndex: boolean,
   scan: FileScan,
+  names: BuilderNames,
 ): LoopKey {
   if (!generator || isNullish(unwrap(generator))) {
     return { kind: 'default', withIndex: true };
@@ -168,7 +169,7 @@ function loopKey(
     if (
       ts.isIdentifier(node) &&
       isReference(node) &&
-      !climb(node, fn.body).functions.some((inner) => shadows(inner, node.text))
+      !climb(node, fn.body, names).functions.some((inner) => shadows(inner, node.text))
     ) {
       if (node.text === index) {
         readsIndex = true;

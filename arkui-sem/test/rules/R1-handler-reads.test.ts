@@ -95,6 +95,7 @@ test('a closure property that calls a builder draws, unless the property is an e
   }
   for (const src of [
     withMethod('Child({ onShow: () => { this.Line(this.x) } })'),
+    plain('Child({ action: () => { save(this.x) } })', "import { save } from './store'"),
     plain('Child({ content: () => { this.bump(); console.info(String(this.x)) } })'),
   ]) {
     assert.deepEqual(undecorated(src), [], src);

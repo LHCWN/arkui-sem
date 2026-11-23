@@ -42,7 +42,31 @@ export interface WriteFact {
   accumulates?: true;
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
+  /** The write runs before the first build(): in aboutToAppear before any await, or in a helper only that calls. */
+  beforeFirstRender?: true;
+  /** The new objects the write puts where elements of the field were (absent when none). */
+  rebuilt?: RebuiltElement[];
   disabledRules: string[];
+}
+
+/**
+ * A new object put at an existing element's position. map: `this.F = this.F.map(cb)`. loop: a loop over this.F pushes
+ * it into the array then assigned to this.F. copy-index: `copy[i] = obj` on a copy of this.F then assigned to it.
+ * index: `this.F[i] = obj`. splice: `this.F.splice(i, n, obj)`.
+ */
+export interface RebuiltElement {
+  line: number;
+  form: 'map' | 'loop' | 'copy-index' | 'index' | 'splice';
+  /** new: a `new T(…)`, whose properties are unknown (kept and changed stay empty). */
+  value: 'object-literal' | 'new';
+  /** Paths below the element that keep its value: `p` for `p: e.p` or for `p: X` under a guard `e.p === X`, `cell.id`
+   *  for `cell: { id: e.cell.id, … }`. */
+  kept: string[];
+  /** What else the literal sets, as paths below the element: `liked`, or `cell.title` for a nested literal over the
+   *  element's own property (`cell: { ...e.cell, title: … }`). */
+  changed: string[];
+  /** The literal spreads the element (`{ ...e, … }`, `Object.assign({}, e, …)`): properties it doesn't set are kept. */
+  keepsRest: boolean;
 }
 
 export interface FieldFact {
@@ -135,6 +159,8 @@ export interface LoopFact {
   key: LoopKey;
   /** What the row does with the item outside handlers. */
   row: ValueUses;
+  /** The components the row creates outside handlers (`TextInput`, `Child`), by name. */
+  creates: string[];
   disabledRules: string[];
 }
 
@@ -148,6 +174,12 @@ export interface LoopSource {
   shape: 'field' | 'derived' | 'call' | 'new' | 'other';
   /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`). */
   root?: string;
+  /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
+   *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
+  itemsOf?: string;
+  /** The item properties the filters in that chain test as flags (`s.liked`, `!s.hidden`): a change to one moves the
+   *  element into the items or out of them. */
+  filteredBy?: string[];
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */
   fields: string[];
@@ -162,7 +194,7 @@ export interface LoopKey {
   kind: 'default' | 'index' | 'props' | 'whole' | 'other';
   /** The key generator as written, on one line. */
   text?: string;
-  /** The item properties a props key reads, first level. */
+  /** The item properties a props key reads, dotted down to the first index or method call (`album.id`). */
   props?: string[];
   /** The final key includes the index: the default key, a generator reading it, or the ForEach join rule. */
   withIndex: boolean;
@@ -217,6 +249,8 @@ export interface BuilderFact {
   line: number;
   /** In declaration order; a destructured parameter is unnamed and its uses are empty. */
   params: { name?: string; uses: ValueUses }[];
+  /** The components it creates outside handlers, by name. */
+  creates: string[];
 }
 
 /** A class, an interface or an object type alias (`type T = { … }`) declared in the file. */

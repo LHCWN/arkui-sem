@@ -32,6 +32,10 @@ One branch and PR per step, each after an explicit go.
 4. **R4 widened**, `input-unbound`, `input-never-read` (needs an input fact; can run in parallel with 2–3).
 5. **`foreach-index-key`** and **`lazyforeach-source-rebuilt`**.
 6. **`selection-never-written`** (needs 2 and 4).
+7. **Cleanup (no behaviour change)**, once every kind above has landed, so code kept for a later kind isn't taken for
+   dead: unused files, exports and dependencies (`knip`; `tsc --noUnusedLocals --noUnusedParameters` once), duplicated
+   walks over rows, builders and children, the tech-debt items that are cleanups, and the docs (`ARCHITECTURE.md`, the
+   code map, roadmap rows). The bench regression and noise check must show no difference, fingerprints included.
 
 Each PR: offline tests and fixtures; no change in the existing kinds' findings unless the PR is about them. The bench
 evaluates each PR on its committed tree (regression over recorded agent sessions, noise over open-source corpora).
@@ -40,7 +44,8 @@ evaluates each PR on its committed tree (regression over recorded agent sessions
 
 - Step 1: done (#32).
 - Step 2: done (#33).
-- Steps 3–6: not started.
+- Step 3: done (#34).
+- Steps 4–7: not started.
 
 ## Open decisions
 

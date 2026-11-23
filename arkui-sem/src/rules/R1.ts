@@ -5,8 +5,11 @@ import type {
   Declaration,
   FieldFact,
   FileFacts,
+  LoopFact,
+  LoopKey,
   ObjectLiteralFact,
   PathSegment,
+  RebuiltElement,
   TypeRef,
   WriteFact,
 } from '../facts.js';
@@ -29,12 +32,14 @@ import {
   nonNull,
   own,
   renderingReads,
+  rowHoldsState,
+  rowReads,
   sameDeclaration,
   scopedElementType,
   segmentText,
   typeFact,
 } from '../queries.js';
-import { type Candidate, fingerprint, type V2Gap } from './candidate.js';
+import { type Candidate, fingerprint, type KeyStaleRebuild, type V2Gap } from './candidate.js';
 
 /** Types whose index writes and API calls V2 observes on an observed property, besides arrays. */
 const V2_CONTAINERS = new Set(['Map', 'Set', 'Date', 'WeakMap', 'WeakSet']);
@@ -333,6 +338,12 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
 
     const { writes: nested, gaps } = isReactive(f) ? unobservedWrites(f, facts, resolver) : { writes: [] };
     if (nested.length > 0 && rendered) {
+      // A property of an element, not an element of a nested array (`this.grid[i][j]`).
+      const belowElement = nested.some((write) => {
+        const [first, second] = write.path ?? [];
+        return first !== undefined && isIndex(first) && second !== undefined && !isIndex(second);
+      });
+      const [loop] = c.version === 'V1' && belowElement ? keyedLoops(c, f) : [];
       out.push({
         rule: 'R1',
         kind: 'nested-write-unobserved',
@@ -342,9 +353,127 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
         line: nested[0].line,
         writes: nested,
         gaps,
+        ...(loop ? { loop } : {}),
         fingerprint: fingerprint(facts.file, subject, 'R1-nested'),
       });
     }
+
+    if (c.version === 'V1' && isReactive(f)) {
+      out.push(...keyStaleCandidates(c, f, facts, resolver));
+    }
   }
   return out;
+}
+
+/** The ForEach loops over the field's own elements whose key stays with an element: item properties or the index. */
+function keyedLoops(component: ComponentFact, field: FieldFact): LoopFact[] {
+  return component.loops.filter(
+    (loop) =>
+      loop.kind === 'ForEach' &&
+      loop.source.itemsOf === field.name &&
+      (loop.key.kind === 'props' || loop.key.kind === 'index'),
+  );
+}
+
+/** ForEach keeps the row of an existing key and does not pass it the new item (OpenHarmony ForEach docs, 数据变化不渲染):
+ *  one candidate per keyed loop over the field whose row renders a property that new objects under its key change. The
+ *  fingerprint names the key as written, plus a counter when the field has two loops with the same key. */
+function keyStaleCandidates(
+  component: ComponentFact,
+  field: FieldFact,
+  facts: FileFacts,
+  resolver?: ClassResolver,
+): Candidate[] {
+  const writes = field.writes.filter(
+    (write) => write.rebuilt && !feedsRender(write) && !write.beforeFirstRender && !write.disabledRules.includes('R1'),
+  );
+  if (writes.length === 0) {
+    return [];
+  }
+  const out: Candidate[] = [];
+  const seen = new Map<string, number>();
+  for (const loop of keyedLoops(component, field)) {
+    const keyText = loop.key.text ?? loop.key.kind;
+    const count = (seen.get(keyText) ?? 0) + 1;
+    seen.set(keyText, count);
+    if (loop.disabledRules.includes('R1')) {
+      continue;
+    }
+    const reads = rowReads(loop, component, facts, resolver);
+    const rendered = new Set(reads.flatMap((read) => propPath(read.path) ?? []));
+    // A key property is the same under a kept key; a filter flag moves the element instead of leaving it stale.
+    const fixed = [...(loop.key.props ?? []), ...(loop.source.filteredBy ?? [])];
+    const rebuilds: KeyStaleRebuild[] = writes.flatMap((write) =>
+      (write.rebuilt ?? []).flatMap((element) => {
+        const stale = keepsKey(element, loop.key)
+          ? [...rendered].filter((path) => !fixed.some((prop) => within(path, prop)) && changes(element, path))
+          : [];
+        return stale.length ? [{ write, element, stale }] : [];
+      }),
+    );
+    if (rebuilds.length === 0) {
+      continue;
+    }
+    const stale = new Set(rebuilds.flatMap((rebuild) => rebuild.stale));
+    out.push({
+      rule: 'R1',
+      kind: 'foreach-key-stale',
+      file: facts.file,
+      component,
+      field,
+      line: loop.line,
+      loop,
+      rebuilds,
+      opaque: rebuilds.every((rebuild) => rebuild.element.value === 'new'),
+      staleReads: reads.filter((read) => stale.has(propPath(read.path) ?? '')),
+      statefulRow: rowHoldsState(loop, component, facts, resolver),
+      fingerprint: fingerprint(
+        facts.file,
+        `${component.name}.${field.name}`,
+        `R1-foreach-key@${keyText}${count > 1 ? `~${count}` : ''}`,
+      ),
+    });
+  }
+  return out;
+}
+
+/** The properties a read path starts with, dotted (`cell.views`), up to the first index. */
+function propPath(path: PathSegment[]): string | undefined {
+  const end = path.findIndex(isIndex);
+  const props = (end < 0 ? path : path.slice(0, end)).map((segment) => ('prop' in segment ? segment.prop : ''));
+  return props.length ? props.join('.') : undefined;
+}
+
+/** The new object gives the row the same key: an index key, or every key property kept. A `new T(…)`, whose
+ *  properties are unknown, is taken to. */
+function keepsKey(element: RebuiltElement, key: LoopKey): boolean {
+  return key.kind === 'index' || element.value === 'new' || (key.props ?? []).every((p) => keeps(element, p));
+}
+
+/** The new object holds the element's value of the property path: it keeps the path or a property above it, or keeps
+ *  the rest and changes nothing at, below or above the path; never known for a `new T(…)`. */
+function keeps(element: RebuiltElement, prop: string): boolean {
+  return (
+    element.kept.some((path) => within(prop, path)) ||
+    (element.keepsRest && !element.changed.some((path) => within(path, prop) || within(prop, path)))
+  );
+}
+
+/** The new object may show something else at a read path: it changes the path, something below it or above it, or
+ *  drops its top property; a `new T(…)` may change anything. */
+function changes(element: RebuiltElement, read: string): boolean {
+  const top = read.split('.')[0];
+  if (element.kept.some((path) => within(read, path))) {
+    return false;
+  }
+  return (
+    element.value === 'new' ||
+    element.changed.some((path) => within(path, read) || within(read, path)) ||
+    (!element.keepsRest && !element.kept.includes(top) && !element.changed.some((path) => within(path, top)))
+  );
+}
+
+/** path is prop or below it: `cell.title` is within `cell`. */
+function within(path: string, prop: string): boolean {
+  return path === prop || path.startsWith(`${prop}.`);
 }

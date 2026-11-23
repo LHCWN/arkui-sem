@@ -40,14 +40,31 @@ describe('loop source', () => {
     only(page(members, `ForEach(${expr}, (s: Song) => { Text(s.title) })`)).source;
 
   test('a field', () => {
-    assert.deepEqual(source('this.songs'), { text: 'this.songs', shape: 'field', root: 'songs', fields: ['songs'] });
+    assert.deepEqual(source('this.songs'), {
+      text: 'this.songs',
+      shape: 'field',
+      root: 'songs',
+      itemsOf: 'songs',
+      fields: ['songs'],
+    });
   });
 
   test('derived from a field: the field it starts from is the root', () => {
     const s = source('this.songs.filter((x: Song) => x.liked).slice(0, this.shelf)');
     assert.equal(s.shape, 'derived');
     assert.equal(s.root, 'songs');
+    assert.equal(s.itemsOf, 'songs');
+    assert.deepEqual(s.filteredBy, ['liked']);
     assert.deepEqual(s.fields.sort(), ['shelf', 'songs']);
+  });
+
+  test("the items are the root's elements only through calls that keep them", () => {
+    assert.equal(source('this.songs.sort((a: Song, b: Song) => a.id - b.id).reverse()').itemsOf, 'songs');
+    for (const expr of ['this.songs[this.shelf].artist', 'this.songs.map((x: Song) => x.artist)']) {
+      const s = source(expr);
+      assert.equal(s.root, 'songs', expr);
+      assert.equal(s.itemsOf, undefined, expr);
+    }
   });
 
   test('a constant indexed by a field: derived, without a root', () => {
@@ -92,7 +109,7 @@ describe('loop key', () => {
     assert.deepEqual(key(row, '(s: Song) => `${s.id}-${s.artist.name}`'), {
       kind: 'props',
       text: '(s: Song) => `${s.id}-${s.artist.name}`',
-      props: ['id', 'artist'],
+      props: ['id', 'artist.name'],
       withIndex: false,
     });
     assert.deepEqual(key(row, '(s: Song) => s.id.toString()').props, ['id']);
@@ -191,6 +208,28 @@ describe('loop row', () => {
       ),
     );
     assert.deepEqual(loop.disabledRules, ['R1']);
+  });
+
+  test('the components a row and a builder create, outside handlers; builder calls are not components', () => {
+    const facts = extract(
+      page(
+        `  @Builder Editor(s: Song) { TextInput({ text: s.title }) }`,
+        `      ForEach(this.songs, (s: Song) => {
+        Row() {
+          Text(s.title)
+          SongCard({ song: s })
+          Tag(s.title)
+          this.Editor(s)
+          Button('x').bindSheet(true, () => { Slider() }).onClick(() => { Toggle() })
+        }
+      }, (s: Song) => \`\${s.id}\`)`,
+        `${MODEL}
+@Builder function Tag(t: string) { Text(t) }`,
+      ),
+    );
+    const c = facts.components[0];
+    assert.deepEqual(c.loops[0].creates.sort(), ['Button', 'Row', 'Slider', 'SongCard', 'Text']);
+    assert.deepEqual(c.builders[0].creates, ['TextInput']);
   });
 
   test('a row that is not a function written in place has no item', () => {

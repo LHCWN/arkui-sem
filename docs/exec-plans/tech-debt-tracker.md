@@ -7,6 +7,9 @@
 - Type inference covers `new X(…)` and object-literal initializers only (not factory calls or `as` casts); an inline object type is followed one level deep; a type alias of a class (`type U = User`) is not resolved, so writes through it are skipped.
 - Judge slices still describe the field's class from the edited file only (`type_is_observed_class`, `object_link_types_in_file`), even when the project index resolved it elsewhere.
 - The direct-render check for `@ObjectLink` sees only `this.<field>.<path>` reads: not reads through a `ForEach` item variable or a local alias, and for an array call not `ForEach(this.<field>.<array>, …)` in the parent.
+- `foreach-key-stale` (R1) is V1 only. It follows an array through one `const`/`let` local assigned once in the writing
+  method, not through other aliases, helpers or fields; elements bound by destructuring (`({ id, liked }) => …`) count
+  as unknown; a key property is kept only as `p: e.p`, a spread of the element, or `p: X` under a guard `e.p === X`.
 - The judge fallback chain is decided but not implemented (`docs/design-docs/decisions.md`).
 - The fact extractor reads one file's syntax tree, with no type checker: types come from annotations and `new X(…)` initializers, and writes through an alias (`const self = this; self.x = …`) are missed. Typed values from the ohos-typescript checker are planned (`docs/exec-plans/completed/cross-file-facts.md`, PR 2b); aliasing needs dataflow.
 - The project index caches facts by mtime only (an edit within the same mtime tick, or a tool that keeps mtimes, serves
@@ -91,7 +94,8 @@
 - Handler reads (`BuildRead.inHandler`, `ets/callbacks.ts`) are decided by syntax, not by what the callee does: an
   `on…` call's closure is a handler (except `onDragStart`) even if it draws; an option property (`on…` anywhere, any
   property of an object given to a child component or a constructor) is a handler unless it calls a capitalized
-  function, so a `@BuilderParam` closure that only calls a plain helper counts as a handler; other option callbacks not
+  function or a builder (other than in an `on…` property), so a `@BuilderParam` closure that only calls a plain helper
+  counts as a handler; other option callbacks not
   named `on…` (`.bindSheet(…, { shouldDismiss: … })`) and method-shorthand properties (`Child({ onChange(v) { … } })`)
   count as rendering.
 - No licence yet: the owner picks one before the repo goes public.

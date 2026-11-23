@@ -7,7 +7,7 @@ The one forward plan: plugin status and roadmap, rule coverage and phases. Desig
 The linter lives in `arkui-sem/` (package `arkui-sem` 0.2.0); see `ARCHITECTURE.md` for the layout and `arkui-sem/README.md` for install and usage. Coverage by rule, and what is still missing, is tracked under Rule coverage below.
 
 **Status:**
-- Rules: R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware, V1/V2), R3 unreleased-resource, R2 event-unwired (shape d, from facts alone, no judge call). The other R2 shapes have a judge slice (used by the bench) but are not emitted yet.
+- Rules: R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware, V1/V2), R1 foreach-key-stale (V1, from facts alone), R3 unreleased-resource, R2 event-unwired (shape d, from facts alone, no judge call). The other R2 shapes have a judge slice (used by the bench) but are not emitted yet.
 - Backends: Jev, Clef, Clef-flash (also through OpenRouter: `or-clef`, `or-clef-flash`), DeepSeek flash (structured output), heuristic, Laya. The fallback chain is not implemented.
 - Tests: `npm test` (offline). The plugin and its `arkui_check` tool load in opencode 1.18.30 and in DevEco Code 0.1.12 (an opencode fork; plugin under `.deveco/`; 0.2.x refuses to run outside Mainland China).
 - DevEco demo (2026-10-08, `sandbox/demo/DEMO.md`): Clef flagged the agent's nested write, the idle gate re-sent it for the old button, and the agent fixed both. The DevEco TUI hides tool output, so the demo prompt asks the agent to quote findings verbatim.
@@ -55,7 +55,7 @@ Background: `docs/design-docs/core-beliefs.md` §3–§4 (rungs, rule families, 
 
 | Rule | Name | Detects (facts) | Question for the judge or agent | Status |
 |---|---|---|---|---|
-| **R1** | Under-reactive state | A value rendered in `build()` and written after construction with no reactive path. Two kinds: an undecorated field, and a nested write the decorator can't see. | Q_R1: is it UI state or intentionally static? Verdict, severity. | Implemented, single file |
+| **R1** | Under-reactive state | A value rendered in `build()` and written after construction with no reactive path. Kinds: an undecorated field, a nested write the decorator can't see, and new objects under an unchanged ForEach key. | Q_R1: is it UI state or intentionally static? Verdict, severity. | Implemented, single file |
 | **R2** | Ownership mismatch | A child field initialised from parent state, where the sync direction the code gives ≠ the direction needed. | Q_R2: `child_local_copy` / `shared_with_parent` / `parent_display_only`. The engine maps intent × V1/V2 → decorator. | Shape d (event unwired) implemented, facts only. Shapes a–c: Q_R2 slice + spec cards, evaluated in the bench (`bench/docs/RESULTS.md`), not emitted by the plugin |
 | **R3** | Lifecycle obligation | A resource acquired with no release in `aboutToDisappear`. | Q_R3: app-lifetime? Released elsewhere? | Implemented (category 3): timers, listeners, constant-event `on`/`off`, register/subscribe pairs, helper-called releases. Evaluated in the bench (`bench/docs/RESULTS.md`) |
 | **R4** | Over-reactive state | Decorated state never written after init, or a large `@State` mutated at high frequency. | Is reactivity needed? Perf severity. | Not started |
@@ -81,7 +81,7 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | Item | Today | With an LSP server | Left after LSP |
 |---|---|---|---|
 | R1 undecorated field, mutated and rendered (V1/V2) | ✅ Facts + Q_R1; MDP runs in the bench | – | Intent verdict (judge/agent) |
-| R1 ForEach: elements replaced under an unchanged key (`foreach-key-stale`) | ❌ Planned (`coverage-extensions.md`) | – | Loop fact |
+| R1 ForEach: elements replaced under an unchanged key (`foreach-key-stale`) | ✅ V1, single file plus child components and builders across files; facts alone | – | Aliases beyond one local, V2 |
 | R1 ForEach keyed by index over changing items (`foreach-index-key`) | ❌ Planned | – | Loop fact |
 | R1 LazyForEach source rebuilt or reassigned (`lazyforeach-source-rebuilt`) | ❌ Planned | – | Loop fact |
 | R4 wiring: `input-unbound`, `input-never-read`, `selection-never-written` | ❌ Planned (questions) | – | Input fact, loop fact |

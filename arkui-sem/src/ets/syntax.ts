@@ -82,6 +82,11 @@ export function calleeName(call: ts.CallExpression): string | undefined {
   return ts.isIdentifier(e) ? e.text : ts.isPropertyAccessExpression(e) ? e.name.text : undefined;
 }
 
+/** A loop whose rows a key generator identifies. */
+export function isKeyedLoop(name: string): name is 'ForEach' | 'LazyForEach' {
+  return name === 'ForEach' || name === 'LazyForEach';
+}
+
 export function isFunction(n: ts.Node): n is ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration {
   return ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n);
 }

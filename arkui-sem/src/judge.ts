@@ -368,6 +368,7 @@ const FIELD_SLICE: Record<CandidateKind, 'intent' | 'state' | null> = {
   'nested-write-unobserved': 'state',
   'ownership-intent': 'intent',
   'event-unwired': null, // decided by the facts, never judged
+  'foreach-key-stale': null, // decided by the facts; a `new T(…)` makes a question without a judge call
   'unreleased-resource': null,
 };
 

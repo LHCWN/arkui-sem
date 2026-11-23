@@ -1,17 +1,9 @@
 // ForEach and LazyForEach calls, and what rows and builders do with the values they are given.
 import type { BuilderFact, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
-import { climb, isEvent, isHandler } from './callbacks.js';
+import { type BuilderNames, climb, isBuilderCall } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
-import { argumentOf, isFunction, isWrapper, memberName, pathBelow, thisMember, unwrap } from './syntax.js';
-
-/** The names a value can be passed to as a builder: the component's builder methods (`this.B(…)`), the file's builder
- *  functions, and imported names, which may be builders (`B(…)`). */
-export interface BuilderNames {
-  methods: Set<string>;
-  functions: Set<string>;
-  imports: Set<string>;
-}
+import { argumentOf, isFunction, isKeyedLoop, isWrapper, memberName, pathBelow, thisMember, unwrap } from './syntax.js';
 
 /** What the component's fields and helpers are, for a loop's source. */
 export interface Members {
@@ -23,6 +15,8 @@ export interface Members {
 }
 
 const COMPONENT_NAME = /^[A-Z]/;
+/** Array calls whose result holds elements of the array itself. */
+const KEEPS_ELEMENTS = new Set(['filter', 'slice', 'sort', 'reverse', 'concat', 'toSorted', 'toReversed']);
 
 type FunctionNode = ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | ts.MethodDeclaration;
 
@@ -38,7 +32,7 @@ export function loopsIn(
   const visit = (node: ts.Node) => {
     if ((ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) && ts.isIdentifier(node.expression)) {
       const callee = node.expression.text;
-      if ((callee === 'ForEach' || callee === 'LazyForEach') && !climb(node, body).inHandler) {
+      if (isKeyedLoop(callee) && !climb(node, body, names).inHandler) {
         out.push(loopFact(node, callee, method, scan, names, members));
       }
     }
@@ -70,8 +64,9 @@ function loopFact(
     ...(indexParam === undefined ? {} : { indexParam }),
     itemDeclaresIndex,
     source: source ? loopSource(source, scan, members) : { text: '', shape: 'other', fields: [] },
-    key: loopKey(kind, keyGenerator, itemDeclaresIndex, scan),
+    key: loopKey(kind, keyGenerator, itemDeclaresIndex, scan, names),
     row: row?.body && itemParam !== undefined ? valueUses(itemParam, row.body, scan, names) : noUses(),
+    creates: row?.body ? componentsIn(row.body, names) : [],
     disabledRules: scan.disabledFor(call),
   };
 }
@@ -81,7 +76,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const value = unwrap(expr);
   const member = thisMember(value);
   if (member !== undefined && members.fields.has(member)) {
-    return { text, shape: 'field', root: member, fields: [member] };
+    return { text, shape: 'field', root: member, itemsOf: member, fields: [member] };
   }
   const fields = fieldsRead(value, members);
   if (ts.isNewExpression(value)) {
@@ -95,7 +90,70 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     return { text, shape: 'other', fields };
   }
   const root = rootField(value, members);
-  return { text, shape: 'derived', ...(root === undefined ? {} : { root }), fields };
+  const filteredBy = root === undefined ? undefined : elementFilters(value);
+  const items = filteredBy === undefined ? {} : { itemsOf: root, ...(filteredBy.length ? { filteredBy } : {}) };
+  return { text, shape: 'derived', ...(root === undefined ? {} : { root }), ...items, fields };
+}
+
+/** For `this.F` through calls that keep its elements only (`this.F.filter(…).slice(…)`): the item properties the
+ *  filter callbacks test as flags. Undefined for any other chain, or a filter whose callback is not written in place. */
+function elementFilters(expr: ts.Expression): string[] | undefined {
+  const props = new Set<string>();
+  for (let value = unwrap(expr); thisMember(value) === undefined; ) {
+    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
+      return undefined;
+    }
+    const method = value.expression.name.text;
+    if (!KEEPS_ELEMENTS.has(method)) {
+      return undefined;
+    }
+    if (method === 'filter') {
+      const read = value.arguments[0] && predicateReads(value.arguments[0]);
+      if (!read) {
+        return undefined;
+      }
+      for (const prop of read) {
+        props.add(prop);
+      }
+    }
+    value = unwrap(value.expression.expression);
+  }
+  return [...props];
+}
+
+/** The properties of its item a filter callback tests as flags (flagsTested). Undefined unless it is a function
+ *  written in place with a named item. */
+function predicateReads(expr: ts.Expression): string[] | undefined {
+  const fn = unwrap(expr);
+  const item = isFunction(fn) && fn.body ? paramName(fn, 0) : undefined;
+  if (!isFunction(fn) || !fn.body || item === undefined) {
+    return undefined;
+  }
+  const [returned] = ts.isBlock(fn.body)
+    ? fn.body.statements.flatMap((statement) =>
+        ts.isReturnStatement(statement) && statement.expression ? [statement.expression] : [],
+      )
+    : [fn.body];
+  return returned ? flagsTested(returned, item) : [];
+}
+
+/** The item properties a condition tests as flags (`s.liked`, `!s.hidden`, joined by `&&` or `||`): a change to one
+ *  flips the condition. A comparison (`s.plays > 0`) may hold before and after a change, so it counts for nothing. */
+function flagsTested(cond: ts.Expression, item: string): string[] {
+  const value = unwrap(cond);
+  if (ts.isPrefixUnaryExpression(value) && value.operator === ts.SyntaxKind.ExclamationToken) {
+    return flagsTested(value.operand, item);
+  }
+  if (
+    ts.isBinaryExpression(value) &&
+    (value.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      value.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+  ) {
+    return [...flagsTested(value.left, item), ...flagsTested(value.right, item)];
+  }
+  return ts.isPropertyAccessExpression(value) && ts.isIdentifier(value.expression) && value.expression.text === item
+    ? [value.name.text]
+    : [];
 }
 
 /** The component's fields an expression reads, directly or through the helpers it uses. */
@@ -139,6 +197,7 @@ function loopKey(
   generator: ts.Expression | undefined,
   itemDeclaresIndex: boolean,
   scan: FileScan,
+  names: BuilderNames,
 ): LoopKey {
   if (!generator || isNullish(unwrap(generator))) {
     return { kind: 'default', withIndex: true };
@@ -158,7 +217,7 @@ function loopKey(
     if (
       ts.isIdentifier(node) &&
       isReference(node) &&
-      !climb(node, fn.body).functions.some((inner) => shadows(inner, node.text))
+      !climb(node, fn.body, names).functions.some((inner) => shadows(inner, node.text))
     ) {
       if (node.text === index) {
         readsIndex = true;
@@ -171,7 +230,10 @@ function loopKey(
         } else if (!('prop' in first) || (path.length === 1 && called)) {
           other = true;
         } else {
-          props.add(first.prop);
+          // The properties down to the first index or method call: `s.album.id` → album.id, `s.id.toString()` → id.
+          const end = path.findIndex((segment) => !('prop' in segment));
+          const chain = (end < 0 ? path : path.slice(0, end)).map((segment) => ('prop' in segment ? segment.prop : ''));
+          props.add((called && end < 0 ? chain.slice(0, -1) : chain).join('.'));
         }
       }
     }
@@ -200,7 +262,27 @@ export function builderFact(name: string, fn: FunctionNode, scan: FileScan, name
         ? { name: param.name.text, uses: valueUses(param.name.text, fn.body, scan, names) }
         : { uses: noUses() },
     ),
+    creates: fn.body ? componentsIn(fn.body, names) : [],
   };
+}
+
+/** The components a body creates outside handlers, by name, each once. */
+function componentsIn(body: ts.Node, names: BuilderNames): string[] {
+  const out = new Set<string>();
+  const visit = (node: ts.Node) => {
+    if (
+      (ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) &&
+      ts.isIdentifier(node.expression) &&
+      COMPONENT_NAME.test(node.expression.text) &&
+      !names.functions.has(node.expression.text) &&
+      !climb(node, body, names).inHandler
+    ) {
+      out.add(node.expression.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return [...out];
 }
 
 /** What a function body does with the value named `name` (its parameter) outside handlers. */
@@ -208,9 +290,8 @@ export function valueUses(name: string, body: ts.Node, scan: FileScan, names: Bu
   const out = noUses();
   const visit = (node: ts.Node) => {
     if (ts.isIdentifier(node) && node.text === name && isReference(node)) {
-      const where = climb(node, body);
-      const handler = where.functions.some((inner) => isHandler(inner) && !passesBuilder(inner, names));
-      if (!handler && !where.functions.some((inner) => shadows(inner, name))) {
+      const where = climb(node, body, names);
+      if (!where.inHandler && !where.functions.some((inner) => shadows(inner, name))) {
         recordUse(node, where.attribute, scan, names, out);
       }
     }
@@ -231,18 +312,12 @@ function recordUse(
   const { top, path } = pathBelow(id, scan.sf, isWrapper);
   const at = attribute === undefined ? {} : { attribute };
   const call = argumentOf(top);
-  if (call) {
-    const callee = call.expression;
+  if (call && isBuilderCall(call, names)) {
+    const method = thisMember(call.expression);
+    const builder = method ?? (ts.isIdentifier(call.expression) ? call.expression.text : '');
     const argument = call.arguments.indexOf(top);
-    const method = thisMember(callee);
-    if (method !== undefined && names.methods.has(method)) {
-      out.builders.push({ line, builder: method, method: true, argument, path, ...at });
-      return;
-    }
-    if (ts.isIdentifier(callee) && (names.functions.has(callee.text) || names.imports.has(callee.text))) {
-      out.builders.push({ line, builder: callee.text, method: false, argument, path, ...at });
-      return;
-    }
+    out.builders.push({ line, builder, method: method !== undefined, argument, path, ...at });
+    return;
   }
   const child = childArgument(top, names);
   if (child) {
@@ -250,28 +325,6 @@ function recordUse(
     return;
   }
   out.reads.push({ line, path, ...at });
-}
-
-/** A callback property other than an event that draws by calling a builder: `Child({ content: () => { B(item) } })`
- *  fills a @BuilderParam. */
-function passesBuilder(fn: ts.Node, names: BuilderNames): boolean {
-  if (!ts.isPropertyAssignment(fn.parent) || isEvent(memberName(fn.parent.name) ?? '')) {
-    return false;
-  }
-  const visit = (node: ts.Node): boolean => {
-    if (ts.isCallExpression(node)) {
-      const method = thisMember(node.expression);
-      if (
-        (method !== undefined && names.methods.has(method)) ||
-        (ts.isIdentifier(node.expression) &&
-          (names.functions.has(node.expression.text) || names.imports.has(node.expression.text)))
-      ) {
-        return true;
-      }
-    }
-    return ts.forEachChild(node, visit) === true;
-  };
-  return ts.forEachChild(fn, visit) === true;
 }
 
 /** `Child({ field: e })` or `Child({ e })` with e the expression: the child and the field it initializes. A component

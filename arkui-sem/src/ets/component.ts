@@ -9,10 +9,11 @@ import type {
   WriteContext,
   WriteFact,
 } from '../facts.js';
-import { climb } from './callbacks.js';
+import { type BuilderNames, climb } from './callbacks.js';
 import { LIFECYCLE } from './lifecycle.js';
-import { type BuilderNames, builderFact, loopsIn, type Members } from './loops.js';
+import { builderFact, loopsIn, type Members } from './loops.js';
 import { ts } from './parse.js';
+import { rebuiltElements } from './rebuilt.js';
 import { resources } from './resources.js';
 import type { FileScan } from './scan.js';
 import {
@@ -82,20 +83,6 @@ export function component(
     return ts.isPropertyDeclaration(m) && name !== undefined ? [fieldFact(m, name, scan)] : [];
   });
   const methods = methodsOf(s);
-  const byName = new Map(fields.map((f) => [f.name, f]));
-  const names = new Set(methods.map((m) => m.name));
-  const scans = methods.map((m) => scanMethod(m, byName, names));
-  const drawing = drawingMethods(scans);
-  const renderOnly = renderOnlyMethods(scans, drawing);
-  for (const s of scans) {
-    recordAccesses(s, byName, scan, { drawn: drawing.get(s.method), renderOnly: renderOnly.has(s.method) });
-  }
-  const external = externalMethods(scans);
-  for (const f of fields) {
-    for (const w of f.writes) {
-      w.external = external.has(w.method);
-    }
-  }
   const builderMethods = s.members.filter(
     (m): m is ts.MethodDeclaration & { name: ts.PropertyName } =>
       ts.isMethodDeclaration(m) && decoratorNames(m).some((d) => UI_BUILDERS.has(d)),
@@ -104,7 +91,28 @@ export function component(
     ...fileNames,
     methods: new Set(builderMethods.flatMap((m) => memberName(m.name) ?? [])),
   };
-  const members = membersOf(scans, byName);
+  const byName = new Map(fields.map((f) => [f.name, f]));
+  const names = new Set(methods.map((m) => m.name));
+  const scans = methods.map((m) => scanMethod(m, byName, names, builderNames));
+  const drawing = drawingMethods(scans);
+  const renderOnly = renderOnlyMethods(scans, drawing);
+  for (const s of scans) {
+    recordAccesses(s, byName, scan, builderNames, {
+      drawn: drawing.get(s.method),
+      renderOnly: renderOnly.has(s.method),
+    });
+  }
+  const external = externalMethods(scans);
+  const setup = setupMethods(scans);
+  for (const f of fields) {
+    for (const w of f.writes) {
+      w.external = external.has(w.method);
+      if (w.context !== 'async-callback' && setup.has(w.method)) {
+        w.beforeFirstRender = true;
+      }
+    }
+  }
+  const members = membersOf(scans, byName, builderNames);
   return {
     name: s.name.text,
     file: scan.file,
@@ -122,7 +130,7 @@ export function component(
 }
 
 /** The component's fields and helpers, and the fields each helper reads through the helpers it uses. */
-function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>): Members {
+function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders: BuilderNames): Members {
   const byName = new Map(scans.map((s) => [s.method.name, s]));
   const isHelper = (name: string, called: boolean) => byName.get(name)?.method.kind === (called ? 'method' : 'getter');
   const fieldsOf = (name: string): string[] => {
@@ -132,7 +140,7 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>): Members
     for (let method = todo.pop(); method !== undefined; method = todo.pop()) {
       const walk = byName.get(method);
       for (const access of walk?.accesses ?? []) {
-        if (walk && !climb(access, walk.method.body).inHandler) {
+        if (walk && !climb(access, walk.method.body, builders).inHandler) {
           out.add(access.name.text);
         }
       }
@@ -193,12 +201,14 @@ interface MethodWalk extends MethodScan {
   accesses: ts.PropertyAccessExpression[];
   /** function → end of each await directly in it */
   awaits: Map<ts.Node, number[]>;
+  /** The uses an await may delay: an await ends before the use in the method's body or in a function holding the use. */
+  delayed: Set<MethodScan['uses'][number]>;
 }
 
 /** One walk over a method's body: its uses of the component's methods, its calls, its awaits, and its accesses to
  *  fields. */
-function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string>): MethodWalk {
-  const out: MethodWalk = { method: m, uses: [], calls: [], accesses: [], awaits: new Map() };
+function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string>, builders: BuilderNames): MethodWalk {
+  const out: MethodWalk = { method: m, uses: [], calls: [], accesses: [], awaits: new Map(), delayed: new Set() };
   const scopes: ts.Node[] = [m.body];
   const visit = (n: ts.Node) => {
     const opens = n !== m.body && isFunction(n);
@@ -214,14 +224,19 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
     const member = thisMember(n);
     if (member !== undefined && ts.isPropertyAccessExpression(n)) {
       if (names.has(member) && member !== m.name) {
-        const { inHandler, inForEach, attribute } = climb(n, m.body);
-        out.uses.push({
+        const { inHandler, inForEach, attribute } = climb(n, m.body, builders);
+        const use = {
           name: member,
           called: ts.isCallExpression(n.parent) && n.parent.expression === n,
           inHandler,
           inForEach,
           ...(attribute === undefined ? {} : { attribute }),
-        });
+        };
+        out.uses.push(use);
+        // The walk is in source order, so every await that ends before n is already recorded.
+        if (scopes.some((scope) => (out.awaits.get(scope) ?? []).some((end) => end <= n.getStart()))) {
+          out.delayed.add(use);
+        }
       }
       if (fields.has(member)) {
         out.accesses.push(n);
@@ -298,6 +313,7 @@ function recordAccesses(
   walk: MethodWalk,
   fields: Map<string, FieldFact>,
   scan: FileScan,
+  builders: BuilderNames,
   { drawn, renderOnly }: { drawn: DrawSite | undefined; renderOnly: boolean },
 ) {
   const m = walk.method;
@@ -305,6 +321,7 @@ function recordAccesses(
     method: m,
     awaits: walk.awaits,
     scan,
+    builders,
     isBuild: rendersUi(m),
     drawn,
     renderOnly,
@@ -327,6 +344,7 @@ interface AccessContext {
   method: Method;
   awaits: Map<ts.Node, number[]>;
   scan: FileScan;
+  builders: BuilderNames;
   /** build() or a @Builder: its writes in handlers are build-closure writes. */
   isBuild: boolean;
   /** Where build() uses the method, if it draws the UI (drawingMethods): its reads are build reads, in that loop or
@@ -365,7 +383,7 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
   if (assignedTime && field.timeValue !== 'timer') {
     field.timeValue = assignedTime;
   }
-  const where = climb(base, ctx.method.body);
+  const where = climb(base, ctx.method.body, ctx.builders);
   if (!mutatingCall && !assignment && !updated) {
     if (ctx.drawn) {
       field.buildReads.push({
@@ -394,6 +412,7 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
           : 'method';
   // A mutating call changes the container below its receiver: `[]` with no index stands for it.
   const path: PathSegment[] = mutatingCall ? [...segments.slice(0, -1), { index: '' }] : segments;
+  const rebuilt = segments.length <= 1 ? rebuiltElements(field.name, top, ctx.scan) : [];
   const write: WriteFact = {
     line,
     context,
@@ -401,6 +420,7 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     path: path.length ? path : undefined,
     value: mutatingCall ? undefined : assignedValue(assignment),
     ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
+    ...(rebuilt.length ? { rebuilt } : {}),
     disabledRules: ctx.scan.disabledAt(line),
   };
   field.writes.push(write);
@@ -453,6 +473,40 @@ function readsTime(e: ts.Node): boolean {
  * Methods no code in the component reaches from build()/@Builder (calls or `this.m` references, e.g. `.onClick(this.m)`)
  * or from lifecycle hooks (calls): entry points for listeners, callbacks and other classes.
  */
+/** The methods that run only before the first build(): aboutToAppear, and helpers whose every use is a call outside
+ *  handlers in such a method, with no await before it in its scope. Code after an await may run after the first
+ *  build(); an await in another callback (`setTimeout(async () => …)`) doesn't delay the call. */
+function setupMethods(scans: MethodWalk[]): Set<string> {
+  const first = scans.find((scan) => scan.method.name === 'aboutToAppear');
+  if (!first) {
+    return new Set();
+  }
+  const setup = new Set([first.method.name]);
+  const onlyFrom = (name: string) =>
+    scans.every((scan) =>
+      scan.uses.every(
+        (use) =>
+          use.name !== name || (setup.has(scan.method.name) && !scan.delayed.has(use) && use.called && !use.inHandler),
+      ),
+    );
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const scan of scans) {
+      const name = scan.method.name;
+      if (
+        !setup.has(name) &&
+        scan.method.kind === 'method' &&
+        scans.some((other) => other.uses.some((use) => use.name === name)) &&
+        onlyFrom(name)
+      ) {
+        setup.add(name);
+        changed = true;
+      }
+    }
+  }
+  return setup;
+}
+
 function externalMethods(scans: MethodScan[]): Set<string> {
   const edges = new Map(
     scans.map((s) => [

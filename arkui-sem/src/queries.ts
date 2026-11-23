@@ -45,8 +45,13 @@ export interface RowRead {
 }
 
 /** What a loop's row renders of the item. A builder or child that can't be found counts as a read of what it is passed. */
-export function rowReads(loop: LoopFact, c: ComponentFact, facts: FileFacts, resolver?: ClassResolver): RowRead[] {
-  return valueReads(loop.row, [], { facts, component: c }, { kind: 'inline' }, resolver, new Set());
+export function rowReads(
+  loop: LoopFact,
+  component: ComponentFact,
+  facts: FileFacts,
+  resolver?: ClassResolver,
+): RowRead[] {
+  return valueReads(loop.row, [], { facts, component }, { kind: 'inline' }, resolver, new Set());
 }
 
 /** Where a value's uses sit: builder methods resolve in the component, builder functions in the file. */
@@ -72,8 +77,8 @@ function valueReads(
       ...(attribute === undefined ? {} : { attribute }),
       via,
     });
-  for (const r of uses.reads) {
-    read(r.line, r.path, r.attribute);
+  for (const use of uses.reads) {
+    read(use.line, use.path, use.attribute);
   }
   for (const pass of uses.builders) {
     const found = builderOf(pass.builder, pass.method, scope, resolver);
@@ -98,12 +103,12 @@ function valueReads(
       read(pass.line, pass.path, pass.attribute);
       continue;
     }
-    for (const r of renderingReads(field)) {
+    for (const childRead of renderingReads(field)) {
       out.push({
         file: decl.facts.file,
-        line: r.line,
-        path: [...prefix, ...pass.path, ...r.path],
-        ...(r.attribute === undefined ? {} : { attribute: r.attribute }),
+        line: childRead.line,
+        path: [...prefix, ...pass.path, ...childRead.path],
+        ...(childRead.attribute === undefined ? {} : { attribute: childRead.attribute }),
         via: { kind: 'child', child: decl.name, field: field.name, decorators: field.decorators },
       });
     }

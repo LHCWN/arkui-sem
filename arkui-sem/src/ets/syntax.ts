@@ -139,22 +139,22 @@ export function oneLine(s: string): string {
 /** The property and index path below an expression, and the outermost access: through the nodes `through` accepts
  *  (`!`, or any wrapper). */
 export function pathBelow(
-  e: ts.Expression,
+  expr: ts.Expression,
   sf: ts.SourceFile,
   through: (n: ts.Node) => n is ts.Expression & { expression: ts.Expression },
 ): { top: ts.Expression; path: PathSegment[] } {
   const path: PathSegment[] = [];
-  let top = e;
+  let top = expr;
   for (;;) {
-    const p = top.parent;
-    if (ts.isPropertyAccessExpression(p) && p.expression === top) {
-      path.push(p.questionDotToken ? { prop: p.name.text, optional: true } : { prop: p.name.text });
-    } else if (ts.isElementAccessExpression(p) && p.expression === top) {
-      const index = oneLine(p.argumentExpression.getText(sf));
-      path.push(p.questionDotToken ? { index, optional: true } : { index });
-    } else if (!(through(p) && p.expression === top)) {
+    const parent = top.parent;
+    if (ts.isPropertyAccessExpression(parent) && parent.expression === top) {
+      path.push(parent.questionDotToken ? { prop: parent.name.text, optional: true } : { prop: parent.name.text });
+    } else if (ts.isElementAccessExpression(parent) && parent.expression === top) {
+      const index = oneLine(parent.argumentExpression.getText(sf));
+      path.push(parent.questionDotToken ? { index, optional: true } : { index });
+    } else if (!(through(parent) && parent.expression === top)) {
       return { top, path };
     }
-    top = p;
+    top = parent;
   }
 }

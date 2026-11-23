@@ -129,17 +129,17 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>): Members
     const out = new Set<string>();
     const seen = new Set([name]);
     const todo = [name];
-    for (let m = todo.pop(); m !== undefined; m = todo.pop()) {
-      const walk = byName.get(m);
-      for (const a of walk?.accesses ?? []) {
-        if (walk && !climb(a, walk.method.body).inHandler) {
-          out.add(a.name.text);
+    for (let method = todo.pop(); method !== undefined; method = todo.pop()) {
+      const walk = byName.get(method);
+      for (const access of walk?.accesses ?? []) {
+        if (walk && !climb(access, walk.method.body).inHandler) {
+          out.add(access.name.text);
         }
       }
-      for (const u of walk?.uses ?? []) {
-        if (!u.inHandler && isHelper(u.name, u.called) && !seen.has(u.name)) {
-          seen.add(u.name);
-          todo.push(u.name);
+      for (const use of walk?.uses ?? []) {
+        if (!use.inHandler && isHelper(use.name, use.called) && !seen.has(use.name)) {
+          seen.add(use.name);
+          todo.push(use.name);
         }
       }
     }

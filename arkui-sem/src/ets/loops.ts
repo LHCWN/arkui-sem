@@ -35,14 +35,14 @@ export function loopsIn(
   members: Members,
 ): LoopFact[] {
   const out: LoopFact[] = [];
-  const visit = (n: ts.Node) => {
-    if ((ts.isCallExpression(n) || ts.isEtsComponentExpression(n)) && ts.isIdentifier(n.expression)) {
-      const callee = n.expression.text;
-      if ((callee === 'ForEach' || callee === 'LazyForEach') && !climb(n, body).inHandler) {
-        out.push(loopFact(n, callee, method, scan, names, members));
+  const visit = (node: ts.Node) => {
+    if ((ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) && ts.isIdentifier(node.expression)) {
+      const callee = node.expression.text;
+      if ((callee === 'ForEach' || callee === 'LazyForEach') && !climb(node, body).inHandler) {
+        out.push(loopFact(node, callee, method, scan, names, members));
       }
     }
-    ts.forEachChild(n, visit);
+    ts.forEachChild(node, visit);
   };
   visit(body);
   return out;
@@ -76,58 +76,58 @@ function loopFact(
   };
 }
 
-function loopSource(e: ts.Expression, scan: FileScan, members: Members): LoopSource {
-  const text = scan.text(e);
-  const v = unwrap(e);
-  const member = thisMember(v);
+function loopSource(expr: ts.Expression, scan: FileScan, members: Members): LoopSource {
+  const text = scan.text(expr);
+  const value = unwrap(expr);
+  const member = thisMember(value);
   if (member !== undefined && members.fields.has(member)) {
     return { text, shape: 'field', root: member, fields: [member] };
   }
-  const fields = fieldsRead(v, members);
-  if (ts.isNewExpression(v)) {
+  const fields = fieldsRead(value, members);
+  if (ts.isNewExpression(value)) {
     return { text, shape: 'new', fields };
   }
-  const helper = ts.isCallExpression(v) ? thisMember(v.expression) : member;
-  if (helper !== undefined && members.isHelper(helper, ts.isCallExpression(v))) {
+  const helper = ts.isCallExpression(value) ? thisMember(value.expression) : member;
+  if (helper !== undefined && members.isHelper(helper, ts.isCallExpression(value))) {
     return { text, shape: 'call', fields };
   }
   if (fields.length === 0) {
     return { text, shape: 'other', fields };
   }
-  const root = rootField(v, members);
+  const root = rootField(value, members);
   return { text, shape: 'derived', ...(root === undefined ? {} : { root }), fields };
 }
 
 /** The component's fields an expression reads, directly or through the helpers it uses. */
-function fieldsRead(e: ts.Node, members: Members): string[] {
+function fieldsRead(expr: ts.Node, members: Members): string[] {
   const out = new Set<string>();
-  const visit = (n: ts.Node) => {
-    const member = thisMember(n);
+  const visit = (node: ts.Node) => {
+    const member = thisMember(node);
     if (member !== undefined) {
-      const called = ts.isCallExpression(n.parent) && n.parent.expression === n;
+      const called = ts.isCallExpression(node.parent) && node.parent.expression === node;
       if (members.fields.has(member)) {
         out.add(member);
       } else if (members.isHelper(member, called)) {
-        for (const f of members.fieldsOf(member)) {
-          out.add(f);
+        for (const field of members.fieldsOf(member)) {
+          out.add(field);
         }
       }
     }
-    ts.forEachChild(n, visit);
+    ts.forEachChild(node, visit);
   };
-  visit(e);
+  visit(expr);
   return [...out];
 }
 
 /** The field a chain of calls, property and element accesses starts from: `F` in `this.F.filter(…).slice(…)[0].p`. */
-function rootField(e: ts.Expression, members: Members): string | undefined {
-  for (let v = unwrap(e); ; ) {
-    const member = thisMember(v);
+function rootField(expr: ts.Expression, members: Members): string | undefined {
+  for (let value = unwrap(expr); ; ) {
+    const member = thisMember(value);
     if (member !== undefined) {
       return members.fields.has(member) ? member : undefined;
     }
-    if (ts.isCallExpression(v) || ts.isPropertyAccessExpression(v) || ts.isElementAccessExpression(v)) {
-      v = unwrap(v.expression);
+    if (ts.isCallExpression(value) || ts.isPropertyAccessExpression(value) || ts.isElementAccessExpression(value)) {
+      value = unwrap(value.expression);
     } else {
       return undefined;
     }
@@ -154,12 +154,16 @@ function loopKey(
   let other = false;
   let readsIndex = false;
   const props = new Set<string>();
-  const visit = (n: ts.Node) => {
-    if (ts.isIdentifier(n) && isReference(n) && !climb(n, fn.body).functions.some((f) => shadows(f, n.text))) {
-      if (n.text === index) {
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isIdentifier(node) &&
+      isReference(node) &&
+      !climb(node, fn.body).functions.some((inner) => shadows(inner, node.text))
+    ) {
+      if (node.text === index) {
         readsIndex = true;
-      } else if (n.text === item) {
-        const { top, path } = pathBelow(n, scan.sf, isWrapper);
+      } else if (node.text === item) {
+        const { top, path } = pathBelow(node, scan.sf, isWrapper);
         const [first] = path;
         const called = ts.isCallExpression(top.parent) && top.parent.expression === top;
         if (first === undefined) {
@@ -171,7 +175,7 @@ function loopKey(
         }
       }
     }
-    ts.forEachChild(n, visit);
+    ts.forEachChild(node, visit);
   };
   visit(fn.body);
   const keyKind = whole ? 'whole' : other ? 'other' : props.size > 0 ? 'props' : readsIndex ? 'index' : 'other';
@@ -190,9 +194,10 @@ export function builderFact(name: string, fn: FunctionNode, scan: FileScan, name
   return {
     name,
     line: scan.line(fn.name ?? fn),
-    params: fn.parameters.map((p) =>
-      ts.isIdentifier(p.name) && fn.body
-        ? { name: p.name.text, uses: valueUses(p.name.text, fn.body, scan, names) }
+    // A destructured parameter gets no uses: ArkTS rejects it (arkts-no-destruct-params), so such code doesn't build.
+    params: fn.parameters.map((param) =>
+      ts.isIdentifier(param.name) && fn.body
+        ? { name: param.name.text, uses: valueUses(param.name.text, fn.body, scan, names) }
         : { uses: noUses() },
     ),
   };
@@ -201,15 +206,15 @@ export function builderFact(name: string, fn: FunctionNode, scan: FileScan, name
 /** What a function body does with the value named `name` (its parameter) outside handlers. */
 export function valueUses(name: string, body: ts.Node, scan: FileScan, names: BuilderNames): ValueUses {
   const out = noUses();
-  const visit = (n: ts.Node) => {
-    if (ts.isIdentifier(n) && n.text === name && isReference(n)) {
-      const where = climb(n, body);
-      const handler = where.functions.some((f) => isHandler(f) && !passesBuilder(f, names));
-      if (!handler && !where.functions.some((f) => shadows(f, name))) {
-        recordUse(n, where.attribute, scan, names, out);
+  const visit = (node: ts.Node) => {
+    if (ts.isIdentifier(node) && node.text === name && isReference(node)) {
+      const where = climb(node, body);
+      const handler = where.functions.some((inner) => isHandler(inner) && !passesBuilder(inner, names));
+      if (!handler && !where.functions.some((inner) => shadows(inner, name))) {
+        recordUse(node, where.attribute, scan, names, out);
       }
     }
-    ts.forEachChild(n, visit);
+    ts.forEachChild(node, visit);
   };
   visit(body);
   return out;
@@ -253,28 +258,28 @@ function passesBuilder(fn: ts.Node, names: BuilderNames): boolean {
   if (!ts.isPropertyAssignment(fn.parent) || isEvent(memberName(fn.parent.name) ?? '')) {
     return false;
   }
-  const visit = (n: ts.Node): boolean => {
-    if (ts.isCallExpression(n)) {
-      const method = thisMember(n.expression);
+  const visit = (node: ts.Node): boolean => {
+    if (ts.isCallExpression(node)) {
+      const method = thisMember(node.expression);
       if (
         (method !== undefined && names.methods.has(method)) ||
-        (ts.isIdentifier(n.expression) &&
-          (names.functions.has(n.expression.text) || names.imports.has(n.expression.text)))
+        (ts.isIdentifier(node.expression) &&
+          (names.functions.has(node.expression.text) || names.imports.has(node.expression.text)))
       ) {
         return true;
       }
     }
-    return ts.forEachChild(n, visit) === true;
+    return ts.forEachChild(node, visit) === true;
   };
   return ts.forEachChild(fn, visit) === true;
 }
 
 /** `Child({ field: e })` or `Child({ e })` with e the expression: the child and the field it initializes. A component
  *  is capitalized; a builder function taking an object is no child. */
-function childArgument(e: ts.Expression, names: BuilderNames): { child: string; field: string } | undefined {
-  const prop = e.parent;
+function childArgument(value: ts.Expression, names: BuilderNames): { child: string; field: string } | undefined {
+  const prop = value.parent;
   const field =
-    ts.isShorthandPropertyAssignment(prop) || (ts.isPropertyAssignment(prop) && prop.initializer === e)
+    ts.isShorthandPropertyAssignment(prop) || (ts.isPropertyAssignment(prop) && prop.initializer === value)
       ? memberName(prop.name)
       : undefined;
   const options = prop.parent;
@@ -290,26 +295,28 @@ function childArgument(e: ts.Expression, names: BuilderNames): { child: string; 
 
 /** An identifier that refers to a variable: not a property name, a declared name or a parameter. */
 function isReference(id: ts.Identifier): boolean {
-  const p = id.parent;
+  const parent = id.parent;
   return !(
-    ((ts.isPropertyAccessExpression(p) || ts.isPropertyAssignment(p)) && p.name === id) ||
-    ((ts.isParameter(p) || ts.isVariableDeclaration(p) || ts.isBindingElement(p)) && p.name === id) ||
-    ((isFunction(p) || ts.isMethodDeclaration(p) || ts.isGetAccessor(p) || ts.isSetAccessor(p)) && p.name === id)
+    ((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === id) ||
+    ((ts.isParameter(parent) || ts.isVariableDeclaration(parent) || ts.isBindingElement(parent)) &&
+      parent.name === id) ||
+    ((isFunction(parent) || ts.isMethodDeclaration(parent) || ts.isGetAccessor(parent) || ts.isSetAccessor(parent)) &&
+      parent.name === id)
   );
 }
 
 /** A function declares `name` as a parameter, which hides an outer variable of that name. */
 function shadows(fn: ts.Node, name: string): boolean {
-  return isFunction(fn) && fn.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === name);
+  return isFunction(fn) && fn.parameters.some((param) => ts.isIdentifier(param.name) && param.name.text === name);
 }
 
-function paramName(fn: ts.SignatureDeclarationBase, i: number): string | undefined {
-  const p = fn.parameters[i];
-  return p && ts.isIdentifier(p.name) ? p.name.text : undefined;
+function paramName(fn: ts.SignatureDeclarationBase, index: number): string | undefined {
+  const param = fn.parameters[index];
+  return param && ts.isIdentifier(param.name) ? param.name.text : undefined;
 }
 
-function isNullish(e: ts.Expression): boolean {
-  return e.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(e) && e.text === 'undefined');
+function isNullish(expr: ts.Expression): boolean {
+  return expr.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(expr) && expr.text === 'undefined');
 }
 
 function noUses(): ValueUses {

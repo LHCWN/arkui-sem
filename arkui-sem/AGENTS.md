@@ -36,6 +36,8 @@ Semantic lint for ArkTS/ArkUI declarative state (opencode v1 plugin + CLI). See 
 
 - ESM TypeScript, Node ≥ 22, [Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html); Biome formats at 120 columns.
 - No `any`, no non-null `!`.
+- Names are words (`node`, `field`, `param`, `expr`). A one-letter name only for the parameter of a short lambda
+  (`(f) => f.name`).
 - Match the surrounding style.
 - A rule or backend change comes with an offline test: `test/rules/R<n>.test.ts` or `test/<module>.test.ts`, helpers in `test/helpers.ts`.
 - Commit messages describe the linter change only.

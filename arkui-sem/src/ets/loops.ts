@@ -1,17 +1,9 @@
 // ForEach and LazyForEach calls, and what rows and builders do with the values they are given.
 import type { BuilderFact, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
-import { climb, isEvent, isHandler } from './callbacks.js';
+import { type BuilderNames, climb, isBuilderCall } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
 import { argumentOf, isFunction, isWrapper, memberName, pathBelow, thisMember, unwrap } from './syntax.js';
-
-/** The names a value can be passed to as a builder: the component's builder methods (`this.B(…)`), the file's builder
- *  functions, and imported names, which may be builders (`B(…)`). */
-export interface BuilderNames {
-  methods: Set<string>;
-  functions: Set<string>;
-  imports: Set<string>;
-}
 
 /** What the component's fields and helpers are, for a loop's source. */
 export interface Members {
@@ -38,7 +30,7 @@ export function loopsIn(
   const visit = (node: ts.Node) => {
     if ((ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) && ts.isIdentifier(node.expression)) {
       const callee = node.expression.text;
-      if ((callee === 'ForEach' || callee === 'LazyForEach') && !climb(node, body).inHandler) {
+      if ((callee === 'ForEach' || callee === 'LazyForEach') && !climb(node, body, names).inHandler) {
         out.push(loopFact(node, callee, method, scan, names, members));
       }
     }
@@ -208,9 +200,8 @@ export function valueUses(name: string, body: ts.Node, scan: FileScan, names: Bu
   const out = noUses();
   const visit = (node: ts.Node) => {
     if (ts.isIdentifier(node) && node.text === name && isReference(node)) {
-      const where = climb(node, body);
-      const handler = where.functions.some((inner) => isHandler(inner) && !passesBuilder(inner, names));
-      if (!handler && !where.functions.some((inner) => shadows(inner, name))) {
+      const where = climb(node, body, names);
+      if (!where.inHandler && !where.functions.some((inner) => shadows(inner, name))) {
         recordUse(node, where.attribute, scan, names, out);
       }
     }
@@ -231,18 +222,12 @@ function recordUse(
   const { top, path } = pathBelow(id, scan.sf, isWrapper);
   const at = attribute === undefined ? {} : { attribute };
   const call = argumentOf(top);
-  if (call) {
-    const callee = call.expression;
+  if (call && isBuilderCall(call, names)) {
+    const method = thisMember(call.expression);
+    const builder = method ?? (ts.isIdentifier(call.expression) ? call.expression.text : '');
     const argument = call.arguments.indexOf(top);
-    const method = thisMember(callee);
-    if (method !== undefined && names.methods.has(method)) {
-      out.builders.push({ line, builder: method, method: true, argument, path, ...at });
-      return;
-    }
-    if (ts.isIdentifier(callee) && (names.functions.has(callee.text) || names.imports.has(callee.text))) {
-      out.builders.push({ line, builder: callee.text, method: false, argument, path, ...at });
-      return;
-    }
+    out.builders.push({ line, builder, method: method !== undefined, argument, path, ...at });
+    return;
   }
   const child = childArgument(top, names);
   if (child) {
@@ -250,28 +235,6 @@ function recordUse(
     return;
   }
   out.reads.push({ line, path, ...at });
-}
-
-/** A callback property other than an event that draws by calling a builder: `Child({ content: () => { B(item) } })`
- *  fills a @BuilderParam. */
-function passesBuilder(fn: ts.Node, names: BuilderNames): boolean {
-  if (!ts.isPropertyAssignment(fn.parent) || isEvent(memberName(fn.parent.name) ?? '')) {
-    return false;
-  }
-  const visit = (node: ts.Node): boolean => {
-    if (ts.isCallExpression(node)) {
-      const method = thisMember(node.expression);
-      if (
-        (method !== undefined && names.methods.has(method)) ||
-        (ts.isIdentifier(node.expression) &&
-          (names.functions.has(node.expression.text) || names.imports.has(node.expression.text)))
-      ) {
-        return true;
-      }
-    }
-    return ts.forEachChild(node, visit) === true;
-  };
-  return ts.forEachChild(fn, visit) === true;
 }
 
 /** `Child({ field: e })` or `Child({ e })` with e the expression: the child and the field it initializes. A component

@@ -81,6 +81,26 @@ test('reads in loops, builders, trailing content and unknown closures still rend
   }
 });
 
+test('a closure property that calls a builder draws, unless the property is an event', () => {
+  const builders = `@Builder function Badge(v: number) { Text(String(v)) }
+`;
+  const withMethod = (body: string) =>
+    plain(body).replace('  build() {', '  @Builder Line(v: number) { Text(String(v)) }\n  build() {');
+  for (const src of [
+    withMethod('Child({ content: () => { this.Line(this.x) } })'),
+    plain('Child({ content: () => { Badge(this.x) } })', builders),
+    plain('Child({ content: () => { Shared(this.x) } })', "import { Shared } from './shared'"),
+  ]) {
+    assert.deepEqual(undecorated(src), ['x'], src);
+  }
+  for (const src of [
+    withMethod('Child({ onShow: () => { this.Line(this.x) } })'),
+    plain('Child({ content: () => { this.bump(); console.info(String(this.x)) } })'),
+  ]) {
+    assert.deepEqual(undecorated(src), [], src);
+  }
+});
+
 test('a field read in rendering and in a handler stays a candidate; evidence cites the rendering read', () => {
   const src = plain(`Button('a').onClick(() => { console.info(String(this.x)) })
       Text(String(this.x))`);

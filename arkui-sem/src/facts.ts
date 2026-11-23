@@ -155,6 +155,8 @@ export interface LoopFact {
   key: LoopKey;
   /** What the row does with the item outside handlers. */
   row: ValueUses;
+  /** The components the row creates outside handlers (`TextInput`, `Child`), by name. */
+  creates: string[];
   disabledRules: string[];
 }
 
@@ -168,6 +170,9 @@ export interface LoopSource {
   shape: 'field' | 'derived' | 'call' | 'new' | 'other';
   /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`). */
   root?: string;
+  /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
+   *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
+  itemsOf?: string;
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */
   fields: string[];
@@ -237,6 +242,8 @@ export interface BuilderFact {
   line: number;
   /** In declaration order; a destructured parameter is unnamed and its uses are empty. */
   params: { name?: string; uses: ValueUses }[];
+  /** The components it creates outside handlers, by name. */
+  creates: string[];
 }
 
 /** A class, an interface or an object type alias (`type T = { … }`) declared in the file. */

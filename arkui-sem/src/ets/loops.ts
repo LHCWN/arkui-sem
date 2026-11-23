@@ -15,6 +15,8 @@ export interface Members {
 }
 
 const COMPONENT_NAME = /^[A-Z]/;
+/** Array calls whose result holds elements of the array itself. */
+const KEEPS_ELEMENTS = new Set(['filter', 'slice', 'sort', 'reverse', 'concat', 'toSorted', 'toReversed']);
 
 type FunctionNode = ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | ts.MethodDeclaration;
 
@@ -64,6 +66,7 @@ function loopFact(
     source: source ? loopSource(source, scan, members) : { text: '', shape: 'other', fields: [] },
     key: loopKey(kind, keyGenerator, itemDeclaresIndex, scan),
     row: row?.body && itemParam !== undefined ? valueUses(itemParam, row.body, scan, names) : noUses(),
+    creates: row?.body ? componentsIn(row.body, names) : [],
     disabledRules: scan.disabledFor(call),
   };
 }
@@ -73,7 +76,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const value = unwrap(expr);
   const member = thisMember(value);
   if (member !== undefined && members.fields.has(member)) {
-    return { text, shape: 'field', root: member, fields: [member] };
+    return { text, shape: 'field', root: member, itemsOf: member, fields: [member] };
   }
   const fields = fieldsRead(value, members);
   if (ts.isNewExpression(value)) {
@@ -87,7 +90,22 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     return { text, shape: 'other', fields };
   }
   const root = rootField(value, members);
-  return { text, shape: 'derived', ...(root === undefined ? {} : { root }), fields };
+  const itemsOf = root !== undefined && keepsElements(value) ? { itemsOf: root } : {};
+  return { text, shape: 'derived', ...(root === undefined ? {} : { root }), ...itemsOf, fields };
+}
+
+/** `this.F` through calls that keep its elements only: `this.F.filter(…).slice(…)`. */
+function keepsElements(expr: ts.Expression): boolean {
+  for (let value = unwrap(expr); thisMember(value) === undefined; ) {
+    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
+      return false;
+    }
+    if (!KEEPS_ELEMENTS.has(value.expression.name.text)) {
+      return false;
+    }
+    value = unwrap(value.expression.expression);
+  }
+  return true;
 }
 
 /** The component's fields an expression reads, directly or through the helpers it uses. */
@@ -192,7 +210,27 @@ export function builderFact(name: string, fn: FunctionNode, scan: FileScan, name
         ? { name: param.name.text, uses: valueUses(param.name.text, fn.body, scan, names) }
         : { uses: noUses() },
     ),
+    creates: fn.body ? componentsIn(fn.body, names) : [],
   };
+}
+
+/** The components a body creates outside handlers, by name, each once. */
+function componentsIn(body: ts.Node, names: BuilderNames): string[] {
+  const out = new Set<string>();
+  const visit = (n: ts.Node) => {
+    if (
+      (ts.isCallExpression(n) || ts.isEtsComponentExpression(n)) &&
+      ts.isIdentifier(n.expression) &&
+      COMPONENT_NAME.test(n.expression.text) &&
+      !names.functions.has(n.expression.text) &&
+      !climb(n, body, names).inHandler
+    ) {
+      out.add(n.expression.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(body);
+  return [...out];
 }
 
 /** What a function body does with the value named `name` (its parameter) outside handlers. */

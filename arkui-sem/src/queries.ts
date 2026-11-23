@@ -116,6 +116,59 @@ function valueReads(
   return out;
 }
 
+/** Built-in components that hold what the user did in them (text, a choice, a position) or play something. */
+const STATEFUL_COMPONENTS = new Set([
+  'TextInput',
+  'TextArea',
+  'Search',
+  'RichEditor',
+  'Toggle',
+  'Checkbox',
+  'CheckboxGroup',
+  'Radio',
+  'Slider',
+  'Rating',
+  'Select',
+  'DatePicker',
+  'TimePicker',
+  'TextPicker',
+  'Counter',
+  'Swiper',
+  'Tabs',
+  'List',
+  'Grid',
+  'Scroll',
+  'Video',
+  'Web',
+]);
+const OWN_STATE = ['@State', '@Local', '@Provide', '@Provider'];
+
+/** A loop's row holds state of its own, which rebuilding the row resets: it creates a built-in component that holds
+ *  some (STATEFUL_COMPONENTS) or a component with its own state fields, directly or in a builder it passes the item to. */
+export function rowHoldsState(loop: LoopFact, c: ComponentFact, facts: FileFacts, resolver?: ClassResolver): boolean {
+  const holds = (creates: string[], uses: ValueUses, scope: UseScope, seen: Set<string>): boolean =>
+    creates.some((name) => STATEFUL_COMPONENTS.has(name) || ownsState(name, scope.facts, resolver)) ||
+    uses.builders.some((pass) => {
+      const found = builderOf(pass.builder, pass.method, scope, resolver);
+      const key = found && `${found.scope.facts.file}#${pass.method ? 'this.' : ''}${found.builder.name}`;
+      const param = found?.builder.params[pass.argument];
+      return (
+        found !== undefined &&
+        key !== undefined &&
+        param !== undefined &&
+        !seen.has(key) &&
+        holds(found.builder.creates, param.uses, found.scope, new Set([...seen, key]))
+      );
+    });
+  return holds(loop.creates, loop.row, { facts, component: c }, new Set());
+}
+
+function ownsState(name: string, facts: FileFacts, resolver?: ClassResolver): boolean {
+  const decl = declarationOf(name, facts, resolver);
+  const child = decl?.facts.components.find((x) => x.name === decl.name);
+  return child?.fields.some((f) => f.decorators.some((d) => OWN_STATE.includes(d))) ?? false;
+}
+
 function builderOf(
   name: string,
   method: boolean,

@@ -1,5 +1,14 @@
 // What a rule reports before judging: a candidate, its kind and its fingerprint.
-import type { CallSite, ComponentFact, FieldFact, ResourceFact, WriteFact } from '../facts.js';
+import type {
+  CallSite,
+  ComponentFact,
+  FieldFact,
+  LoopFact,
+  RebuiltElement,
+  ResourceFact,
+  WriteFact,
+} from '../facts.js';
+import type { RowRead } from '../queries.js';
 
 export type RuleId = 'R1' | 'R2' | 'R3';
 
@@ -7,6 +16,7 @@ export type RuleId = 'R1' | 'R2' | 'R3';
 export type Candidate =
   | FieldCandidateBase<'R1', 'undecorated-mutated-rendered'> // plain member written after init and read in build()
   | NestedWriteCandidate
+  | ForEachKeyStaleCandidate
   | FieldCandidateBase<'R2', 'ownership-intent'> // passed-in field; candidates() does not emit it (callers build it)
   | EventUnwiredCandidate
   | ResourceCandidate;
@@ -36,6 +46,28 @@ export interface NestedWriteCandidate extends FieldCandidateBase<'R1', 'nested-w
   writes: WriteFact[];
   /** V2: why V2 misses the writes, one entry per distinct gap. */
   gaps?: V2Gap[];
+  /** V1: the keyed ForEach loops over the field, when a write is below an element: replacing the element instead keeps
+   *  the row under the same key. */
+  loops?: LoopFact[];
+}
+
+/** R1: a write puts new objects where a ForEach's items were, under the same key, and the row renders a property they
+ *  change: ForEach keeps the row of an existing key. */
+export interface ForEachKeyStaleCandidate extends FieldCandidateBase<'R1', 'foreach-key-stale'> {
+  loop: LoopFact;
+  /** In source order. */
+  rebuilds: KeyStaleRebuild[];
+  /** The row's reads of the properties the rebuilds change. */
+  staleReads: RowRead[];
+  /** The row holds state of its own (rowHoldsState). */
+  statefulRow: boolean;
+}
+
+export interface KeyStaleRebuild {
+  write: WriteFact;
+  element: RebuiltElement;
+  /** The properties the row renders that the new object changes. */
+  stale: string[];
 }
 
 /** R2: a callback the component calls and its call sites don't pass (unwiredCallbacks). */

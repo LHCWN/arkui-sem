@@ -180,6 +180,20 @@ describe('foreach-index-key does not fire', () => {
     }
   });
 
+  test('a bound that grows or shrinks a window from the start', () => {
+    const more = "      Button('more').onClick(() => { this.sel += 5 })";
+    for (const source of [
+      'this.names.slice(0, this.sel)',
+      'this.names.filter((n: string) => n !== "").slice(0, this.sel)',
+    ]) {
+      assert.deepEqual(indexKeyed(page('', `${more}\n${loop(source)}`)), [], source);
+    }
+    // Controls: a window that starts at the bound, or one reversed after the cut.
+    for (const source of ['this.names.slice(this.sel)', 'this.names.slice(0, this.sel).reverse()']) {
+      assert.equal(indexKeyed(page('', `${more}\n${loop(source)}`)).length, 1, source);
+    }
+  });
+
   test('a copy or a clear under a source that reverses the list or keeps its last items', () => {
     const recent = '  get recent(): string[] {\n    return this.names.slice().reverse()\n  }';
     for (const write of [
@@ -325,8 +339,21 @@ describe('foreach-index-key findings', () => {
     const src = page(`${refresh}\n${guarded}`, loop('this.visible'));
     const [g] = await findingsOf(src);
     assert.equal(g?.band, 'question');
+    // So does a fallback that is no field's array.
+    const fallback = guarded.replace('return []', 'return DEFAULT_NAMES');
+    assert.equal((await findingsOf(page(`${refresh}\n${fallback}`, loop('this.visible'))))[0]?.band, 'question');
     // The fingerprint names the array the helper returns, not the first field it reads.
     assert.equal(indexKeyed(src)[0]?.fingerprint, 'T.ets#Trips.names#R1-foreach-index@this.visible');
+  });
+
+  test('a handler in build() that moves the list after an await is a finding', async () => {
+    for (const handler of [
+      'async () => { await ready(); this.names.sort() }',
+      '() => { fetchNames().then((n: string[]) => { this.names = n }) }',
+    ]) {
+      const [f] = await findingsOf(page('', `      Button('s').onClick(${handler})\n${loop('this.names')}`));
+      assert.equal(f?.band, 'finding', handler);
+    }
   });
 
   test('a handler in the other arm of the if that holds the list is left out of a method-only move', async () => {

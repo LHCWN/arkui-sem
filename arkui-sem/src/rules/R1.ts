@@ -408,7 +408,14 @@ function indexKeyCandidates(
       line: loop.line,
       loop,
       shifts,
-      methodMovesOnly: shifts.every((shift) => shift.how === 'move' && shift.write.context !== 'build-closure'),
+      // A handler in build() or a @Builder is one even after an await.
+      methodMovesOnly: shifts.every(
+        ({ how, write }) =>
+          how === 'move' &&
+          write.context !== 'build-closure' &&
+          write.method !== 'build' &&
+          !component.builders.some((builder) => builder.name === write.method),
+      ),
       reads,
       fingerprint: fingerprint(
         facts.file,
@@ -427,7 +434,13 @@ function indexKeyCandidates(
  *  shown, and switching back recreates it. The array a method or getter returns moves like the source's own. */
 function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): IndexShift[] {
   const field = component.fields.find((f) => f.name === name);
-  if (!field || isNonState(field) || !isReactive(field) || field.disabledRules.includes('R1')) {
+  if (
+    !field ||
+    isNonState(field) ||
+    !isReactive(field) ||
+    field.disabledRules.includes('R1') ||
+    loop.source.windowEnds?.includes(name)
+  ) {
     return [];
   }
   const how = name === (loop.source.root ?? loop.source.returnsFrom) ? 'move' : 'select';

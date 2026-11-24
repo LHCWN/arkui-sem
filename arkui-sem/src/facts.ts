@@ -244,6 +244,9 @@ export interface LoopSource {
   /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
    *  own array it shows. */
   returnsFrom?: string;
+  /** Fields the source reads only as the end of a `.slice(0, n)` nothing reorders after (`this.F.slice(0, this.n)`):
+   *  a change shows more or fewer items at the end, the same ones at each position. */
+  windowEnds?: string[];
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */
   fields: string[];

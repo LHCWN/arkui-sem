@@ -104,8 +104,8 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const helper = ts.isCallExpression(value) ? thisMember(value.expression) : member;
   if (helper !== undefined && members.isHelper(helper, ts.isCallExpression(value))) {
     const returned = members.returned(helper);
-    // A guard that returns nothing (`return []`, `null`) shows no other array.
-    const roots = new Set(returned.filter((e) => !isEmptyValue(e)).map((e) => rootField(e, members)));
+    // A guard that returns nothing (`return []`, `null`) or no field's array (`return DEFAULTS`) shows no other one.
+    const roots = new Set(returned.flatMap((e) => (isEmptyValue(e) ? [] : (rootField(e, members) ?? []))));
     const [from] = roots.size === 1 ? roots : [];
     return {
       text,
@@ -122,7 +122,36 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const filteredBy = root === undefined ? undefined : elementFilters(value);
   const items = filteredBy === undefined ? {} : { itemsOf: root, ...(filteredBy.length ? { filteredBy } : {}) };
   const reorders = reordersArray(value) ? { reorders: true as const } : {};
-  return { text, shape: 'derived', ...(root === undefined ? {} : { root }), ...items, ...reorders, fields };
+  const windowEnds = prefixEnds(value, members);
+  return {
+    text,
+    shape: 'derived',
+    ...(root === undefined ? {} : { root }),
+    ...items,
+    ...reorders,
+    ...(windowEnds.length ? { windowEnds } : {}),
+    fields,
+  };
+}
+
+/** The fields the chain reads only in the end of a `.slice(0, n)` that nothing reorders after: a change shows more
+ *  or fewer items at the end, and the same ones at each position. */
+function prefixEnds(expr: ts.Expression, members: Members): string[] {
+  const ends = new Set<ts.Node>();
+  for (let value = unwrap(expr); ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression); ) {
+    const method = value.expression.name.text;
+    const [start, end] = value.arguments;
+    if (REORDERS.has(method) || (method === 'slice' && start && fromEnd(start))) {
+      break;
+    }
+    const zero = start && unwrap(start);
+    if (method === 'slice' && end && zero && ts.isNumericLiteral(zero) && zero.text === '0') {
+      ends.add(end);
+    }
+    value = unwrap(value.expression.expression);
+  }
+  const elsewhere = new Set(fieldsRead(expr, members, ends));
+  return [...new Set([...ends].flatMap((end) => fieldsRead(end, members)))].filter((f) => !elsewhere.has(f));
 }
 
 /** `[]`, `null` or `undefined`. */
@@ -223,10 +252,13 @@ function flagsTested(cond: ts.Expression, item: string): string[] {
     : [];
 }
 
-/** The component's fields an expression reads, directly or through the helpers it uses. */
-function fieldsRead(expr: ts.Node, members: Members): string[] {
+/** The component's fields an expression reads, directly or through the helpers it uses, outside the `skip` nodes. */
+function fieldsRead(expr: ts.Node, members: Members, skip?: Set<ts.Node>): string[] {
   const out = new Set<string>();
   const visit = (node: ts.Node) => {
+    if (skip?.has(node)) {
+      return;
+    }
     const member = thisMember(node);
     if (member !== undefined) {
       const called = ts.isCallExpression(node.parent) && node.parent.expression === node;

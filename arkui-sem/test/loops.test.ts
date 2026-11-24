@@ -420,4 +420,22 @@ describe('loop branches', () => {
       ['else', 'then'],
     );
   });
+
+  test('through the @Builders that reach it: nested calls compose, calls from both arms leave none', () => {
+    const builders = `  @Builder Outer() {
+    if (this.songs.length) { this.Inner() }
+  }
+  @Builder Inner() {
+    ForEach(this.songs, (s: Song) => { Text(s.title) })
+  }
+  @Builder Both() {
+    ForEach(this.songs, (s: Song) => { Text(s.artist.name) })
+  }`;
+    const loops = loopsOf(
+      page(builders, '      if (this.shelf > 0) { this.Outer(); this.Both() } else { this.Both() }'),
+    );
+    const armsOf = (method: string) => loops.find((l) => l.method === method)?.branches.map((b) => b.arm);
+    assert.deepEqual(armsOf('Inner'), ['then', 'then']);
+    assert.deepEqual(armsOf('Both'), []);
+  });
 });

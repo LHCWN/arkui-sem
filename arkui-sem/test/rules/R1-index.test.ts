@@ -177,6 +177,53 @@ ${loop('this.trips[0].tags')}
     assert.equal(indexKeyed(page('', same)).length, 1);
   });
 
+  test('a detail @Builder in one arm, the list @Builder that selects in the other', () => {
+    const views = (detailWrite: string) =>
+      page(
+        `  @State detail: boolean = false
+  @Builder ListView() {
+    ForEach(this.names, (n: string, i: number) => {
+      Text(n).onClick(() => { this.sel = i; this.detail = true })
+    }, (n: string) => n)
+  }
+  @Builder DetailView() {
+    Button('next').onClick(() => { ${detailWrite} })
+${loop('this.trips[this.sel].tags')}
+  }`,
+        '      if (this.detail) { this.DetailView() } else { this.ListView() }',
+      );
+    assert.deepEqual(indexKeyed(views('this.detail = false')), []);
+    assert.equal(indexKeyed(views('this.sel++')).length, 1);
+  });
+
+  test('a wizard: the step that shows the list and the method another step calls to fill it', () => {
+    const wizard = (calls: string) =>
+      page(
+        `  @State step: number = 0
+  load() {
+    this.names = fetchNames()
+    this.step = 2
+  }
+  @Builder Input() {
+    Button('preview').onClick(() => { this.load() })
+  }
+  @Builder Preview() {
+${loop('this.names')}
+  }`,
+        `      if (this.step === 1) {
+        this.Input()
+      } else if (this.step === 2) {
+        this.Preview()
+      }
+${calls}`,
+      );
+    assert.deepEqual(indexKeyed(wizard('')), []);
+    // Called from the list's own step too, or from a hook, the method's arms are unknown: it fires again.
+    assert.equal(indexKeyed(wizard("      Button('reload').onClick(() => { this.load() })")).length, 1);
+    const hooked = wizard('').replace('  load() {', '  aboutToAppear() {\n    this.load()\n  }\n  load() {');
+    assert.equal(indexKeyed(hooked).length, 1);
+  });
+
   test('a nested ForEach over the outer item when the outer source is static', () => {
     const body = `      ForEach(this.trips, (trip: Trip) => {
         ForEach(trip.tags, (t: string) => { Text(t) }, ${INDEX_KEY})

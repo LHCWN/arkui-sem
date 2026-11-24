@@ -1,6 +1,7 @@
 // A component (an @Component / @ComponentV2 / @CustomDialog struct): its fields, where build() reads them, where methods
 // write them.
 import type {
+  Branch,
   BuildRead,
   CallbackCall,
   ComponentFact,
@@ -69,7 +70,10 @@ export interface MethodScan {
   method: Method;
   /** `this.<m>` for each method, getter or handler m of the component, other than the method itself; called:
    *  `this.m(…)`; where it sits (climb): in a handler (callbacks.ts), in a loop, in an attribute call. */
-  uses: ({ name: string; called: boolean } & Pick<BuildRead, 'inHandler' | 'inForEach' | 'attribute'>)[];
+  uses: ({ name: string; called: boolean; branches: Branch[] } & Pick<
+    BuildRead,
+    'inHandler' | 'inForEach' | 'attribute'
+  >)[];
   /** Every call, in source order. */
   calls: ts.CallExpression[];
 }
@@ -103,10 +107,12 @@ export function component(
   const drawing = drawingMethods(scans);
   const renderOnly = renderOnlyMethods(scans, drawing);
   const loads = new Set<WriteFact>();
+  const arms = methodArms(scans);
   for (const s of scans) {
     recordAccesses(s, byName, scan, builderNames, {
       drawn: drawing.get(s.method),
       renderOnly: renderOnly.has(s.method),
+      arms: arms.get(s.method.name),
       loads,
     });
   }
@@ -137,7 +143,9 @@ export function component(
     version: decorators.includes('@ComponentV2') ? 'V2' : 'V1',
     fields,
     resources: resources(scans, scan),
-    loops: methods.filter((m) => drawing.has(m)).flatMap((m) => loopsIn(m.name, m.body, scan, builderNames, members)),
+    loops: methods
+      .filter((m) => drawing.has(m))
+      .flatMap((m) => loopsIn(m.name, m.body, arms.get(m.name) ?? [], scan, builderNames, members)),
     builders: builderMethods.flatMap((m) => {
       const name = memberName(m.name);
       return name === undefined ? [] : [builderFact(name, m, scan, builderNames)];
@@ -334,6 +342,7 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
           inHandler,
           inForEach,
           ...(attribute === undefined ? {} : { attribute }),
+          branches: branchesOf(n, m.body, n.getSourceFile()),
         };
         out.uses.push(use);
         // The walk is in source order, so every await that ends before n is already recorded.
@@ -417,7 +426,12 @@ function recordAccesses(
   fields: Map<string, FieldFact>,
   scan: FileScan,
   builders: BuilderNames,
-  { drawn, renderOnly, loads }: { drawn: DrawSite | undefined; renderOnly: boolean; loads: Set<WriteFact> },
+  {
+    drawn,
+    renderOnly,
+    arms,
+    loads,
+  }: { drawn: DrawSite | undefined; renderOnly: boolean; arms: Branch[] | undefined; loads: Set<WriteFact> },
 ) {
   const m = walk.method;
   const context: AccessContext = {
@@ -431,6 +445,7 @@ function recordAccesses(
     via: drawn && !rendersUi(m) ? (m.kind === 'getter' ? `this.${m.name}` : `this.${m.name}()`) : undefined,
     calls: [],
     tested: new Set(),
+    arms,
     loads,
   };
   for (const base of walk.accesses) {
@@ -461,6 +476,8 @@ interface AccessContext {
   /** The method's calls of fields, and the fields it reads without calling or writing them. */
   calls: { field: FieldFact; call: CallbackCall }[];
   tested: Set<FieldFact>;
+  /** The `if` arms of build() the method runs in (methodArms); undefined when not known. */
+  arms: Branch[] | undefined;
   /** Writes outside callbacks or in promise continuations only (`.then`): run once if their method is. */
   loads: Set<WriteFact>;
 }
@@ -531,7 +548,7 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
     ...(callName === undefined ? {} : { call: callName }),
     ...(assignment && segments.length === 0 && keepsPositions(assignment, field.name) ? { keepsPositions: true } : {}),
-    ...(ctx.isBuild ? { branches: branchesOf(base, ctx.method.body, ctx.scan.sf) } : {}),
+    ...(ctx.arms ? { branches: [...ctx.arms, ...branchesOf(base, ctx.method.body, ctx.scan.sf)] } : {}),
     ...(rebuilt.length ? { rebuilt } : {}),
     disabledRules: ctx.scan.disabledAt(line),
   };
@@ -657,6 +674,37 @@ function setupMethods(scans: MethodWalk[], afterAwait: boolean): Set<string> {
     }
   }
   return setup;
+}
+
+/**
+ * The `if` arms of build() each method runs in: none for build() itself; for another method, the arms every use of it
+ * shares, each use's arms in its own body after those of the method holding it. A @Builder that only one arm calls, or
+ * a method only a handler in that arm calls, runs only while the arm is shown. A method with a use in a lifecycle hook,
+ * or with no use in the component (other code calls it), has none known.
+ */
+function methodArms(scans: MethodScan[]): Map<string, Branch[]> {
+  const arms = new Map<string, Branch[]>([['build', []]]);
+  const uses = new Map<string, { caller: string; branches: Branch[] }[]>();
+  for (const scan of scans) {
+    for (const use of scan.uses) {
+      uses.set(use.name, [...(uses.get(use.name) ?? []), { caller: scan.method.name, branches: use.branches }]);
+    }
+  }
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [name, sites] of uses) {
+      if (arms.has(name) || name === 'build' || !sites.every((site) => arms.has(site.caller))) {
+        continue;
+      }
+      const [first, ...rest] = sites.map((site) => [...(arms.get(site.caller) ?? []), ...site.branches]);
+      arms.set(
+        name,
+        first.filter((arm) => rest.every((other) => other.some((b) => b.at === arm.at && b.arm === arm.arm))),
+      );
+      changed = true;
+    }
+  }
+  return arms;
 }
 
 /**

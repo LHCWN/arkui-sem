@@ -51,8 +51,9 @@ export interface WriteFact {
   /** The write loads what the component starts with: in aboutToAppear or a helper only it calls, outside callbacks
    *  other than promise continuations, before or after an await. */
   initialLoad?: true;
-  /** For a write in build() or a @Builder, the `if` arms of that method that hold it, handlers included, outermost
-   *  first. */
+  /** The `if` arms of build() the write runs in, outermost first: through the @Builders and methods that reach it from
+   *  build() (handlers included), then those in its own method. Absent when its method is not known to run only from
+   *  build() (a lifecycle hook, other code). */
   branches?: Branch[];
   /** The write runs before the first build(): in aboutToAppear before any await, or in a helper only that calls. */
   beforeFirstRender?: true;
@@ -206,12 +207,13 @@ export interface LoopFact {
   row: ValueUses;
   /** The components the row creates outside handlers (`TextInput`, `Child`), by name. */
   creates: string[];
-  /** The `if` arms of the drawing method that hold the loop, outermost first: switching arms recreates the loop. */
+  /** The `if` arms of build() the loop runs in, through the @Builders that reach it, outermost first: switching arms
+   *  recreates the loop. */
   branches: Branch[];
   disabledRules: string[];
 }
 
-/** One arm of an `if` statement; `at` is the statement's offset in the file, so arms match within one method only. */
+/** One arm of an `if` statement; `at` is the statement's offset in the file. */
 export interface Branch {
   at: number;
   arm: 'then' | 'else';

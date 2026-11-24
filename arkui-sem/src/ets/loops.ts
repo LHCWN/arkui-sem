@@ -1,5 +1,5 @@
 // ForEach and LazyForEach calls, and what rows and builders do with the values they are given.
-import type { BuilderFact, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
+import type { Branch, BuilderFact, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
 import { type BuilderNames, climb, isBuilderCall } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
@@ -34,6 +34,8 @@ type FunctionNode = ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclar
 export function loopsIn(
   method: string,
   body: ts.Node,
+  /** The `if` arms of build() the method runs in. */
+  arms: Branch[],
   scan: FileScan,
   names: BuilderNames,
   members: Members,
@@ -43,7 +45,7 @@ export function loopsIn(
     if ((ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) && ts.isIdentifier(node.expression)) {
       const callee = node.expression.text;
       if (isKeyedLoop(callee) && !climb(node, body, names).inHandler) {
-        out.push(loopFact(node, callee, method, body, scan, names, members));
+        out.push(loopFact(node, callee, method, body, arms, scan, names, members));
       }
     }
     ts.forEachChild(node, visit);
@@ -57,6 +59,7 @@ function loopFact(
   kind: LoopFact['kind'],
   method: string,
   body: ts.Node,
+  arms: Branch[],
   scan: FileScan,
   names: BuilderNames,
   members: Members,
@@ -78,7 +81,7 @@ function loopFact(
     key: loopKey(kind, keyGenerator, itemDeclaresIndex, scan, names),
     row: row?.body && itemParam !== undefined ? valueUses(itemParam, row.body, scan, names) : noUses(),
     creates: row?.body ? componentsIn(row.body, names) : [],
-    branches: branchesOf(call, body, scan.sf),
+    branches: [...arms, ...branchesOf(call, body, scan.sf)],
     disabledRules: scan.disabledFor(call),
   };
 }

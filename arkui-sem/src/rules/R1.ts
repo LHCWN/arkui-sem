@@ -377,10 +377,24 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
     const stale = new Set(out.flatMap((candidate) => (candidate.kind === 'foreach-key-stale' ? [candidate.loop] : [])));
     out.push(...indexKeyCandidates(c, facts, stale, resolver));
     const lazy = lazySourceCandidates(c, facts);
-    // Declaring a reassigned source @State doesn't make LazyForEach follow it: the lazy kind replaces that advice.
-    const sources = new Set(lazy.flatMap((candidate) => (candidate.reassigns.length ? [candidate.holder] : [])));
+    // Declaring a reassigned source @State doesn't make LazyForEach follow it: the lazy kind replaces that advice,
+    // unless build() also draws the field outside the loop's source (`Text(this.source.totalCount())`), which it does
+    // redraw.
+    const sourceOnly = (field: FieldFact) => {
+      const loops = lazy.flatMap((candidate) =>
+        candidate.holder === field && candidate.reassigns.length ? [candidate.loop] : [],
+      );
+      return (
+        loops.length > 0 &&
+        renderingReads(field).every(
+          (read) =>
+            read.inForEach &&
+            loops.some((loop) => (read.via === undefined ? loop.line === read.line : loop.source.text === read.via)),
+        )
+      );
+    };
     const kept = out.filter(
-      (candidate) => !(candidate.kind === 'undecorated-mutated-rendered' && sources.has(candidate.field)),
+      (candidate) => !(candidate.kind === 'undecorated-mutated-rendered' && sourceOnly(candidate.field)),
     );
     return [...kept, ...lazy];
   }
@@ -466,6 +480,7 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
     (write) =>
       write.context !== 'render' &&
       afterFirstLoad(write) &&
+      !write.disabledRules.includes('R1') &&
       !exclusiveArms(write.branches ?? [], loop.branches) &&
       changes(write),
   );

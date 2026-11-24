@@ -89,6 +89,18 @@ describe('lazyforeach-source-rebuilt fires', () => {
   test('a reassigned source field is not also undecorated-mutated-rendered: @State would not help', () => {
     const kinds = found(page(plainSource, `${reassignSource}\n${lazy('this.source')}`)).map((c) => c.kind);
     assert.deepEqual(kinds, ['lazyforeach-source-rebuilt']);
+    const getter = '  get shown(): ProductSource {\n    return this.source\n  }';
+    const viaGetter = found(page(`${plainSource}\n${getter}`, `${reassignSource}\n${lazy('this.shown')}`));
+    assert.deepEqual(
+      viaGetter.map((c) => c.kind),
+      ['lazyforeach-source-rebuilt'],
+    );
+  });
+
+  test('a reassigned source field build() also draws stays undecorated-mutated-rendered', () => {
+    const count = '      Text(this.source.totalCount().toString())';
+    const kinds = found(page(plainSource, `${reassignSource}\n${count}\n${lazy('this.source')}`)).map((c) => c.kind);
+    assert.deepEqual(kinds.sort(), ['lazyforeach-source-rebuilt', 'undecorated-mutated-rendered']);
   });
 
   test('two loops over the same source get distinct fingerprints', () => {

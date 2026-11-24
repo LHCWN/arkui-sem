@@ -95,6 +95,10 @@ describe('lazyforeach-source-rebuilt fires', () => {
       viaGetter.map((c) => c.kind),
       ['lazyforeach-source-rebuilt'],
     );
+    // Nor when the call spans lines.
+    const multiline = lazy('\n        this.source').replace(', (p: Product)', ',\n        (p: Product)');
+    const split = found(page(plainSource, `${reassignSource}\n${multiline}`)).map((c) => c.kind);
+    assert.deepEqual(split, ['lazyforeach-source-rebuilt']);
   });
 
   test('a reassigned source field build() also draws stays undecorated-mutated-rendered', () => {
@@ -143,7 +147,7 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
     const members = `  @State loading: boolean = true\n${plainSource}
   async aboutToAppear() {\n    await ready()\n    this.source = new ProductSource(loadProducts())\n    this.loading = false\n  }`;
     const body = `      if (this.loading) {\n        Text('…')\n      } else {\n${lazy('this.source')}\n      }`;
-    assert.deepEqual(rebuilt(page(members, body)), []);
+    assert.deepEqual(found(page(members, body)), []);
     const sharedReload = load(
       `  aboutToAppear() {\n    this.reload()\n  }\n  reload() {\n    ${assign}\n  }\n  onRefresh() {\n    this.reload()\n  }`,
     );
@@ -163,7 +167,7 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
     const singleton = '  source: ProductSource = ProductSource.shared()';
     const again = (value: string) =>
       page(singleton, `      Button('sync').onClick(() => { this.source = ${value} })\n${lazy('this.source')}`);
-    assert.deepEqual(rebuilt(again('ProductSource.shared()')), []);
+    assert.deepEqual(found(again('ProductSource.shared()')), []);
     // Controls: another call, or a new object.
     assert.equal(rebuilt(again('ProductSource.filtered(this.category)')).length, 1);
     assert.equal(rebuilt(again('new ProductSource([])')).length, 1);
@@ -179,6 +183,9 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
     const body = (comment: string) => `${pickCategory}\n${comment}${lazy(filtered)}`;
     assert.deepEqual(rebuilt(page('', body('      // arkui-sem-disable-next-line R1\n'))), []);
     assert.equal(rebuilt(page('', body(''))).length, 1);
+    // It silences a reassigned plain source too, which @State would not help.
+    const reassigned = `${reassignSource}\n      // arkui-sem-disable-next-line R1\n${lazy('this.source')}`;
+    assert.deepEqual(found(page(plainSource, reassigned)), []);
   });
 });
 
@@ -195,7 +202,7 @@ describe('lazyforeach-source-rebuilt findings', () => {
     assert.equal(f.band, 'finding');
     assert.equal(f.p, null);
     assert.match(f.evidence, /^LazyForEach's data source is created while drawing \(new ProductSource\(/);
-    assert.match(f.evidence, /again on each change of this\.category \(this\.category = … in build\(\) line \d+\)/);
+    assert.match(f.evidence, /again on each change of this\.category = … in build\(\) line \d+[;,]/);
     assert.match(f.evidence, /OpenHarmony LazyForEach docs, 使用限制\)$/);
     assert.equal(f.related?.length, 1);
     assert.match(f.fix, /^create the data source once \(a field\)/);

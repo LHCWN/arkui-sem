@@ -200,6 +200,8 @@ export interface InputFact {
 export interface LoopFact {
   kind: 'ForEach' | 'LazyForEach';
   line: number;
+  /** The line the source argument starts on: the call's line unless the call spans lines. */
+  sourceLine: number;
   method: string;
   /** Absent when the item generator is not a function written in place or its parameter is destructured. */
   itemParam?: string;

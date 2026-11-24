@@ -322,7 +322,7 @@ function describeLazySource(candidate: CandidateOf<'lazyforeach-source-rebuilt'>
     ? `LazyForEach's data source ${loop.source.text} (line ${loop.line}) is reassigned after the first render (${unique(reassigns.map((write) => writeAt(holder.name, write))).join('; ')})`
     : `LazyForEach's data source is created while drawing (${loop.source.text} in ${loop.method}(), line ${loop.line})`;
   const redrawn = changes.length
-    ? `, again on each change of ${unique(changes.map(({ field, write }) => `this.${field.name} (${writeAt(field.name, write)})`)).join('; ')}`
+    ? `, again on each change of ${unique(changes.map(({ field, write }) => writeAt(field.name, write))).join('; ')}`
     : '';
   return {
     subject: `${candidate.component.name}.${holder?.name ?? loop.source.fields[0] ?? 'LazyForEach'}`,
@@ -489,7 +489,7 @@ const KINDS: { [K in CandidateKind]: KindSpec<CandidateOf<K>> } = {
     path: { facts: (c) => (c.changes.length || (c.holder && isReactive(c.holder)) ? 'finding' : 'question') },
     describe: describeLazySource,
     ask: 'If the list should follow its data',
-    disableWhere: 'above the LazyForEach call',
+    disableWhere: "above the LazyForEach call, or above the source field's decorators for every R1 kind",
     related: (c) => writeLines(c.file, [...c.reassigns, ...c.changes.map((change) => change.write)]),
   },
   // The label assumes the @Link → @Prop mismatch (shared intent); callers map the other intent × decorator pairs.

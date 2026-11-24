@@ -106,9 +106,9 @@ export interface LazySourceRebuiltCandidate extends CandidateBase<'R1', 'lazyfor
   /** The field that holds the source (`this.D`, or a getter returning it); absent when the source is created while
    *  drawing. */
   holder?: FieldFact;
-  /** The writes that reassign the holder after the first load, in source order. */
+  /** The writes that reassign the holder after the first render, in source order. */
   reassigns: WriteFact[];
-  /** Writes after the first load of the other state fields the source reads, which redraw it, in source order. */
+  /** Writes after the first render of the other state fields the source reads, which redraw it, in source order. */
   changes: FieldWrite[];
 }
 

@@ -79,6 +79,7 @@ function loopFact(
   return {
     kind,
     line: scan.line(call),
+    sourceLine: scan.line(source ?? call),
     method,
     ...(itemParam === undefined ? {} : { itemParam }),
     ...(indexParam === undefined ? {} : { indexParam }),

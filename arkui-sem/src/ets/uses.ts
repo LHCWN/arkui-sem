@@ -4,7 +4,16 @@ import type { ArgumentForm, ComponentArgument, ComponentUse } from '../facts.js'
 import { methodsOf, rendersUi } from './component.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
-import { decoratorNames, isFunction, isThis, isWrapper, memberName, thisMember, unwrap } from './syntax.js';
+import {
+  decoratorNames,
+  isDoubleBang,
+  isFunction,
+  isThis,
+  isWrapper,
+  memberName,
+  thisMember,
+  unwrap,
+} from './syntax.js';
 
 const DIALOG_BUILDER = 'builder';
 
@@ -118,17 +127,9 @@ function formOf(value: ts.Expression, methods: Set<string>): ArgumentForm {
     if (methods.has(member)) {
       return 'callback';
     }
-    return isTwoWay(value) ? 'this.x!!' : 'this.x';
+    return isDoubleBang(value) ? 'this.x!!' : 'this.x';
   }
   return isPathBelowThis(e) ? 'this.x.y' : 'other';
-}
-
-/** `x!!`, under any parentheses: V2 two-way binding sugar. */
-function isTwoWay(value: ts.Expression): boolean {
-  const skipParens = (e: ts.Expression): ts.Expression =>
-    ts.isParenthesizedExpression(e) ? skipParens(e.expression) : e;
-  const outer = skipParens(value);
-  return ts.isNonNullExpression(outer) && ts.isNonNullExpression(skipParens(outer.expression));
 }
 
 function isLiteral(e: ts.Expression): boolean {

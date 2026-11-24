@@ -408,6 +408,17 @@ function describeInputNeverRead(c: CandidateOf<'input-never-read'>): Description
   };
 }
 
+function describeSelection(c: CandidateOf<'selection-never-written'>): Description {
+  const name = c.field.name;
+  const [first] = c.comparisons;
+  const shown = [...new Set(c.comparisons.map((cmp) => cmp.text))].map((text) => `\`${text}\``).join(', ');
+  return {
+    subject: `${c.component.name}.${name}`,
+    evidence: `rows compare ${shown} (${lineList([...new Set(c.comparisons.map((cmp) => cmp.line))])}), but nothing ever sets this.${name}: the highlighted row never changes`,
+    fix: `set it where a row is tapped: .onClick(() => { this.${name} = ${first.operand} }).`,
+  };
+}
+
 function describeUndecorated(c: CandidateOf<'undecorated-mutated-rendered'>): Description {
   const f = c.field;
   const writes = f.writes
@@ -521,6 +532,13 @@ const KINDS: { [K in CandidateKind]: KindSpec<CandidateOf<K>> } = {
     describe: describeInputNeverRead,
     ask: 'If the input should do something',
     disableWhere: "above the field's decorators, or above the input",
+  },
+  'selection-never-written': {
+    path: { facts: 'question' },
+    describe: describeSelection,
+    ask: 'If tapping a row should select it',
+    disableWhere: "above the field's decorators",
+    related: (c) => [...new Set(c.comparisons.map((cmp) => cmp.line))].map((line) => ({ file: c.file, line })),
   },
 };
 

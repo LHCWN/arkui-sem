@@ -26,6 +26,8 @@ import {
   expressionName,
   hasModifier,
   isAssignment,
+  isDollarThis,
+  isDoubleBang,
   isFunction,
   memberName,
   pathBelow,
@@ -315,6 +317,7 @@ function fieldFact(m: ts.PropertyDeclaration, name: string, scan: FileScan): Fie
     buildReads: [],
     reads: [],
     writes: [],
+    boundTwoWay: [],
     calls: [],
     timeValue: timeValue(m.initializer),
     // The disable comment may sit above the decorators or directly above the field name.
@@ -546,6 +549,9 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
   }
   const where = climb(base, ctx.method.body, ctx.builders);
   if (!mutatingCall && !assignment && !updated) {
+    if (isDollarThis(base.expression) || isDoubleBang(top)) {
+      field.boundTwoWay.push(line);
+    }
     field.reads.push({ line, method: ctx.method.name });
     if (ctx.drawn) {
       field.buildReads.push({

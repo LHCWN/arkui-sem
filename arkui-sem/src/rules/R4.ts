@@ -1,12 +1,24 @@
 // R4, state that doesn't do its job: a text input wired to its field in one direction only (input-unbound,
-// input-never-read).
-import type { ComponentFact, FieldFact, FileFacts, InputFact, WriteFact } from '../facts.js';
-import { renderingReads } from '../queries.js';
+// input-never-read), a selection the rows compare against that nothing sets (selection-never-written).
+import type {
+  ClassResolver,
+  ComponentArgument,
+  ComponentFact,
+  FieldFact,
+  FileFacts,
+  InputFact,
+  WriteFact,
+} from '../facts.js';
+import { childField, renderingReads } from '../queries.js';
 import { type Candidate, fingerprint } from './candidate.js';
+
+export function r4Candidates(c: ComponentFact, facts: FileFacts, resolver?: ClassResolver): Candidate[] {
+  return [...inputCandidates(c, facts), ...selectionCandidates(c, facts, resolver)];
+}
 
 /** Inputs write the field on each change while no input shows it. Owned V1 state only: a @Link or @Prop field is
  *  shown or read by its parent, and a @Watch callback runs on every write. */
-export function r4Candidates(c: ComponentFact, facts: FileFacts): Candidate[] {
+function inputCandidates(c: ComponentFact, facts: FileFacts): Candidate[] {
   if (c.version !== 'V1') {
     return [];
   }
@@ -46,6 +58,71 @@ export function r4Candidates(c: ComponentFact, facts: FileFacts): Candidate[] {
       { ...base, kind: 'input-unbound', sets, fingerprint: fingerprint(facts.file, subject, 'R4-input-unbound') },
     ];
   });
+}
+
+/** Rows compare the field with their item or index, and nothing ever sets it: no write in any method, hook or
+ *  handler, no two-way binding, no child that may write it, no `this` the code hands on. Owned V1 state only. */
+function selectionCandidates(c: ComponentFact, facts: FileFacts, resolver: ClassResolver | undefined): Candidate[] {
+  if (c.version !== 'V1' || c.thisEscapes) {
+    return [];
+  }
+  return c.fields.flatMap((field): Candidate[] => {
+    const comparisons = c.loops.flatMap((loop) => loop.comparisons.filter((cmp) => cmp.field === field.name));
+    if (
+      comparisons.length === 0 ||
+      !isOwnedState(field) ||
+      field.disabledRules.includes('R4') ||
+      field.writes.length > 0 ||
+      field.boundTwoWay.length > 0 ||
+      childMayWrite(field, c, facts, resolver)
+    ) {
+      return [];
+    }
+    return [
+      {
+        rule: 'R4',
+        kind: 'selection-never-written',
+        file: facts.file,
+        component: c,
+        field,
+        line: field.line,
+        comparisons,
+        fingerprint: fingerprint(facts.file, `${c.name}.${field.name}`, 'R4-selection-never-written'),
+      },
+    ];
+  });
+}
+
+/** The component passes the field to a child that may write it: `$f`, `this.f!!`, or `this.f` to a @Link; a child
+ *  that can't be found counts as one. */
+function childMayWrite(
+  field: FieldFact,
+  c: ComponentFact,
+  facts: FileFacts,
+  resolver: ClassResolver | undefined,
+): boolean {
+  return facts.componentUses.some(
+    (use) =>
+      use.parent === c.name &&
+      use.args.some((arg) => {
+        if (passedField(arg) !== field.name) {
+          return false;
+        }
+        if (arg.form !== 'this.x') {
+          return true;
+        }
+        const target = childField(use.child, arg.field, facts, resolver);
+        return target === undefined || target.decorators.includes('@Link');
+      }),
+  );
+}
+
+/** `F` in an argument written `$F`, `this.F` or `this.F!!`, under casts and parentheses. */
+function passedField(arg: ComponentArgument): string | undefined {
+  if (arg.form !== 'this.x' && arg.form !== 'this.x!!' && arg.form !== '$x') {
+    return undefined;
+  }
+  return /(?:^|[^\w$.])(?:\$|this\.)([\w$]+)/.exec(arg.text)?.[1];
 }
 
 function isOwnedState(field: FieldFact): boolean {

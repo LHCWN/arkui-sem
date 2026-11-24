@@ -4,7 +4,7 @@ import type { InputFact } from '../facts.js';
 import { type BuilderNames, climb } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
-import { isFunction, memberName, thisMember, unwrap } from './syntax.js';
+import { isDollarThis, isDoubleBang, isFunction, memberName, skipParentheses, thisMember, unwrap } from './syntax.js';
 
 /** The option that sets the shown text, by component (OpenHarmony TextInputOptions, TextAreaOptions, SearchOptions). */
 const TEXT_OPTION: Record<InputFact['kind'], string> = { TextInput: 'text', TextArea: 'text', Search: 'value' };
@@ -217,17 +217,8 @@ function binding(options: ts.Expression | undefined, option: string, fields: Set
     return { kind: 'other' };
   }
   const twoWay =
-    (ts.isPropertyAccessExpression(value) && ts.isIdentifier(value.expression)) || isDoubleBang(text.initializer);
+    (ts.isPropertyAccessExpression(value) && isDollarThis(value.expression)) || isDoubleBang(text.initializer);
   return { kind: 'field', field, twoWay };
-}
-
-function skipParentheses(e: ts.Expression): ts.Expression {
-  return ts.isParenthesizedExpression(e) ? skipParentheses(e.expression) : e;
-}
-
-/** `x!!`: V2 two-way binding sugar. */
-function isDoubleBang(e: ts.Expression): boolean {
-  return ts.isNonNullExpression(e) && ts.isNonNullExpression(skipParentheses(e.expression));
 }
 
 /** The field of `this.f = …` (a whole-field assignment with `=`). */

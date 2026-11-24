@@ -1,5 +1,5 @@
 // ForEach and LazyForEach calls, and what rows and builders do with the values they are given.
-import type { Branch, BuilderFact, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
+import type { Branch, BuilderFact, LoopComparison, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
 import { type BuilderNames, climb, isBuilderCall } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
@@ -33,6 +33,12 @@ const COMPONENT_NAME = /^[A-Z]/;
 const KEEPS_ELEMENTS = new Set(['filter', 'slice', 'sort', 'reverse', 'concat', 'toSorted', 'toReversed']);
 /** Array calls that put the elements in another order. */
 const REORDERS = new Set(['sort', 'reverse', 'toSorted', 'toReversed']);
+const EQUALITY = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+]);
 
 type FunctionNode = ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | ts.MethodDeclaration;
 
@@ -88,6 +94,7 @@ function loopFact(
     key: loopKey(kind, keyGenerator, itemDeclaresIndex, scan, names),
     row: row?.body && itemParam !== undefined ? valueUses(itemParam, row.body, scan, names) : noUses(),
     creates: row?.body ? componentsIn(row.body, names) : [],
+    comparisons: row?.body ? comparisonsIn(row.body, itemParam, indexParam, members, scan, names) : [],
     branches: [...arms, ...branchesOf(call, body, scan.sf)],
     disabledRules: scan.disabledFor(call),
   };
@@ -387,6 +394,53 @@ function componentsIn(body: ts.Node, names: BuilderNames): string[] {
   };
   visit(body);
   return [...out];
+}
+
+/** The row's equality tests, outside handlers, of a field against the item, a path below it or the index. */
+function comparisonsIn(
+  body: ts.Node,
+  item: string | undefined,
+  index: string | undefined,
+  members: Members,
+  scan: FileScan,
+  names: BuilderNames,
+): LoopComparison[] {
+  const out: LoopComparison[] = [];
+  const param = (side: ts.Expression): 'item' | 'index' | undefined => {
+    const id = rootIdentifier(side);
+    const named = id === undefined ? undefined : id.text === item ? 'item' : id.text === index ? 'index' : undefined;
+    // `index` names a number: a path below it is no position.
+    if (id === undefined || named === undefined || (named === 'index' && id !== unwrap(side))) {
+      return undefined;
+    }
+    return climb(id, body, names).functions.some((inner) => shadows(inner, id.text)) ? undefined : named;
+  };
+  const visit = (node: ts.Node) => {
+    if (ts.isBinaryExpression(node) && EQUALITY.has(node.operatorToken.kind)) {
+      for (const [mine, other] of [
+        [node.left, node.right],
+        [node.right, node.left],
+      ]) {
+        const field = thisMember(unwrap(mine));
+        const compared = field !== undefined && members.fields.has(field) ? param(other) : undefined;
+        if (field !== undefined && compared !== undefined && !climb(node, body, names).inHandler) {
+          out.push({ field, line: scan.line(node), with: compared, operand: scan.text(other), text: scan.text(node) });
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return out;
+}
+
+/** The identifier a chain of property and element accesses starts from: `item` in `item.tag.id`, `item[0]`. */
+function rootIdentifier(expr: ts.Expression): ts.Identifier | undefined {
+  let value = unwrap(expr);
+  while (ts.isPropertyAccessExpression(value) || ts.isElementAccessExpression(value)) {
+    value = unwrap(value.expression);
+  }
+  return ts.isIdentifier(value) ? value : undefined;
 }
 
 /** What a function body does with the value named `name` (its parameter) outside handlers. */

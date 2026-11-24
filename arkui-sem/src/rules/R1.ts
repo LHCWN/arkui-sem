@@ -14,6 +14,7 @@ import type {
   WriteFact,
 } from '../facts.js';
 import {
+  afterFirstLoad,
   className,
   declarationOf,
   elementType,
@@ -41,7 +42,14 @@ import {
   segmentText,
   typeFact,
 } from '../queries.js';
-import { type Candidate, fingerprint, type IndexShift, type KeyStaleRebuild, type V2Gap } from './candidate.js';
+import {
+  type Candidate,
+  type FieldWrite,
+  fingerprint,
+  type IndexShift,
+  type KeyStaleRebuild,
+  type V2Gap,
+} from './candidate.js';
 
 /** Types whose index writes and API calls V2 observes on an observed property, besides arrays. */
 const V2_CONTAINERS = new Set(['Map', 'Set', 'Date', 'WeakMap', 'WeakSet']);
@@ -367,6 +375,7 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
   if (c.version === 'V1') {
     const stale = new Set(out.flatMap((candidate) => (candidate.kind === 'foreach-key-stale' ? [candidate.loop] : [])));
     out.push(...indexKeyCandidates(c, facts, stale, resolver));
+    out.push(...lazySourceCandidates(c, facts));
   }
   return out;
 }
@@ -387,9 +396,7 @@ function indexKeyCandidates(
     if (loop.kind !== 'ForEach' || loop.key.kind !== 'index') {
       continue;
     }
-    const source = loop.source.text.replace(/\s+/g, ' ');
-    const count = (seen.get(source) ?? 0) + 1;
-    seen.set(source, count);
+    const source = sourceTag(loop, seen);
     if (loop.disabledRules.includes('R1') || stale.has(loop)) {
       continue;
     }
@@ -420,7 +427,7 @@ function indexKeyCandidates(
       fingerprint: fingerprint(
         facts.file,
         `${component.name}.${loop.source.root ?? loop.source.returnsFrom ?? loop.source.fields[0]}`,
-        `R1-foreach-index@${source}${count > 1 ? `~${count}` : ''}`,
+        `R1-foreach-index@${source}`,
       ),
     });
   }
@@ -457,13 +464,72 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
   const writes = field.writes.filter(
     (write) =>
       write.context !== 'render' &&
-      !write.initialLoad &&
-      !write.beforeFirstRender &&
-      !write.disabledRules.includes('R1') &&
+      afterFirstLoad(write) &&
       !exclusiveArms(write.branches ?? [], loop.branches) &&
       changes(write),
   );
   return writes.map((write) => ({ field, write, how }));
+}
+
+/** The loop's source as written, for a fingerprint, plus a counter when an earlier loop in `seen` shares it. */
+function sourceTag(loop: LoopFact, seen: Map<string, number>): string {
+  const source = loop.source.text.replace(/\s+/g, ' ');
+  const count = (seen.get(source) ?? 0) + 1;
+  seen.set(source, count);
+  return count > 1 ? `${source}~${count}` : source;
+}
+
+/** LazyForEach updates only through its data source's DataChangeListener; a new or reassigned data source isn't
+ *  supported (OpenHarmony LazyForEach docs, 使用限制). One candidate per LazyForEach whose source is created while
+ *  drawing (a `new` expression, a method or a getter) or is a field reassigned after the first load. */
+function lazySourceCandidates(component: ComponentFact, facts: FileFacts): Candidate[] {
+  const out: Candidate[] = [];
+  const seen = new Map<string, number>();
+  for (const loop of component.loops) {
+    if (loop.kind !== 'LazyForEach') {
+      continue;
+    }
+    const source = sourceTag(loop, seen);
+    if (loop.disabledRules.includes('R1')) {
+      continue;
+    }
+    const { shape, root, fields } = loop.source;
+    const holder = shape === 'field' ? component.fields.find((f) => f.name === root) : undefined;
+    const reassigns =
+      holder === undefined || holder.disabledRules.includes('R1')
+        ? []
+        : holder.writes.filter((write) => write.path === undefined && afterFirstLoad(write));
+    if (shape !== 'new' && shape !== 'call' && reassigns.length === 0) {
+      continue;
+    }
+    out.push({
+      rule: 'R1',
+      kind: 'lazyforeach-source-rebuilt',
+      file: facts.file,
+      component,
+      line: loop.line,
+      loop,
+      reassigns,
+      changes: fields.flatMap((name) => redraws(component, name)),
+      fingerprint: fingerprint(
+        facts.file,
+        `${component.name}.${root ?? fields[0] ?? 'LazyForEach'}`,
+        `R1-lazy-source@${source}`,
+      ),
+    });
+  }
+  return out;
+}
+
+/** The writes of a state field after the first load that V1 observes, so redraw what reads it. */
+function redraws(component: ComponentFact, name: string): FieldWrite[] {
+  const field = component.fields.find((f) => f.name === name);
+  if (!field || isNonState(field) || !isReactive(field) || field.disabledRules.includes('R1')) {
+    return [];
+  }
+  return field.writes
+    .filter((write) => write.context !== 'render' && (write.path?.length ?? 0) <= 1 && afterFirstLoad(write))
+    .map((write) => ({ field, write }));
 }
 
 /** The ForEach loops over the field's own elements whose key stays with an element: item properties or the index. */

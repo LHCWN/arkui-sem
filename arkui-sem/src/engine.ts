@@ -322,6 +322,27 @@ function describeIndexKey(candidate: CandidateOf<'foreach-index-key'>): Descript
   };
 }
 
+function describeLazySource(candidate: CandidateOf<'lazyforeach-source-rebuilt'>): Description {
+  const { loop, reassigns, changes } = candidate;
+  const at = (write: WriteFact) => `${write.method}() line ${write.line}`;
+  const made =
+    reassigns.length > 0
+      ? `LazyForEach's data source ${loop.source.text} (line ${loop.line}) is reassigned after the first render (${unique(reassigns.map((write) => `${writeText(loop.source.root ?? '', write)} in ${at(write)}`)).join('; ')})`
+      : `LazyForEach's data source is created while drawing (${loop.source.text} in ${loop.method}(), line ${loop.line})`;
+  const redrawn = changes.length
+    ? `, again on each change of ${unique(changes.map(({ field, write }) => `this.${field.name} (${writeText(field.name, write)} in ${at(write)})`)).join('; ')}`
+    : '';
+  return {
+    subject: `${candidate.component.name}.${loop.source.root ?? loop.source.fields[0] ?? 'LazyForEach'}`,
+    evidence: `${made}${redrawn}; LazyForEach updates only through its DataChangeListener, and a new or reassigned data source isn't supported (OpenHarmony LazyForEach docs, 使用限制)`,
+    fix: 'create the data source once (a field), keep the listener in registerDataChangeListener, and on change replace its array and call onDataReloaded() on each listener; or use ForEach for a short list.',
+  };
+}
+
+function unique<T>(items: T[]): T[] {
+  return [...new Set(items)];
+}
+
 /** A write as the agent reads it: `this.items = …`, `this.items[…] = …`, `this.items.sort(…)`. */
 function writeText(field: string, write: WriteFact): string {
   const path = write.path ?? [];
@@ -456,6 +477,17 @@ const KINDS: { [K in CandidateKind]: KindSpec<CandidateOf<K>> } = {
     ask: 'If the rows should follow the items',
     disableWhere: "above the ForEach call, or above the field's decorators for every R1 kind",
     related: (c) => [...new Set(c.shifts.map((shift) => shift.write.line))].map((line) => ({ file: c.file, line })),
+  },
+  'lazyforeach-source-rebuilt': {
+    path: { facts: (c) => (c.changes.length ? 'finding' : 'question') },
+    describe: describeLazySource,
+    ask: 'If the list should follow its data',
+    disableWhere: 'above the LazyForEach call',
+    related: (c) =>
+      unique([...c.reassigns, ...c.changes.map((change) => change.write)].map((write) => write.line)).map((line) => ({
+        file: c.file,
+        line,
+      })),
   },
   // The label assumes the @Link → @Prop mismatch (shared intent); callers map the other intent × decorator pairs.
   'ownership-intent': {

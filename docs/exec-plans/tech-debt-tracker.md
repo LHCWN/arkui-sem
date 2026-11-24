@@ -15,6 +15,8 @@
   `c ? this.a : this.b`), a nested holder (`this.vm.ds = …`), a `@Prop`/`@Link`/`@StorageLink` source changed outside,
   a local `const ds = new DS()` in build(). A reassignment counts as the same object only when its call's text equals
   the initializer's: other spellings of the same call still fire, and a factory call repeated as written goes quiet.
+  A first load after an await counts only for a loop outside any `if`: under one, the arm may open only after the load
+  (a loading flag), so a loop drawn before the load ends goes quiet too.
   The evidence doesn't say when the source class's `registerDataChangeListener` keeps no listener.
 - `foreach-index-key` (R1) is V1 only and sees writes in the component: a source a parent changes (`@Prop`, `@Link`)
   is not followed. A helper `aboutToAppear` calls from a promise continuation (`.then(() => this.load())`) doesn't

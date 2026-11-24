@@ -113,21 +113,37 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
   const load = (how: string) => page(`${plainSource}\n${how}`, lazy('this.source'));
   const assign = 'this.source = new ProductSource(loadProducts())';
 
-  test('a source field assigned once: its initializer, or the first load', () => {
+  test('a source field assigned once: its initializer, or the first load before the first render', () => {
     const cases = [
       page(plainSource, lazy('this.source')),
       load(`  aboutToAppear() {\n    ${assign}\n  }`),
-      load(`  async aboutToAppear() {\n    await ready()\n    ${assign}\n  }`),
-      load(
-        '  aboutToAppear() {\n    fetchProducts().then((items: Product[]) => { this.source = new ProductSource(items) })\n  }',
-      ),
       load(`  aboutToAppear() {\n    this.reload()\n  }\n  reload() {\n    ${assign}\n  }`),
     ];
     for (const src of cases) {
       assert.deepEqual(rebuilt(src), []);
     }
-    // Controls: the same source reassigned later fires.
+    // Controls: the same source reassigned later fires, also by a first load after an await or in a continuation,
+    // which lands after the first build.
     assert.equal(rebuilt(page(plainSource, `${reassignSource}\n${lazy('this.source')}`)).length, 1);
+    const later = [
+      load(`  async aboutToAppear() {\n    await ready()\n    ${assign}\n  }`),
+      load(
+        '  aboutToAppear() {\n    fetchProducts().then((items: Product[]) => { this.source = new ProductSource(items) })\n  }',
+      ),
+    ];
+    for (const src of later) {
+      assert.deepEqual(
+        rebuilt(src).map((c) => c.reassigns.map((w) => w.method)),
+        [['aboutToAppear']],
+      );
+    }
+  });
+
+  test('a first load after an await under an if: the arm may open only once the load is done', () => {
+    const members = `  @State loading: boolean = true\n${plainSource}
+  async aboutToAppear() {\n    await ready()\n    this.source = new ProductSource(loadProducts())\n    this.loading = false\n  }`;
+    const body = `      if (this.loading) {\n        Text('…')\n      } else {\n${lazy('this.source')}\n      }`;
+    assert.deepEqual(rebuilt(page(members, body)), []);
     const sharedReload = load(
       `  aboutToAppear() {\n    this.reload()\n  }\n  reload() {\n    ${assign}\n  }\n  onRefresh() {\n    this.reload()\n  }`,
     );

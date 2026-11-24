@@ -496,7 +496,7 @@ function sourceTag(loop: LoopFact, seen: Map<string, number>): string {
 }
 
 /** One candidate per LazyForEach whose source is created while drawing (a `new` expression, a method or a getter) or is
- *  a field reassigned after the first load to another object (not the initializer's call again); a method or getter
+ *  a field reassigned after the first render to another object (not the initializer's call again); a method or getter
  *  that returns a field as is counts as that field. */
 function lazySourceCandidates(component: ComponentFact, facts: FileFacts): LazySourceRebuiltCandidate[] {
   const out: LazySourceRebuiltCandidate[] = [];
@@ -544,11 +544,16 @@ function lazySourceCandidates(component: ComponentFact, facts: FileFacts): LazyS
   return out;
 }
 
-/** After the first load, R1 not disabled, and not only in the other arm of an `if` that holds the loop (switching arms
- *  recreates it). */
+/** After the first render, R1 not disabled, and not only in the other arm of an `if` that holds the loop (switching
+ *  arms recreates it). A first load after an await or in a promise continuation lands after the first build, so
+ *  LazyForEach keeps the source it had; it counts only for a loop outside any `if`, whose arm may open only once the
+ *  load is done (a loading flag). */
 function laterWrite(write: WriteFact, loop: LoopFact): boolean {
   return (
-    afterFirstLoad(write) && !write.disabledRules.includes('R1') && !exclusiveArms(write.branches ?? [], loop.branches)
+    !write.beforeFirstRender &&
+    !(write.initialLoad && loop.branches.length > 0) &&
+    !write.disabledRules.includes('R1') &&
+    !exclusiveArms(write.branches ?? [], loop.branches)
   );
 }
 

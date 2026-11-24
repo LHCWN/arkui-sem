@@ -385,13 +385,10 @@ export function buildSlice(
 ): { [key: string]: JsonValue } {
   const comp = c.component;
   const lines = new Set<number>([comp.line]);
-  let candidate: { [key: string]: JsonValue };
+  // Kinds decided by the facts without a field are never judged, so keep only their kind.
+  let candidate: { [key: string]: JsonValue } = { kind: c.kind };
 
-  if (c.kind === 'lazyforeach-source-rebuilt') {
-    // Decided by the facts, never judged: the slice only names the loop.
-    lines.add(c.loop.line);
-    candidate = { kind: c.kind, source: c.loop.source.text, source_shape: c.loop.source.shape };
-  } else if (c.kind !== 'unreleased-resource') {
+  if ('field' in c) {
     const f = c.field;
     const nested = c.kind === 'nested-write-unobserved' ? c : undefined;
     const shown = nested?.writes ?? f.writes; // a nested-write candidate shows the writes it flags
@@ -452,7 +449,7 @@ export function buildSlice(
             }),
       };
     }
-  } else {
+  } else if (c.kind === 'unreleased-resource') {
     const r = c.resource;
     lines.add(r.acquireLine);
     candidate = {

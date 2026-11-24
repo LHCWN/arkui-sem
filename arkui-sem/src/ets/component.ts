@@ -269,7 +269,14 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders
     }
     return out;
   };
-  return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned };
+  const returnsField = (name: string): string | undefined => {
+    const body = byName.get(name)?.method.body;
+    const [only] = body && ts.isBlock(body) && body.statements.length === 1 ? body.statements : [];
+    const value =
+      only && ts.isReturnStatement(only) && only.expression ? thisMember(unwrap(only.expression)) : undefined;
+    return value !== undefined && fields.has(value) ? value : undefined;
+  };
+  return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned, returnsField };
 }
 
 export function methodsOf(s: ts.StructDeclaration): Method[] {

@@ -17,7 +17,7 @@ import type {
 } from './facts.js';
 import { buildSlice, Q_R1, Q_R2, Q_R3, type SystemOneBackend } from './judge.js';
 import { ProjectIndex } from './project.js';
-import { feedsRender, nestedDepth, pathText, type RowRead, renderingReads } from './queries.js';
+import { feedsRender, isReactive, nestedDepth, pathText, type RowRead, renderingReads } from './queries.js';
 import {
   type Candidate,
   type CandidateKind,
@@ -308,13 +308,7 @@ function describeKeyStale(candidate: CandidateOf<'foreach-key-stale'>): Descript
 function describeIndexKey(candidate: CandidateOf<'foreach-index-key'>): Description {
   const { loop } = candidate;
   const item = loop.itemParam ?? 'item';
-  const writes = [
-    ...new Set(
-      candidate.shifts.map(
-        (shift) => `${writeText(shift.field.name, shift.write)} in ${shift.write.method}() line ${shift.write.line}`,
-      ),
-    ),
-  ];
+  const writes = [...new Set(candidate.shifts.map((shift) => writeAt(shift.field.name, shift.write)))];
   return {
     subject: `${candidate.component.name}.${candidate.field.name}`,
     evidence: `ForEach keys its rows by position (${loop.key.text}, line ${loop.line}), but other items come to those positions (${writes.join('; ')}); ForEach keeps the existing row for an unchanged key, so rows at the same positions keep showing the old items`,
@@ -323,17 +317,15 @@ function describeIndexKey(candidate: CandidateOf<'foreach-index-key'>): Descript
 }
 
 function describeLazySource(candidate: CandidateOf<'lazyforeach-source-rebuilt'>): Description {
-  const { loop, reassigns, changes } = candidate;
-  const at = (write: WriteFact) => `${write.method}() line ${write.line}`;
-  const made =
-    reassigns.length > 0
-      ? `LazyForEach's data source ${loop.source.text} (line ${loop.line}) is reassigned after the first render (${unique(reassigns.map((write) => `${writeText(loop.source.root ?? '', write)} in ${at(write)}`)).join('; ')})`
-      : `LazyForEach's data source is created while drawing (${loop.source.text} in ${loop.method}(), line ${loop.line})`;
+  const { loop, holder, reassigns, changes } = candidate;
+  const made = holder
+    ? `LazyForEach's data source ${loop.source.text} (line ${loop.line}) is reassigned after the first render (${unique(reassigns.map((write) => writeAt(holder.name, write))).join('; ')})`
+    : `LazyForEach's data source is created while drawing (${loop.source.text} in ${loop.method}(), line ${loop.line})`;
   const redrawn = changes.length
-    ? `, again on each change of ${unique(changes.map(({ field, write }) => `this.${field.name} (${writeText(field.name, write)} in ${at(write)})`)).join('; ')}`
+    ? `, again on each change of ${unique(changes.map(({ field, write }) => `this.${field.name} (${writeAt(field.name, write)})`)).join('; ')}`
     : '';
   return {
-    subject: `${candidate.component.name}.${loop.source.root ?? loop.source.fields[0] ?? 'LazyForEach'}`,
+    subject: `${candidate.component.name}.${holder?.name ?? loop.source.fields[0] ?? 'LazyForEach'}`,
     evidence: `${made}${redrawn}; LazyForEach updates only through its DataChangeListener, and a new or reassigned data source isn't supported (OpenHarmony LazyForEach docs, 使用限制)`,
     fix: 'create the data source once (a field), keep the listener in registerDataChangeListener, and on change replace its array and call onDataReloaded() on each listener; or use ForEach for a short list.',
   };
@@ -341,6 +333,16 @@ function describeLazySource(candidate: CandidateOf<'lazyforeach-source-rebuilt'>
 
 function unique<T>(items: T[]): T[] {
   return [...new Set(items)];
+}
+
+/** A write and where it is: `this.items.sort(…) in refresh() line 12`. */
+function writeAt(field: string, write: WriteFact): string {
+  return `${writeText(field, write)} in ${write.method}() line ${write.line}`;
+}
+
+/** The distinct lines of the writes, as related locations. */
+function writeLines(file: string, writes: WriteFact[]): Finding['related'] {
+  return unique(writes.map((write) => write.line)).map((line) => ({ file, line }));
 }
 
 /** A write as the agent reads it: `this.items = …`, `this.items[…] = …`, `this.items.sort(…)`. */
@@ -476,18 +478,19 @@ const KINDS: { [K in CandidateKind]: KindSpec<CandidateOf<K>> } = {
     describe: describeIndexKey,
     ask: 'If the rows should follow the items',
     disableWhere: "above the ForEach call, or above the field's decorators for every R1 kind",
-    related: (c) => [...new Set(c.shifts.map((shift) => shift.write.line))].map((line) => ({ file: c.file, line })),
+    related: (c) =>
+      writeLines(
+        c.file,
+        c.shifts.map((shift) => shift.write),
+      ),
   },
   'lazyforeach-source-rebuilt': {
-    path: { facts: (c) => (c.changes.length ? 'finding' : 'question') },
+    // A finding when a state change redraws the source: the author expects the list to follow it.
+    path: { facts: (c) => (c.changes.length || (c.holder && isReactive(c.holder)) ? 'finding' : 'question') },
     describe: describeLazySource,
     ask: 'If the list should follow its data',
     disableWhere: 'above the LazyForEach call',
-    related: (c) =>
-      unique([...c.reassigns, ...c.changes.map((change) => change.write)].map((write) => write.line)).map((line) => ({
-        file: c.file,
-        line,
-      })),
+    related: (c) => writeLines(c.file, [...c.reassigns, ...c.changes.map((change) => change.write)]),
   },
   // The label assumes the @Link → @Prop mismatch (shared intent); callers map the other intent × decorator pairs.
   'ownership-intent': {

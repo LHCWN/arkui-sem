@@ -38,10 +38,9 @@ export function moves(w: WriteFact): boolean {
   return isIndex(first) && below.length === 0 && !(w.call !== undefined && KEEPS_POSITIONS.has(w.call));
 }
 
-/** The write runs after the component's first load (aboutToAppear and the helpers only it calls), and R1 isn't
- *  disabled for it. */
+/** The write runs after the component's first load: not in aboutToAppear or a helper only it calls. */
 export function afterFirstLoad(w: WriteFact): boolean {
-  return !w.initialLoad && !w.beforeFirstRender && !w.disabledRules.includes('R1');
+  return !w.initialLoad && !w.beforeFirstRender;
 }
 
 /** Two places sit in different arms of one `if`, so they never exist at once. */

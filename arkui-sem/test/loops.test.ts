@@ -74,17 +74,19 @@ describe('loop source', () => {
     assert.deepEqual(s.fields, ['shelf']);
   });
 
-  test('a method or a getter, with the fields its helpers read', () => {
+  test('a method or a getter, with the fields its helpers read and the field it returns as is', () => {
     const members = `  liked(): Song[] { return this.songs.filter((x: Song) => x.liked && this.onShelf(x)) }
   onShelf(x: Song): boolean { return SHELVES[this.shelf].includes(x) }
   get all(): Song[] { return this.songs }`;
     const called = source('this.liked()', members);
     assert.equal(called.shape, 'call');
+    assert.equal(called.returns, undefined);
     assert.deepEqual(called.fields.sort(), ['shelf', 'songs']);
     assert.equal(called.returnsFrom, 'songs');
     assert.deepEqual(source('this.all', members), {
       text: 'this.all',
       shape: 'call',
+      returns: 'songs',
       returnsFrom: 'songs',
       fields: ['songs'],
     });

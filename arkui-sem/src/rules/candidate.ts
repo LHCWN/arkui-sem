@@ -103,10 +103,12 @@ export interface EventUnwiredCandidate extends FieldCandidateBase<'R2', 'event-u
  *  source's DataChangeListener. Not about one field: the source may read none. */
 export interface LazySourceRebuiltCandidate extends CandidateBase<'R1', 'lazyforeach-source-rebuilt'> {
   loop: LoopFact;
-  /** For a source `this.D`, the writes that reassign D after the first load; empty when the source is created while
+  /** The field that holds the source (`this.D`, or a getter returning it); absent when the source is created while
    *  drawing. */
+  holder?: FieldFact;
+  /** The writes that reassign the holder after the first load, in source order. */
   reassigns: WriteFact[];
-  /** Writes after the first load of the state fields the source reads, which redraw it, in source order. */
+  /** Writes after the first load of the other state fields the source reads, which redraw it, in source order. */
   changes: FieldWrite[];
 }
 

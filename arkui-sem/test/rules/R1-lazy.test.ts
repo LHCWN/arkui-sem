@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { checkFiles, type Finding } from '../../src/engine.js';
-import { HeuristicBackend } from '../../src/judge.js';
 import type { CandidateOf } from '../../src/rules/candidate.js';
 import { found, put, tempDir } from '../helpers.js';
 
@@ -75,9 +74,21 @@ describe('lazyforeach-source-rebuilt fires', () => {
     );
     const state = rebuilt(page(`  @State${plainSource}`, `${reassignSource}\n${lazy('this.source')}`));
     assert.deepEqual(
-      state.map((c) => [c.reassigns.length, c.changes.map((change) => change.field.name)]),
-      [[1, ['source']]],
+      state.map((c) => [c.holder?.name, c.reassigns.length, c.changes.length]),
+      [['source', 1, 0]],
     );
+  });
+
+  test('a getter that returns the source field as is counts as that field', () => {
+    const getter = '  get shown(): ProductSource {\n    return this.source\n  }';
+    assert.deepEqual(rebuilt(page(`${plainSource}\n${getter}`, lazy('this.shown'))), []);
+    const [c] = rebuilt(page(`${plainSource}\n${getter}`, `${reassignSource}\n${lazy('this.shown')}`));
+    assert.equal(c.holder?.name, 'source');
+  });
+
+  test('a reassigned source field is not also undecorated-mutated-rendered: @State would not help', () => {
+    const kinds = found(page(plainSource, `${reassignSource}\n${lazy('this.source')}`)).map((c) => c.kind);
+    assert.deepEqual(kinds, ['lazyforeach-source-rebuilt']);
   });
 
   test('two loops over the same source get distinct fingerprints', () => {
@@ -111,6 +122,15 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
     assert.equal(rebuilt(sharedReload).length, 1);
   });
 
+  test('a filter written only in the other arm of the if that holds the loop makes no finding', () => {
+    const arms = (then: string, otherwise: string) =>
+      `      if (this.products.length > 0) {\n${then}${lazy(filtered)}\n      } else {\n${otherwise}\n      }`;
+    const [quiet] = rebuilt(page('', arms('', pickCategory)));
+    assert.deepEqual(quiet.changes, []);
+    const [control] = rebuilt(page('', arms(`${pickCategory}\n`, '')));
+    assert.equal(control.changes.length, 1);
+  });
+
   test('a ForEach over a new source, and a LazyForEach over a model field', () => {
     assert.deepEqual(rebuilt(page('', lazy(filtered).replace('LazyForEach', 'ForEach'))), []);
     const model = '  model: Catalog = new Catalog()';
@@ -126,8 +146,8 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
 
 async function findingsOf(src: string): Promise<Finding[]> {
   const path = put(join(tempDir(), 'Shop.ets'), src);
-  // A plain source field written in a handler is also an undecorated-mutated-rendered candidate, which is judged.
-  const { findings } = await checkFiles([path], { backend: new HeuristicBackend() });
+  const none = { name: 'none', systemOne: async () => assert.fail('no judge call') };
+  const { findings } = await checkFiles([path], { backend: none });
   return findings.filter((f) => f.kind === 'lazyforeach-source-rebuilt');
 }
 
@@ -148,7 +168,13 @@ describe('lazyforeach-source-rebuilt findings', () => {
     assert.equal(f.band, 'question');
     assert.match(
       f.evidence,
-      /^LazyForEach's data source this\.source \(line \d+\) is reassigned after the first render \(this\.source = … in build\(\) line \d+\)/,
+      /^LazyForEach's data source this\.source \(line \d+\) is reassigned after the first render \(this\.source = … in build\(\) line \d+\);/,
     );
+  });
+
+  test('a reassigned @State source field is a finding', async () => {
+    const [f] = await findingsOf(page(`  @State${plainSource}`, `${reassignSource}\n${lazy('this.source')}`));
+    assert.equal(f.band, 'finding');
+    assert.doesNotMatch(f.evidence, /again on each change/);
   });
 });

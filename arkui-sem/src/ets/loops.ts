@@ -22,6 +22,8 @@ export interface Members {
   isHelper(name: string, called: boolean): boolean;
   /** The fields a method or getter accesses outside handlers, through the helpers it uses there, transitively. */
   fieldsOf(name: string): string[];
+  /** The field a method or getter returns as is (`return this.F`, its only statement). */
+  returnsField(name: string): string | undefined;
   /** The expressions a method or getter returns, outside the functions it holds. */
   returned(name: string): ts.Expression[];
 }
@@ -103,6 +105,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   }
   const helper = ts.isCallExpression(value) ? thisMember(value.expression) : member;
   if (helper !== undefined && members.isHelper(helper, ts.isCallExpression(value))) {
+    const returns = members.returnsField(helper);
     const returned = members.returned(helper);
     // A guard that returns nothing (`return []`, `null`) or no field's array (`return DEFAULTS`) shows no other one.
     const roots = new Set(returned.flatMap((e) => (isEmptyValue(e) ? [] : (rootField(e, members) ?? []))));
@@ -110,6 +113,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     return {
       text,
       shape: 'call',
+      ...(returns === undefined ? {} : { returns }),
       ...(from === undefined ? {} : { returnsFrom: from }),
       ...(returned.some(reordersArray) ? { reorders: true as const } : {}),
       fields,

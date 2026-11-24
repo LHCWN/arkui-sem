@@ -48,6 +48,7 @@ import {
   fingerprint,
   type IndexShift,
   type KeyStaleRebuild,
+  type LazySourceRebuiltCandidate,
   type V2Gap,
 } from './candidate.js';
 
@@ -375,7 +376,13 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
   if (c.version === 'V1') {
     const stale = new Set(out.flatMap((candidate) => (candidate.kind === 'foreach-key-stale' ? [candidate.loop] : [])));
     out.push(...indexKeyCandidates(c, facts, stale, resolver));
-    out.push(...lazySourceCandidates(c, facts));
+    const lazy = lazySourceCandidates(c, facts);
+    // Declaring a reassigned source @State doesn't make LazyForEach follow it: the lazy kind replaces that advice.
+    const sources = new Set(lazy.flatMap((candidate) => (candidate.reassigns.length ? [candidate.holder] : [])));
+    const kept = out.filter(
+      (candidate) => !(candidate.kind === 'undecorated-mutated-rendered' && sources.has(candidate.field)),
+    );
+    return [...kept, ...lazy];
   }
   return out;
 }
@@ -440,14 +447,8 @@ function indexKeyCandidates(
  *  adds or removes items; none in the other arm of an `if` that holds the loop, which runs while the loop is not
  *  shown, and switching back recreates it. The array a method or getter returns moves like the source's own. */
 function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): IndexShift[] {
-  const field = component.fields.find((f) => f.name === name);
-  if (
-    !field ||
-    isNonState(field) ||
-    !isReactive(field) ||
-    field.disabledRules.includes('R1') ||
-    loop.source.windowEnds?.includes(name)
-  ) {
+  const field = observedField(component, name);
+  if (!field || loop.source.windowEnds?.includes(name)) {
     return [];
   }
   const how = name === (loop.source.root ?? loop.source.returnsFrom) ? 'move' : 'select';
@@ -479,11 +480,10 @@ function sourceTag(loop: LoopFact, seen: Map<string, number>): string {
   return count > 1 ? `${source}~${count}` : source;
 }
 
-/** LazyForEach updates only through its data source's DataChangeListener; a new or reassigned data source isn't
- *  supported (OpenHarmony LazyForEach docs, 使用限制). One candidate per LazyForEach whose source is created while
- *  drawing (a `new` expression, a method or a getter) or is a field reassigned after the first load. */
-function lazySourceCandidates(component: ComponentFact, facts: FileFacts): Candidate[] {
-  const out: Candidate[] = [];
+/** One candidate per LazyForEach whose source is created while drawing (a `new` expression, a method or a getter) or is
+ *  a field reassigned after the first load; a method or getter that returns a field as is counts as that field. */
+function lazySourceCandidates(component: ComponentFact, facts: FileFacts): LazySourceRebuiltCandidate[] {
+  const out: LazySourceRebuiltCandidate[] = [];
   const seen = new Map<string, number>();
   for (const loop of component.loops) {
     if (loop.kind !== 'LazyForEach') {
@@ -493,13 +493,17 @@ function lazySourceCandidates(component: ComponentFact, facts: FileFacts): Candi
     if (loop.disabledRules.includes('R1')) {
       continue;
     }
-    const { shape, root, fields } = loop.source;
-    const holder = shape === 'field' ? component.fields.find((f) => f.name === root) : undefined;
+    const { shape, root, returns, fields } = loop.source;
+    const name = shape === 'field' ? root : returns;
+    const holder = component.fields.find((f) => f.name === name);
+    if (holder === undefined && shape !== 'new' && shape !== 'call') {
+      continue;
+    }
     const reassigns =
       holder === undefined || holder.disabledRules.includes('R1')
         ? []
-        : holder.writes.filter((write) => write.path === undefined && afterFirstLoad(write));
-    if (shape !== 'new' && shape !== 'call' && reassigns.length === 0) {
+        : holder.writes.filter((write) => write.path === undefined && laterWrite(write, loop));
+    if (holder !== undefined && reassigns.length === 0) {
       continue;
     }
     out.push({
@@ -509,8 +513,9 @@ function lazySourceCandidates(component: ComponentFact, facts: FileFacts): Candi
       component,
       line: loop.line,
       loop,
+      holder,
       reassigns,
-      changes: fields.flatMap((name) => redraws(component, name)),
+      changes: fields.filter((f) => f !== name).flatMap((f) => redraws(component, loop, f)),
       fingerprint: fingerprint(
         facts.file,
         `${component.name}.${root ?? fields[0] ?? 'LazyForEach'}`,
@@ -521,15 +526,26 @@ function lazySourceCandidates(component: ComponentFact, facts: FileFacts): Candi
   return out;
 }
 
-/** The writes of a state field after the first load that V1 observes, so redraw what reads it. */
-function redraws(component: ComponentFact, name: string): FieldWrite[] {
+/** After the first load, R1 not disabled, and not only in the other arm of an `if` that holds the loop (switching arms
+ *  recreates it). */
+function laterWrite(write: WriteFact, loop: LoopFact): boolean {
+  return (
+    afterFirstLoad(write) && !write.disabledRules.includes('R1') && !exclusiveArms(write.branches ?? [], loop.branches)
+  );
+}
+
+/** The writes of a state field V1 observes, so redraw what reads it. */
+function redraws(component: ComponentFact, loop: LoopFact, name: string): FieldWrite[] {
+  const field = observedField(component, name);
+  return (field?.writes ?? [])
+    .filter((write) => write.context !== 'render' && (write.path?.length ?? 0) <= 1 && laterWrite(write, loop))
+    .flatMap((write) => (field ? [{ field, write }] : []));
+}
+
+/** A V1 state field of the component, R1 not disabled. */
+function observedField(component: ComponentFact, name: string): FieldFact | undefined {
   const field = component.fields.find((f) => f.name === name);
-  if (!field || isNonState(field) || !isReactive(field) || field.disabledRules.includes('R1')) {
-    return [];
-  }
-  return field.writes
-    .filter((write) => write.context !== 'render' && (write.path?.length ?? 0) <= 1 && afterFirstLoad(write))
-    .map((write) => ({ field, write }));
+  return field && !isNonState(field) && isReactive(field) && !field.disabledRules.includes('R1') ? field : undefined;
 }
 
 /** The ForEach loops over the field's own elements whose key stays with an element: item properties or the index. */

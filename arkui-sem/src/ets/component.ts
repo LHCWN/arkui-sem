@@ -14,7 +14,7 @@ import type {
 import { type BuilderNames, climb, continues } from './callbacks.js';
 import { type FoundInput, inputsIn, type Typing, typing } from './inputs.js';
 import { LIFECYCLE } from './lifecycle.js';
-import { builderFact, loopsIn, type Members, reordersArray } from './loops.js';
+import { builderFact, loopsIn, type Members } from './loops.js';
 import { ts } from './parse.js';
 import { rebuiltElements } from './rebuilt.js';
 import { resources } from './resources.js';
@@ -252,15 +252,24 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders
     }
     return [...out];
   };
-  const reorders = (name: string): boolean => {
+  const returned = (name: string): ts.Expression[] => {
+    const out: ts.Expression[] = [];
+    const visit = (n: ts.Node) => {
+      if (ts.isReturnStatement(n)) {
+        if (n.expression) {
+          out.push(n.expression);
+        }
+      } else if (!isFunction(n)) {
+        ts.forEachChild(n, visit);
+      }
+    };
     const body = byName.get(name)?.method.body;
-    const returns = (n: ts.Node): boolean =>
-      ts.isReturnStatement(n)
-        ? n.expression !== undefined && reordersArray(n.expression)
-        : !isFunction(n) && ts.forEachChild(n, returns) === true;
-    return body !== undefined && ts.forEachChild(body, returns) === true;
+    if (body) {
+      ts.forEachChild(body, visit);
+    }
+    return out;
   };
-  return { fields: new Set(fields.keys()), isHelper, fieldsOf, reorders };
+  return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned };
 }
 
 export function methodsOf(s: ts.StructDeclaration): Method[] {
@@ -556,6 +565,7 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
     ...(callName === undefined ? {} : { call: callName }),
     ...(assignment && segments.length === 0 && keepsPositions(assignment, field.name) ? { keepsPositions: true } : {}),
+    ...(assignment && segments.length === 0 && keepsItems(assignment, field.name) ? { keepsItems: true } : {}),
     ...(ctx.arms ? { branches: [...ctx.arms, ...branchesOf(base, ctx.method.body, ctx.scan.sf)] } : {}),
     ...(rebuilt.length ? { rebuilt } : {}),
     disabledRules: ctx.scan.disabledAt(line),
@@ -593,6 +603,31 @@ function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean
   const [start] = value.arguments;
   const fromStart = method === 'slice' && (start === undefined || (ts.isNumericLiteral(start) && start.text === '0'));
   return (method === 'concat' || fromStart) && thisMember(unwrap(value.expression.expression)) === field;
+}
+
+/** `this.F = []`, `[...this.F]`, `this.F.slice()`, `this.F.slice(0)` or `this.F.concat()`: the same items or none. */
+function keepsItems(assignment: ts.BinaryExpression, field: string): boolean {
+  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+    return false;
+  }
+  const value = unwrap(assignment.right);
+  if (ts.isArrayLiteralExpression(value)) {
+    const [first, ...rest] = value.elements;
+    return (
+      first === undefined ||
+      (rest.length === 0 && ts.isSpreadElement(first) && thisMember(unwrap(first.expression)) === field)
+    );
+  }
+  if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
+    return false;
+  }
+  const method = value.expression.name.text;
+  const args = value.arguments;
+  const copy =
+    (method === 'concat' && args.length === 0) ||
+    (method === 'slice' &&
+      (args.length === 0 || (args.length === 1 && ts.isNumericLiteral(args[0]) && args[0].text === '0')));
+  return copy && thisMember(unwrap(value.expression.expression)) === field;
 }
 
 /** What an assignment assigns: an object literal, a `new` instance, a constant, or anything else (compound and update

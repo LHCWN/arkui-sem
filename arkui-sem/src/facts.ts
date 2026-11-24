@@ -46,6 +46,9 @@ export interface WriteFact {
   /** An assignment that puts no other item at an existing position: an append (`[...this.F, x]`, `this.F.concat(x)`), a
    *  clear (`[]`) or a cut from the start (`this.F.slice(0, n)`). */
   keepsPositions?: true;
+  /** Of those, one that keeps the same items or none: a copy (`[...this.F]`, `this.F.slice()`, `this.F.concat()`) or a
+   *  clear (`[]`). Even a sorted or reversed view of the array shows the same item at each position, or no rows. */
+  keepsItems?: true;
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
   /** The write loads what the component starts with: in aboutToAppear or a helper only it calls, outside callbacks
@@ -238,6 +241,9 @@ export interface LoopSource {
   /** The source, or what the method or getter it calls returns, sorts or reverses an array or cuts it from the end
    *  (`.reverse()`, `.slice(-n)`): an append moves the items at a position too. */
   reorders?: true;
+  /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
+   *  own array it shows. */
+  returnsFrom?: string;
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */
   fields: string[];

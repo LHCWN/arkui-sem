@@ -22,8 +22,8 @@ export interface Members {
   isHelper(name: string, called: boolean): boolean;
   /** The fields a method or getter accesses outside handlers, through the helpers it uses there, transitively. */
   fieldsOf(name: string): string[];
-  /** A method or getter returns an array it sorts, reverses or cuts from the end (reordersArray). */
-  reorders(name: string): boolean;
+  /** The expressions a method or getter returns, outside the functions it holds. */
+  returned(name: string): ts.Expression[];
 }
 
 const COMPONENT_NAME = /^[A-Z]/;
@@ -103,7 +103,16 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   }
   const helper = ts.isCallExpression(value) ? thisMember(value.expression) : member;
   if (helper !== undefined && members.isHelper(helper, ts.isCallExpression(value))) {
-    return { text, shape: 'call', ...(members.reorders(helper) ? { reorders: true as const } : {}), fields };
+    const returned = members.returned(helper);
+    const roots = new Set(returned.map((e) => rootField(e, members)));
+    const [from] = roots.size === 1 ? roots : [];
+    return {
+      text,
+      shape: 'call',
+      ...(from === undefined ? {} : { returnsFrom: from }),
+      ...(returned.some(reordersArray) ? { reorders: true as const } : {}),
+      fields,
+    };
   }
   if (fields.length === 0) {
     return { text, shape: 'other', fields };
@@ -117,7 +126,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
 
 /** A call chain that sorts or reverses an array, or cuts it from the end (`.slice(-5)`, `.slice(a.length - 5)`), so
  *  an item appended to the array moves the others. */
-export function reordersArray(expr: ts.Expression): boolean {
+function reordersArray(expr: ts.Expression): boolean {
   for (let value = unwrap(expr); ts.isCallExpression(value); ) {
     if (!ts.isPropertyAccessExpression(value.expression)) {
       return false;

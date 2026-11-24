@@ -81,7 +81,13 @@ describe('loop source', () => {
     const called = source('this.liked()', members);
     assert.equal(called.shape, 'call');
     assert.deepEqual(called.fields.sort(), ['shelf', 'songs']);
-    assert.deepEqual(source('this.all', members), { text: 'this.all', shape: 'call', fields: ['songs'] });
+    assert.equal(called.returnsFrom, 'songs');
+    assert.deepEqual(source('this.all', members), {
+      text: 'this.all',
+      shape: 'call',
+      returnsFrom: 'songs',
+      fields: ['songs'],
+    });
   });
 
   test("a helper's accesses in its handlers are left out", () => {

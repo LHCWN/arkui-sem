@@ -180,6 +180,24 @@ describe('foreach-index-key does not fire', () => {
     }
   });
 
+  test('a copy or a clear under a source that reverses the list or keeps its last items', () => {
+    const recent = '  get recent(): string[] {\n    return this.names.slice().reverse()\n  }';
+    for (const write of [
+      'this.names = [...this.names]',
+      'this.names = this.names.slice()',
+      'this.names = this.names.concat()',
+      'this.names = []',
+    ]) {
+      for (const [members, source] of [
+        [recent, 'this.recent'],
+        ['', 'this.names.slice(-5)'],
+      ]) {
+        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
+      }
+    }
+  });
+
   test('a key that holds the item, the default key, rows that render only the index', () => {
     const write = "      Button('r').onClick(() => { this.names = fetchNames() })";
     for (const key of ['(t: string) => t', '(t: string, i: number) => `${i}-${t}`']) {
@@ -288,5 +306,18 @@ describe('foreach-index-key findings', () => {
     const [f] = await findingsOf(src);
     assert.equal(f.band, 'question');
     assert.match(f.evidence, /this\.names = … in refresh\(\) line \d+/);
+  });
+
+  test('so do moves in a method of the list a getter or method source returns', async () => {
+    const refresh = '  refresh() {\n    this.names = fetchNames()\n  }';
+    const getter = '  get visible(): string[] {\n    return this.names.filter((n: string) => n.length > 2)\n  }';
+    const method = '  shown(): string[] {\n    return this.names.slice(0, 10)\n  }';
+    for (const [helper, source] of [
+      [getter, 'this.visible'],
+      [method, 'this.shown()'],
+    ]) {
+      const [f] = await findingsOf(page(`${refresh}\n${helper}`, loop(source)));
+      assert.equal(f?.band, 'question', source);
+    }
   });
 });

@@ -80,7 +80,8 @@ export function typing(fn: Handler, scan: FileScan, members: { fields: Set<strin
   visit(body);
   const statements = ts.isBlock(body) ? [...body.statements] : [body];
   out.effects = statements.some((statement) => {
-    const e = ts.isExpressionStatement(statement) ? statement.expression : statement;
+    // An expression body may sit in parentheses: `(v) => (this.name = v)`.
+    const e = ts.isExpressionStatement(statement) ? statement.expression : ts.isBlock(body) ? statement : unwrap(body);
     return typed(e) === undefined && handsText(e) === undefined && !isConsoleCall(e);
   });
   return out;

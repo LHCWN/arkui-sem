@@ -348,8 +348,9 @@ function describeInputUnbound(c: CandidateOf<'input-unbound'>): Description {
 
 function describeInputNeverRead(c: CandidateOf<'input-never-read'>): Description {
   const name = c.field.name;
-  const resets =
-    c.field.writes.length > c.inputs.flatMap((input) => input.writes).filter((w) => w.field === name).length;
+  // A handler method several inputs share joins each of them: compare lines, not counts.
+  const typed = new Set(c.inputs.flatMap((input) => input.writes.filter((w) => w.field === name).map((w) => w.line)));
+  const resets = c.field.writes.some((w) => !typed.has(w.line));
   return {
     subject: `${c.component.name}.${name}`,
     evidence: `the ${inputsText(c.inputs)} writes this.${name} on every change${resets ? ', other code only resets it to a constant,' : ''} and nothing reads it: typing has no effect`,

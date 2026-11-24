@@ -154,6 +154,25 @@ test('R4 asks only about owned V1 state without @Watch, and honours disable comm
 test('input-never-read: a search box whose query nothing reads', () => {
   assert.deepEqual(kinds(searchBox()), ['input-never-read 3']);
   assert.deepEqual(kinds(searchBox({ extra: 'aboutToAppear() { this.query = "" }' })), ['input-never-read 3']);
+  // An expression body in parentheses stores the text and does nothing else.
+  const parenthesized = searchBox().replace(
+    '(value: string) => { this.query = value }',
+    '(value: string) => (this.query = value)',
+  );
+  assert.deepEqual(kinds(parenthesized), ['input-never-read 3']);
+});
+
+test('input-never-read: a handler method two inputs share keeps the note that other code only resets it', async () => {
+  const dir = tempDir();
+  const file = join(dir, 'Market.ets');
+  const shared = searchBox({
+    extra: 'setQuery(value: string) { this.query = value }',
+    build: 'Search().onChange(this.setQuery)',
+  }).replace('(value: string) => { this.query = value }', 'this.setQuery');
+  put(file, shared);
+  const { findings } = await checkFiles([file], { backend: noJudge });
+  const [neverRead] = findings.filter((f) => f.kind === 'input-never-read');
+  assert.match(neverRead?.evidence ?? '', /TextInput and Search at lines \d+ and \d+ .*other code only resets it/);
 });
 
 test('input-never-read: a read anywhere, a two-way pass or this handed on keeps it quiet', () => {

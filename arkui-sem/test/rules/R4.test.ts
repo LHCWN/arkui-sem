@@ -80,6 +80,10 @@ test('input-unbound: an edit action prefills a field the input types into but do
   assert.deepEqual(kinds(editDialog()), ['input-unbound 18']);
   assert.deepEqual(kinds(editDialog({ input: 'TextArea' })), ['input-unbound 18']);
   assert.deepEqual(kinds(editDialog({ input: 'Search', options: "{ placeholder: 'Name' }" })), ['input-unbound 18']);
+  // A shorthand option names another option; a shorthand `text` binds a local.
+  assert.deepEqual(kinds(editDialog({ options: '{ placeholder }' })), ['input-unbound 18']);
+  assert.deepEqual(kinds(editDialog({ options: '{ text }' })), []);
+  assert.deepEqual(kinds(editDialog({ options: '{ ...defaults }' })), []);
   // A prefill before the first render still leaves the input empty.
   assert.deepEqual(
     kinds(

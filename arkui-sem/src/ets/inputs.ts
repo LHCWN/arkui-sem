@@ -200,12 +200,16 @@ function binding(options: ts.Expression | undefined, option: string, fields: Set
     return { kind: 'none' };
   }
   const literal = unwrap(options);
-  if (!ts.isObjectLiteralExpression(literal) || literal.properties.some((p) => !ts.isPropertyAssignment(p))) {
+  if (!ts.isObjectLiteralExpression(literal) || literal.properties.some(ts.isSpreadAssignment)) {
     return { kind: 'other' };
   }
-  const text = literal.properties.find((p) => ts.isPropertyAssignment(p) && memberName(p.name) === option);
-  if (!text || !ts.isPropertyAssignment(text)) {
+  // `{ placeholder }` is another option; `{ text }` binds a local.
+  const text = literal.properties.find((p) => p.name !== undefined && memberName(p.name) === option);
+  if (!text) {
     return { kind: 'none' };
+  }
+  if (!ts.isPropertyAssignment(text)) {
+    return { kind: 'other' };
   }
   const value = unwrap(text.initializer);
   const field = thisMember(value);

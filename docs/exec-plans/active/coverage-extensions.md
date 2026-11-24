@@ -50,7 +50,11 @@ evaluates each PR on its committed tree (regression over recorded agent sessions
 - Step 5a: done (branch `foreach-index-lazy`, stacked on #36): `foreach-index-key` (finding; a question when only
   methods move the list); write facts gain the array call, reassignments that keep positions, initial loads and the `if`
   arms in build(); loop facts gain their `if` arms.
-- Step 5b (`lazyforeach-source-rebuilt`), steps 6–7: not started.
+- Step 5b: done (branch `lazyforeach-source-rebuilt`, stacked on #37): `lazyforeach-source-rebuilt` (a finding when a
+  state change redraws the source, else a question); loop sources gain the field a getter returns as is, write facts
+  mark a reassignment that repeats the initializer's call. The empty-`registerDataChangeListener` evidence clause was
+  left out (tech-debt tracker).
+- Steps 6–7: not started.
 
 ## Open decisions
 

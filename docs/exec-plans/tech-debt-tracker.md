@@ -10,6 +10,12 @@
 - `foreach-key-stale` (R1) is V1 only. It follows an array through one `const`/`let` local assigned once in the writing
   method, not through other aliases, helpers or fields; elements bound by destructuring (`({ id, liked }) => …`) count
   as unknown; a key property is kept only as `p: e.p`, a spread of the element, or `p: X` under a guard `e.p === X`.
+- `lazyforeach-source-rebuilt` (R1) is V1 only and sees writes in the component. Not followed: a method that creates
+  the source once and caches it (reported), a source switched through other state (`this.m.get(this.k)`,
+  `c ? this.a : this.b`), a nested holder (`this.vm.ds = …`), a `@Prop`/`@Link`/`@StorageLink` source changed outside,
+  a local `const ds = new DS()` in build(). A reassignment counts as the same object only when its call's text equals
+  the initializer's: other spellings of the same call still fire, and a factory call repeated as written goes quiet.
+  The evidence doesn't say when the source class's `registerDataChangeListener` keeps no listener.
 - `foreach-index-key` (R1) is V1 only and sees writes in the component: a source a parent changes (`@Prop`, `@Link`)
   is not followed. A helper `aboutToAppear` calls from a promise continuation (`.then(() => this.load())`) doesn't
   count as the first load, so its writes fire. The if-arm exclusion follows @Builders and methods back to build()

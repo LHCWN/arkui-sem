@@ -406,3 +406,18 @@ struct SongRow {
     assert.deepEqual(paths(reads(facts)), ['.title']);
   });
 });
+
+describe('loop branches', () => {
+  test('the if arms that hold the loop, outermost first', () => {
+    const [loop] = loopsOf(
+      page(
+        '',
+        "      if (this.shelf > 0) { Text('x') } else { if (this.songs.length) { ForEach(this.songs, (s: Song) => { Text(s.title) }) } }",
+      ),
+    );
+    assert.deepEqual(
+      loop.branches.map((b) => b.arm),
+      ['else', 'then'],
+    );
+  });
+});

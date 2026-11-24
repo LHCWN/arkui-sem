@@ -10,6 +10,12 @@
 - `foreach-key-stale` (R1) is V1 only. It follows an array through one `const`/`let` local assigned once in the writing
   method, not through other aliases, helpers or fields; elements bound by destructuring (`({ id, liked }) => …`) count
   as unknown; a key property is kept only as `p: e.p`, a spread of the element, or `p: X` under a guard `e.p === X`.
+- `foreach-index-key` (R1) is V1 only and sees writes in the component: a source a parent changes (`@Prop`, `@Link`)
+  is not followed. A helper `aboutToAppear` calls from a promise continuation (`.then(() => this.load())`) doesn't
+  count as the first load, so its writes fire. The if-arm exclusion holds only when the loop and the write sit in the
+  same build() or @Builder: not for writes in methods a handler calls, a @Builder the other arm calls, or a loop in a
+  @Builder an arm calls. A constant key generator under the ForEach index join (`(t) => 'row'`) is not taken as an
+  index key.
 - R4 input kinds are V1 only and see whole-field writes of the typed text (`this.f = value`), in the onChange or one
   method only inputs use and the onChange hands the text to: a path write (`this.form.name = value`) is not followed,
   and a helper that hands the text on again counts as an effect. Typed writes are matched to the field's writes by

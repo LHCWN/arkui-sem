@@ -1,5 +1,5 @@
 // Small readers of ohos-typescript nodes shared by the extractor.
-import type { PathSegment } from '../facts.js';
+import type { Branch, PathSegment } from '../facts.js';
 import { ts } from './parse.js';
 
 export function decoratorNames(n: ts.Node): string[] {
@@ -89,6 +89,17 @@ export function isKeyedLoop(name: string): name is 'ForEach' | 'LazyForEach' {
 
 export function isFunction(n: ts.Node): n is ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration {
   return ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n);
+}
+
+/** The `if` arms between root and node, outermost first. */
+export function branchesOf(node: ts.Node, root: ts.Node, sf: ts.SourceFile): Branch[] {
+  const out: Branch[] = [];
+  for (let child = node, parent = node.parent; parent && child !== root; child = parent, parent = parent.parent) {
+    if (ts.isIfStatement(parent) && child !== parent.expression) {
+      out.unshift({ at: parent.getStart(sf), arm: child === parent.thenStatement ? 'then' : 'else' });
+    }
+  }
+  return out;
 }
 
 export function isAssignment(kind: ts.SyntaxKind): boolean {

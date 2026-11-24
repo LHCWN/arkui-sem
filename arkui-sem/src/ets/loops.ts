@@ -3,7 +3,17 @@ import type { BuilderFact, LoopFact, LoopKey, LoopSource, ValueUses } from '../f
 import { type BuilderNames, climb, isBuilderCall } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
-import { argumentOf, isFunction, isKeyedLoop, isWrapper, memberName, pathBelow, thisMember, unwrap } from './syntax.js';
+import {
+  argumentOf,
+  branchesOf,
+  isFunction,
+  isKeyedLoop,
+  isWrapper,
+  memberName,
+  pathBelow,
+  thisMember,
+  unwrap,
+} from './syntax.js';
 
 /** What the component's fields and helpers are, for a loop's source. */
 export interface Members {
@@ -33,7 +43,7 @@ export function loopsIn(
     if ((ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) && ts.isIdentifier(node.expression)) {
       const callee = node.expression.text;
       if (isKeyedLoop(callee) && !climb(node, body, names).inHandler) {
-        out.push(loopFact(node, callee, method, scan, names, members));
+        out.push(loopFact(node, callee, method, body, scan, names, members));
       }
     }
     ts.forEachChild(node, visit);
@@ -46,6 +56,7 @@ function loopFact(
   call: ts.CallExpression | ts.EtsComponentExpression,
   kind: LoopFact['kind'],
   method: string,
+  body: ts.Node,
   scan: FileScan,
   names: BuilderNames,
   members: Members,
@@ -67,6 +78,7 @@ function loopFact(
     key: loopKey(kind, keyGenerator, itemDeclaresIndex, scan, names),
     row: row?.body && itemParam !== undefined ? valueUses(itemParam, row.body, scan, names) : noUses(),
     creates: row?.body ? componentsIn(row.body, names) : [],
+    branches: branchesOf(call, body, scan.sf),
     disabledRules: scan.disabledFor(call),
   };
 }

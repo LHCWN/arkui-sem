@@ -1,6 +1,7 @@
 // Queries derived from the facts: paths, rendering reads, declared types and class hierarchies.
 import { relative } from 'node:path';
 import type {
+  Branch,
   BuilderFact,
   BuilderPass,
   BuildRead,
@@ -22,6 +23,24 @@ import type {
  *  re-render in a loop, so it is no reason for a state decorator. */
 export function feedsRender(w: WriteFact): boolean {
   return w.context === 'render' && w.accumulates === true;
+}
+
+/** Array calls that leave every element at its position. */
+const KEEPS_POSITIONS = new Set(['push', 'pop']);
+
+/** The write of an array field may put other items at its existing positions: a reassignment other than an append,
+ *  a clear or a cut, an index write, or a call that reorders, inserts or removes before the end. */
+export function moves(w: WriteFact): boolean {
+  const [first, ...below] = w.path ?? [];
+  if (first === undefined) {
+    return !w.keepsPositions;
+  }
+  return isIndex(first) && below.length === 0 && !(w.call !== undefined && KEEPS_POSITIONS.has(w.call));
+}
+
+/** Two places sit in different arms of one `if`, so they never exist at once. */
+export function exclusiveArms(a: Branch[], b: Branch[]): boolean {
+  return a.some((x) => b.some((y) => x.at === y.at && x.arm !== y.arm));
 }
 
 /** The reads that draw the UI: build()/@Builder reads outside event handlers, direct reads first, then reads in helpers. */

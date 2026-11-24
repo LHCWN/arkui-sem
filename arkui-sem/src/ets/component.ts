@@ -10,7 +10,7 @@ import type {
   WriteContext,
   WriteFact,
 } from '../facts.js';
-import { type BuilderNames, climb } from './callbacks.js';
+import { type BuilderNames, climb, continues } from './callbacks.js';
 import { type FoundInput, inputsIn, type Typing, typing } from './inputs.js';
 import { LIFECYCLE } from './lifecycle.js';
 import { builderFact, loopsIn, type Members } from './loops.js';
@@ -19,6 +19,7 @@ import { rebuiltElements } from './rebuilt.js';
 import { resources } from './resources.js';
 import type { FileScan } from './scan.js';
 import {
+  branchesOf,
   calleeName,
   decoratorNames,
   expressionName,
@@ -101,17 +102,23 @@ export function component(
   const scans = methods.map((m) => scanMethod(m, byName, names, builderNames));
   const drawing = drawingMethods(scans);
   const renderOnly = renderOnlyMethods(scans, drawing);
+  const loads = new Set<WriteFact>();
   for (const s of scans) {
     recordAccesses(s, byName, scan, builderNames, {
       drawn: drawing.get(s.method),
       renderOnly: renderOnly.has(s.method),
+      loads,
     });
   }
   const external = externalMethods(scans);
-  const setup = setupMethods(scans);
+  const setup = setupMethods(scans, false);
+  const loading = setupMethods(scans, true);
   for (const f of fields) {
     for (const w of f.writes) {
       w.external = external.has(w.method);
+      if (loading.has(w.method) && loads.has(w)) {
+        w.initialLoad = true;
+      }
       if (w.context !== 'async-callback' && setup.has(w.method)) {
         w.beforeFirstRender = true;
       }
@@ -410,7 +417,7 @@ function recordAccesses(
   fields: Map<string, FieldFact>,
   scan: FileScan,
   builders: BuilderNames,
-  { drawn, renderOnly }: { drawn: DrawSite | undefined; renderOnly: boolean },
+  { drawn, renderOnly, loads }: { drawn: DrawSite | undefined; renderOnly: boolean; loads: Set<WriteFact> },
 ) {
   const m = walk.method;
   const context: AccessContext = {
@@ -424,6 +431,7 @@ function recordAccesses(
     via: drawn && !rendersUi(m) ? (m.kind === 'getter' ? `this.${m.name}` : `this.${m.name}()`) : undefined,
     calls: [],
     tested: new Set(),
+    loads,
   };
   for (const base of walk.accesses) {
     const field = fields.get(base.name.text);
@@ -453,6 +461,8 @@ interface AccessContext {
   /** The method's calls of fields, and the fields it reads without calling or writing them. */
   calls: { field: FieldFact; call: CallbackCall }[];
   tested: Set<FieldFact>;
+  /** Writes outside callbacks or in promise continuations only (`.then`): run once if their method is. */
+  loads: Set<WriteFact>;
 }
 
 /** One `this.<field>…` access: the path below the field, then whether it writes (assignment, update, mutating call). */
@@ -461,7 +471,9 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
   const parent = top.parent;
   const last = segments.at(-1);
   const called = ts.isCallExpression(parent) && parent.expression === top;
-  const mutatingCall = called && last !== undefined && 'prop' in last && MUTATING_CALLS.has(last.prop);
+  const callName =
+    called && last !== undefined && 'prop' in last && MUTATING_CALLS.has(last.prop) ? last.prop : undefined;
+  const mutatingCall = callName !== undefined;
   const assignment =
     ts.isBinaryExpression(parent) && parent.left === top && isAssignment(parent.operatorToken.kind)
       ? parent
@@ -517,10 +529,16 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     path: path.length ? path : undefined,
     value: mutatingCall ? undefined : assignedValue(assignment),
     ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
+    ...(callName === undefined ? {} : { call: callName }),
+    ...(assignment && segments.length === 0 && keepsPositions(assignment, field.name) ? { keepsPositions: true } : {}),
+    ...(ctx.isBuild ? { branches: branchesOf(base, ctx.method.body, ctx.scan.sf) } : {}),
     ...(rebuilt.length ? { rebuilt } : {}),
     disabledRules: ctx.scan.disabledAt(line),
   };
   field.writes.push(write);
+  if (where.functions.every(continues)) {
+    ctx.loads.add(write);
+  }
 }
 
 /** The assignment's new value depends on the field's old one: `+=` and the like, or `this.f = g(this.f)`. */
@@ -530,6 +548,25 @@ function accumulates(assignment: ts.BinaryExpression, field: string): boolean {
   }
   const reads = (n: ts.Node): boolean => thisMember(n) === field || ts.forEachChild(n, reads) === true;
   return reads(assignment.right);
+}
+
+/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]` or `this.F.slice(0, n)`: no other item at an old position. */
+function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean {
+  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+    return false;
+  }
+  const value = unwrap(assignment.right);
+  if (ts.isArrayLiteralExpression(value)) {
+    const [first] = value.elements;
+    return first === undefined || (ts.isSpreadElement(first) && thisMember(unwrap(first.expression)) === field);
+  }
+  if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
+    return false;
+  }
+  const method = value.expression.name.text;
+  const [start] = value.arguments;
+  const fromStart = method === 'slice' && start !== undefined && ts.isNumericLiteral(start) && start.text === '0';
+  return (method === 'concat' || fromStart) && thisMember(unwrap(value.expression.expression)) === field;
 }
 
 /** What an assignment assigns: an object literal, a `new` instance, a constant, or anything else (compound and update
@@ -586,14 +623,11 @@ function readsTime(e: ts.Node): boolean {
   return ts.forEachChild(e, (c) => readsTime(c) || undefined) ?? false;
 }
 
-/**
- * Methods no code in the component reaches from build()/@Builder (calls or `this.m` references, e.g. `.onClick(this.m)`)
- * or from lifecycle hooks (calls): entry points for listeners, callbacks and other classes.
- */
 /** The methods that run only before the first build(): aboutToAppear, and helpers whose every use is a call outside
  *  handlers in such a method, with no await before it in its scope. Code after an await may run after the first
- *  build(); an await in another callback (`setTimeout(async () => …)`) doesn't delay the call. */
-function setupMethods(scans: MethodWalk[]): Set<string> {
+ *  build(); an await in another callback (`setTimeout(async () => …)`) doesn't delay the call. afterAwait: also calls
+ *  after an await, i.e. the methods that run once, from aboutToAppear. */
+function setupMethods(scans: MethodWalk[], afterAwait: boolean): Set<string> {
   const first = scans.find((scan) => scan.method.name === 'aboutToAppear');
   if (!first) {
     return new Set();
@@ -603,7 +637,8 @@ function setupMethods(scans: MethodWalk[]): Set<string> {
     scans.every((scan) =>
       scan.uses.every(
         (use) =>
-          use.name !== name || (setup.has(scan.method.name) && !scan.delayed.has(use) && use.called && !use.inHandler),
+          use.name !== name ||
+          (setup.has(scan.method.name) && (afterAwait || !scan.delayed.has(use)) && use.called && !use.inHandler),
       ),
     );
   for (let changed = true; changed; ) {
@@ -624,6 +659,10 @@ function setupMethods(scans: MethodWalk[]): Set<string> {
   return setup;
 }
 
+/**
+ * Methods no code in the component reaches from build()/@Builder (calls or `this.m` references, e.g. `.onClick(this.m)`)
+ * or from lifecycle hooks (calls): entry points for listeners, callbacks and other classes.
+ */
 function externalMethods(scans: MethodScan[]): Set<string> {
   const edges = new Map(
     scans.map((s) => [

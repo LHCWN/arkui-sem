@@ -30,7 +30,7 @@ One branch and PR per step, each after an explicit go.
    method (source, key, what the row renders, disable comment above the call).
 3. **`foreach-key-stale`** and the ForEach-aware nested-write fix text.
 4. **R4 widened**, `input-unbound`, `input-never-read` (needs an input fact; can run in parallel with 2–3).
-5. **`foreach-index-key`** and **`lazyforeach-source-rebuilt`**.
+5. **`foreach-index-key`**, then **`lazyforeach-source-rebuilt`**: two PRs, the second stacked on the first.
 6. **`selection-never-written`** (needs 2 and 4).
 7. **Cleanup (no behaviour change)**, once every kind above has landed, so code kept for a later kind isn't taken for
    dead: unused files, exports and dependencies (`knip`; `tsc --noUnusedLocals --noUnusedParameters` once), duplicated
@@ -47,7 +47,10 @@ evaluates each PR on its committed tree (regression over recorded agent sessions
 - Step 3: done (#34).
 - Step 4: done (branch `r4-input-kinds`): `InputFact`, field reads in any method, constant writes, `input-unbound`
   (a finding) and `input-never-read` (a question); R4 widened in the roadmap and design docs; demo page `Notes.ets`.
-- Steps 5–7: not started.
+- Step 5a: done (branch `foreach-index-lazy`, stacked on #36): `foreach-index-key` (finding; a question when only
+  methods move the list); write facts gain the array call, reassignments that keep positions, initial loads and the `if`
+  arms in build(); loop facts gain their `if` arms.
+- Step 5b (`lazyforeach-source-rebuilt`), steps 6–7: not started.
 
 ## Open decisions
 

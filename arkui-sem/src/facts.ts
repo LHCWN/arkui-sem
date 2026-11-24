@@ -41,8 +41,19 @@ export interface WriteFact {
   value?: 'object-literal' | 'new' | 'constant' | 'other';
   /** The new value depends on the old one: `++`, `+=`, `this.f = g(this.f)`, a mutating call. */
   accumulates?: true;
+  /** The method a mutating call runs (`push`, `splice`); absent for an assignment or update. */
+  call?: string;
+  /** An assignment that puts no other item at an existing position: an append (`[...this.F, x]`, `this.F.concat(x)`), a
+   *  clear (`[]`) or a cut from the start (`this.F.slice(0, n)`). */
+  keepsPositions?: true;
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
+  /** The write loads what the component starts with: in aboutToAppear or a helper only it calls, outside callbacks
+   *  other than promise continuations, before or after an await. */
+  initialLoad?: true;
+  /** For a write in build() or a @Builder, the `if` arms of that method that hold it, handlers included, outermost
+   *  first. */
+  branches?: Branch[];
   /** The write runs before the first build(): in aboutToAppear before any await, or in a helper only that calls. */
   beforeFirstRender?: true;
   /** The new objects the write puts where elements of the field were (absent when none). */
@@ -195,7 +206,15 @@ export interface LoopFact {
   row: ValueUses;
   /** The components the row creates outside handlers (`TextInput`, `Child`), by name. */
   creates: string[];
+  /** The `if` arms of the drawing method that hold the loop, outermost first: switching arms recreates the loop. */
+  branches: Branch[];
   disabledRules: string[];
+}
+
+/** One arm of an `if` statement; `at` is the statement's offset in the file, so arms match within one method only. */
+export interface Branch {
+  at: number;
+  arm: 'then' | 'else';
 }
 
 /**

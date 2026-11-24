@@ -17,6 +17,7 @@ import {
   className,
   declarationOf,
   elementType,
+  exclusiveArms,
   feedsRender,
   hierarchy,
   isCallSegment,
@@ -28,6 +29,7 @@ import {
   isReactiveV1,
   linkTypesOf,
   memberOf,
+  moves,
   nestedDepth,
   nonNull,
   own,
@@ -39,7 +41,7 @@ import {
   segmentText,
   typeFact,
 } from '../queries.js';
-import { type Candidate, fingerprint, type KeyStaleRebuild, type V2Gap } from './candidate.js';
+import { type Candidate, fingerprint, type IndexShift, type KeyStaleRebuild, type V2Gap } from './candidate.js';
 
 /** Types whose index writes and API calls V2 observes on an observed property, besides arrays. */
 const V2_CONTAINERS = new Set(['Map', 'Set', 'Date', 'WeakMap', 'WeakSet']);
@@ -362,7 +364,90 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
       out.push(...keyStaleCandidates(c, f, facts, resolver));
     }
   }
+  if (c.version === 'V1') {
+    const stale = new Set(out.flatMap((candidate) => (candidate.kind === 'foreach-key-stale' ? [candidate.loop] : [])));
+    out.push(...indexKeyCandidates(c, facts, stale, resolver));
+  }
   return out;
+}
+
+/** ForEach keeps the row of an existing key (OpenHarmony ForEach docs, 渲染结果非预期): under a key from the index
+ *  alone, other items at a position leave the old rows there. One candidate per such loop whose row renders the item and
+ *  whose items at a position change after the first render; loops foreach-key-stale reports are left to it. The
+ *  fingerprint names the source as written, plus a counter when two loops share it. */
+function indexKeyCandidates(
+  component: ComponentFact,
+  facts: FileFacts,
+  stale: Set<LoopFact>,
+  resolver?: ClassResolver,
+): Candidate[] {
+  const out: Candidate[] = [];
+  const seen = new Map<string, number>();
+  for (const loop of component.loops) {
+    if (loop.kind !== 'ForEach' || loop.key.kind !== 'index') {
+      continue;
+    }
+    const source = loop.source.text.replace(/\s+/g, ' ');
+    const count = (seen.get(source) ?? 0) + 1;
+    seen.set(source, count);
+    if (loop.disabledRules.includes('R1') || stale.has(loop)) {
+      continue;
+    }
+    const shifts = loop.source.fields.flatMap((name) => shiftsOf(component, loop, name));
+    const reads = shifts.length ? rowReads(loop, component, facts, resolver) : [];
+    if (reads.length === 0) {
+      continue;
+    }
+    const [first] = shifts;
+    out.push({
+      rule: 'R1',
+      kind: 'foreach-index-key',
+      file: facts.file,
+      component,
+      field: first.field,
+      line: loop.line,
+      loop,
+      shifts,
+      methodMovesOnly: shifts.every((shift) => shift.how === 'move' && shift.write.context !== 'build-closure'),
+      reads,
+      fingerprint: fingerprint(
+        facts.file,
+        `${component.name}.${loop.source.root ?? loop.source.fields[0]}`,
+        `R1-foreach-index@${source}${count > 1 ? `~${count}` : ''}`,
+      ),
+    });
+  }
+  return out;
+}
+
+/** The writes of a state field the loop's source reads that change which item sits at a position after the first
+ *  render. Of the source's own array only writes that move items count, and through a method or getter none that
+ *  keeps the positions of an array it may return (an append); none of a field written only in the other arm of an
+ *  `if` that holds the loop, since switching arms recreates the loop. */
+function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): IndexShift[] {
+  const field = component.fields.find((f) => f.name === name);
+  if (!field || isNonState(field) || !isReactive(field) || field.disabledRules.includes('R1')) {
+    return [];
+  }
+  const how = name === loop.source.root ? 'move' : 'select';
+  // An array write that keeps positions: an append, a clear, a cut from the end.
+  const keepsArray = (write: WriteFact) => !moves(write) && (write.path === undefined || isIndex(write.path[0]));
+  const changes = (write: WriteFact) =>
+    how === 'move'
+      ? moves(write)
+      : (write.path?.length ?? 0) <= 1 && !(loop.source.shape === 'call' && keepsArray(write));
+  const writes = field.writes.filter(
+    (write) =>
+      write.context !== 'render' &&
+      !write.initialLoad &&
+      !write.beforeFirstRender &&
+      !write.disabledRules.includes('R1') &&
+      changes(write),
+  );
+  if (writes.every((write) => exclusiveArms(write.branches ?? [], loop.branches))) {
+    return [];
+  }
+  return writes.map((write) => ({ field, write, how }));
 }
 
 /** The ForEach loops over the field's own elements whose key stays with an element: item properties or the index. */

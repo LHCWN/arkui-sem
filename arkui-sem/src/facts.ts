@@ -108,6 +108,9 @@ export interface FieldFact {
   /** Lines where a component or child is bound two-way to the field or a path below it (`$$this.f`, `this.f!!`): it
    *  may write the field, though no code here does. */
   boundTwoWay: number[];
+  /** Lines of writes in callbacks another field's initializer sets up (`new Options().onChange((i) => { this.f = i })`),
+   *  which `writes` leaves out; `reads` lists them too. */
+  initializerWrites: number[];
   /** Where the component calls the field as a function (`this.f(…)`): a callback it invokes. */
   calls: CallbackCall[];
   /** timer: the initializer or an assigned value is a timer id (`setTimeout(…)`, `setInterval(…)`); clock: one reads a
@@ -230,8 +233,8 @@ export interface LoopFact {
 export interface LoopComparison {
   field: string;
   line: number;
-  with: 'item' | 'index';
-  /** The item or index side as written (`index`, `item.id`), on one line. */
+  against: 'item' | 'index';
+  /** The item or index side, without parentheses or casts (`index`, `item.id`), on one line. */
   operand: string;
   /** The comparison as written, on one line. */
   text: string;
@@ -393,6 +396,8 @@ export interface ComponentArgument {
   form: ArgumentForm;
   /** The expression as written, on one line. */
   text: string;
+  /** The parent's field passed as a whole (`F` in `$F`, `this.F`, `this.F!!`). */
+  source?: string;
 }
 
 /** `Child({ … })` in a build(), @Builder or @LocalBuilder body or a field initializer, and a dialog controller's

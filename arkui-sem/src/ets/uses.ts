@@ -98,14 +98,23 @@ function argumentValue(
   p: ts.ObjectLiteralElementLike,
   methods: Set<string>,
   scan: FileScan,
-): Pick<ComponentArgument, 'form' | 'text'> {
-  if (ts.isPropertyAssignment(p)) {
-    return { form: formOf(p.initializer, methods), text: scan.text(p.initializer) };
-  }
-  if (ts.isShorthandPropertyAssignment(p)) {
-    return { form: formOf(p.name, methods), text: scan.text(p.name) };
+): Pick<ComponentArgument, 'form' | 'text' | 'source'> {
+  const value = ts.isPropertyAssignment(p) ? p.initializer : ts.isShorthandPropertyAssignment(p) ? p.name : undefined;
+  if (value !== undefined) {
+    const form = formOf(value, methods);
+    const source = sourceField(value, form);
+    return { form, text: scan.text(value), ...(source === undefined ? {} : { source }) };
   }
   return { form: ts.isMethodDeclaration(p) ? 'callback' : 'other', text: scan.text(p) };
+}
+
+/** The parent's field an argument passes as a whole: `F` in `$F`, `this.F`, `this.F!!`. */
+function sourceField(value: ts.Expression, form: ArgumentForm): string | undefined {
+  const e = unwrap(value);
+  if (form === '$x' && ts.isIdentifier(e)) {
+    return e.text.slice(1);
+  }
+  return form === 'this.x' || form === 'this.x!!' ? thisMember(e) : undefined;
 }
 
 function formOf(value: ts.Expression, methods: Set<string>): ArgumentForm {

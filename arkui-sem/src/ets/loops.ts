@@ -396,7 +396,7 @@ function componentsIn(body: ts.Node, names: BuilderNames): string[] {
   return [...out];
 }
 
-/** The row's equality tests, outside handlers, of a field against the item, a path below it or the index. */
+/** LoopFact.comparisons; a parameter an inner function redeclares is not the row's. */
 function comparisonsIn(
   body: ts.Node,
   item: string | undefined,
@@ -424,7 +424,13 @@ function comparisonsIn(
         const field = thisMember(unwrap(mine));
         const compared = field !== undefined && members.fields.has(field) ? param(other) : undefined;
         if (field !== undefined && compared !== undefined && !climb(node, body, names).inHandler) {
-          out.push({ field, line: scan.line(node), with: compared, operand: scan.text(other), text: scan.text(node) });
+          out.push({
+            field,
+            line: scan.line(node),
+            against: compared,
+            operand: scan.text(unwrap(other)),
+            text: scan.text(node),
+          });
         }
       }
     }

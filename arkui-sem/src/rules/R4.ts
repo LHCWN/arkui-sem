@@ -1,14 +1,6 @@
 // R4, state that doesn't do its job: a text input wired to its field in one direction only (input-unbound,
 // input-never-read), a selection the rows compare against that nothing sets (selection-never-written).
-import type {
-  ClassResolver,
-  ComponentArgument,
-  ComponentFact,
-  FieldFact,
-  FileFacts,
-  InputFact,
-  WriteFact,
-} from '../facts.js';
+import type { ClassResolver, ComponentFact, FieldFact, FileFacts, InputFact, WriteFact } from '../facts.js';
 import { childField, renderingReads } from '../queries.js';
 import { type Candidate, fingerprint } from './candidate.js';
 
@@ -73,6 +65,7 @@ function selectionCandidates(c: ComponentFact, facts: FileFacts, resolver: Class
       !isOwnedState(field) ||
       field.disabledRules.includes('R4') ||
       field.writes.length > 0 ||
+      field.initializerWrites.length > 0 ||
       field.boundTwoWay.length > 0 ||
       childMayWrite(field, c, facts, resolver)
     ) {
@@ -93,8 +86,8 @@ function selectionCandidates(c: ComponentFact, facts: FileFacts, resolver: Class
   });
 }
 
-/** The component passes the field to a child that may write it: `$f`, `this.f!!`, or `this.f` to a @Link; a child
- *  that can't be found counts as one. */
+/** The component passes the field to a child that may write it: `$f`, or `this.f` to a @Link; a child that can't be
+ *  found counts as one. `this.f!!` is in boundTwoWay. */
 function childMayWrite(
   field: FieldFact,
   c: ComponentFact,
@@ -105,24 +98,16 @@ function childMayWrite(
     (use) =>
       use.parent === c.name &&
       use.args.some((arg) => {
-        if (passedField(arg) !== field.name) {
+        if (arg.source !== field.name) {
           return false;
         }
         if (arg.form !== 'this.x') {
-          return true;
+          return arg.form === '$x';
         }
         const target = childField(use.child, arg.field, facts, resolver);
         return target === undefined || target.decorators.includes('@Link');
       }),
   );
-}
-
-/** `F` in an argument written `$F`, `this.F` or `this.F!!`, under casts and parentheses. */
-function passedField(arg: ComponentArgument): string | undefined {
-  if (arg.form !== 'this.x' && arg.form !== 'this.x!!' && arg.form !== '$x') {
-    return undefined;
-  }
-  return /(?:^|[^\w$.])(?:\$|this\.)([\w$]+)/.exec(arg.text)?.[1];
 }
 
 function isOwnedState(field: FieldFact): boolean {
@@ -161,7 +146,7 @@ function hasNoEffect(input: InputFact, c: ComponentFact, facts: FileFacts): bool
 /** No read in the component's code, no `$f` to a child, and no `this` the code hands on. */
 function neverRead(field: FieldFact, c: ComponentFact, facts: FileFacts): boolean {
   const passed = facts.componentUses.some(
-    (use) => use.parent === c.name && use.args.some((arg) => arg.form === '$x' && arg.text === `$${field.name}`),
+    (use) => use.parent === c.name && use.args.some((arg) => arg.form === '$x' && arg.source === field.name),
   );
   return field.reads.length === 0 && !passed && !c.thisEscapes;
 }

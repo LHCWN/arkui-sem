@@ -61,6 +61,13 @@ test('selection-never-written: a write anywhere keeps it quiet', () => {
   assert.deepEqual(kinds(grid({ cell: '.onClick(() => { this.selected = index })' })), []);
   assert.deepEqual(kinds(grid({ extra: 'aboutToAppear() { this.selected = 1 }' })), []);
   assert.deepEqual(kinds(grid({ extra: 'pick(i: number) { this.selected = i }' })), []);
+  // A listener another field's initializer registers.
+  const viewer = 'private viewer: Viewer = new Viewer().onPage((i: number) => { this.selected = i })';
+  const declared = 'class Viewer { onPage(f: (i: number) => void): Viewer { return this } }\n';
+  assert.deepEqual(kinds(declared + grid({ extra: viewer })), []);
+  assert.deepEqual(kinds(declared + grid({ extra: 'private viewer: Viewer = new Viewer()' })), [
+    'selection-never-written 6',
+  ]);
 });
 
 test('selection-never-written: a two-way binding or a child that may write it keeps it quiet', () => {
@@ -112,7 +119,7 @@ test('comparisons: the row fact keeps the field, side and text; shadowed paramet
   });
   const [market] = extract(src).components;
   assert.deepEqual(
-    market.loops[0].comparisons.map(({ field, with: side, operand, line }) => [field, side, operand, line]),
+    market.loops[0].comparisons.map(({ field, against, operand, line }) => [field, against, operand, line]),
     [
       ['selected', 'index', 'index', 15],
       ['selected', 'item', 'item.id', 15],
@@ -120,9 +127,12 @@ test('comparisons: the row fact keeps the field, side and text; shadowed paramet
   );
   // In the inner loop, `index` names the item: `index.id` is a path below it.
   assert.deepEqual(
-    market.loops[1].comparisons.map((cmp) => [cmp.with, cmp.text]),
+    market.loops[1].comparisons.map((cmp) => [cmp.against, cmp.text]),
     [['item', 'this.selected === index.id']],
   );
+  // The operand loses its parentheses and casts, for the fix to assign it.
+  const [cast] = extract(grid({ compare: '(item.id as number) === this.selected' })).components[0].loops[0].comparisons;
+  assert.deepEqual([cast.operand, cast.text], ['item.id', '(item.id as number) === this.selected']);
 });
 
 test('boundTwoWay: $$this.f and this.f!! are recorded, plain reads are not', () => {

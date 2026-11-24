@@ -11,9 +11,12 @@
   method, not through other aliases, helpers or fields; elements bound by destructuring (`({ id, liked }) => …`) count
   as unknown; a key property is kept only as `p: e.p`, a spread of the element, or `p: X` under a guard `e.p === X`.
 - R4 input kinds are V1 only and see whole-field writes of the typed text (`this.f = value`), in the onChange or one
-  method only inputs use: a path write (`this.form.name = value`) or a value passed through a second helper is not
-  followed. A constant set by code (`this.title = 'Untitled'`) counts as a reset, so an input that never shows it is
-  not asked about; a field rendered anywhere is not asked about either.
+  method only inputs use and the onChange hands the text to: a path write (`this.form.name = value`) is not followed,
+  and a helper that hands the text on again counts as an effect. Typed writes are matched to the field's writes by
+  line, so another write of the field on the input's line is taken for typing. A write of the field in the input's own
+  onChange that isn't the text (`value.slice(0, -1) + '*'`) counts as code setting it, so the finding says another
+  handler sets the field. A constant set by code (`this.title = 'Untitled'`) counts as a reset, so an input that never
+  shows it is not asked about; a field rendered anywhere is not asked about either.
 - The judge fallback chain is decided but not implemented (`docs/design-docs/decisions.md`).
 - The fact extractor reads one file's syntax tree, with no type checker: types come from annotations and `new X(…)` initializers, and writes through an alias (`const self = this; self.x = …`) are missed. Typed values from the ohos-typescript checker are planned (`docs/exec-plans/completed/cross-file-facts.md`, PR 2b); aliasing needs dataflow.
 - The project index caches facts by mtime only (an edit within the same mtime tick, or a tool that keeps mtimes, serves

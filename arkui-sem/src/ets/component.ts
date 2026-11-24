@@ -140,8 +140,8 @@ export function component(
   };
 }
 
-/** The inputs, with the typing of each handler method only inputs use joined to theirs; a handler used elsewhere too
- *  counts as an effect. */
+/** The inputs, with the typing of each handler method only inputs use joined to theirs; a handler used elsewhere too,
+ *  or one that hands the text on to further methods, counts as an effect. */
 function inputFacts(
   found: FoundInput[],
   scans: MethodScan[],
@@ -166,7 +166,10 @@ function inputFacts(
     return {
       ...fact,
       writes: [...fact.writes, ...joined.flatMap((t) => t.writes)],
-      effects: fact.effects || joined.some((t) => t.effects) || handlers.some((name) => !typingOf.has(name)),
+      effects:
+        fact.effects ||
+        joined.some((t) => t.effects || t.calls.length > 0) ||
+        handlers.some((name) => !typingOf.has(name)),
     };
   });
 }

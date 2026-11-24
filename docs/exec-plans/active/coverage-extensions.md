@@ -51,4 +51,4 @@ evaluates each PR on its committed tree (regression over recorded agent sessions
 
 ## Open decisions
 
-- None for step 4 (`input-unbound` became a finding after the noise check, review and device check).
+- None for step 4 (`input-unbound` became a finding; evidence in `bench/docs/plans/coverage-extensions.md`).

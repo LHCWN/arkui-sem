@@ -168,11 +168,12 @@ export interface InputFact {
    *  any other expression, or options that can't be read (`TextInput(this.options)`, a spread). */
   binding: { kind: 'none' } | { kind: 'field'; field: string; twoWay: boolean } | { kind: 'other' };
   /** Whole-field assignments of the typed text, possibly normalized (`this.f = value`, `this.f = value.trim()`, not
-   *  `this.valid = value.length > 0`), in its onChange, or in a component method the onChange calls or passes
-   *  (`.onChange(this.setName)`) that nothing else uses. */
+   *  `this.valid = value.length > 0`), in its onChange, or in a component method the onChange hands the text to
+   *  (`this.setName(value)`) or passes (`.onChange(this.setName)`) that nothing else uses. */
   writes: { field: string; line: number }[];
-  /** The onChange does more than store the typed text: a statement other than those writes, calls of handler methods
-   *  and `console` calls; a handler method that does more or that other code uses; a handler that can't be read. */
+  /** The onChange does more than store the typed text: a statement other than those writes, calls that hand the text
+   *  to a handler method and `console` calls; a handler method that does more, hands the text on again or that other
+   *  code uses; a handler that can't be read. */
   effects: boolean;
   disabledRules: string[];
 }

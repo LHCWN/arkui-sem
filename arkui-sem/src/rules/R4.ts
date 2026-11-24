@@ -69,13 +69,14 @@ function setsValue(w: WriteFact): boolean {
   );
 }
 
-/** Typing changes nothing: the onChange only stores the text, in fields that are never read. */
+/** Typing changes nothing: the onChange only stores the text, in owned fields that are never read (a write to a
+ *  @Link reaches the parent, one to a @Watch field runs its callback). */
 function hasNoEffect(input: InputFact, c: ComponentFact, facts: FileFacts): boolean {
   return (
     !input.effects &&
     input.writes.every((w) => {
       const stored = c.fields.find((f) => f.name === w.field);
-      return stored !== undefined && neverRead(stored, c, facts);
+      return stored !== undefined && isOwnedState(stored) && neverRead(stored, c, facts);
     })
   );
 }

@@ -330,6 +330,8 @@ function describeInputUnbound(c: CandidateOf<'input-unbound'>): Description {
   const name = c.field.name;
   const [input] = c.inputs;
   const option = input.kind === 'Search' ? 'value' : 'text';
+  // `$$` replaces the onChange: offered only when the onChange does nothing but store the text in this field.
+  const twoWay = c.inputs.every((i) => !i.effects && i.writes.every((w) => w.field === name));
   const setters = [
     ...new Set(
       c.sets.map((write) =>
@@ -340,7 +342,7 @@ function describeInputUnbound(c: CandidateOf<'input-unbound'>): Description {
   return {
     subject: `${c.component.name}.${name}`,
     evidence: `the ${inputsText(c.inputs)} writes this.${name} on change but has no ${option} option, and ${setters.join(', ')} also set${setters.length === 1 ? 's' : ''} this.${name} (${lineList([...new Set(c.sets.map((write) => write.line))])}): the input never shows that value, so it stays empty or keeps the old typed text while the state holds another`,
-    fix: `bind it: ${input.kind}({ ${option}: this.${name}, … }) and keep the onChange, or ${input.kind}({ ${option}: $$this.${name} }).`,
+    fix: `bind it: ${input.kind}({ ${option}: this.${name}, … }) and keep the onChange${twoWay ? `, or ${input.kind}({ ${option}: $$this.${name} }) in place of the onChange` : ''}.`,
   };
 }
 

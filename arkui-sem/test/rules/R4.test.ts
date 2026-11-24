@@ -122,6 +122,19 @@ test('input-unbound: a value derived from the text is not the text, so the input
   );
 });
 
+test('input-unbound: a setter handed a value derived from the text is not joined as storing the text', () => {
+  const src = editDialog({
+    extra: '@State valid: boolean = false\n  setValid(v: boolean) { this.valid = v }',
+    prefill: 'this.name = item.name\n    this.valid = item.name.length > 0',
+  }).replace('this.name = value', 'this.name = value\n            this.setValid(value.length > 0)');
+  assert.deepEqual(
+    found(src)
+      .filter((c) => c.rule === 'R4')
+      .map((c) => `${c.kind} ${'field' in c ? c.field.name : ''}`),
+    ['input-unbound name'],
+  );
+});
+
 test('R4 asks only about owned V1 state without @Watch, and honours disable comments', () => {
   assert.deepEqual(kinds(editDialog({ field: '@Link name: string' })), []);
   assert.deepEqual(kinds(editDialog({ field: "@State @Watch('onName') name: string = ''", extra: 'onName() {}' })), []);
@@ -189,6 +202,19 @@ test('input-never-read: only fields that store the typed text, and only when typ
   assert.deepEqual(setter('this.setQuery'), ['input-never-read 3']);
 });
 
+test('input-never-read: a setter that hands the text on, or a write to a @Link or @Watch field, is an effect', () => {
+  const onChange = (handler: string, extra: string) =>
+    kinds(searchBox({ extra }).replace('(value: string) => { this.query = value }', handler));
+  // applyQuery stores the query and refreshes the shown list from the text.
+  const applies =
+    'applyQuery(v: string) { this.query = v; this.refreshResults(v) }\n  refreshResults(v: string) { this.products = this.products.filter((p) => p.includes(v)) }';
+  assert.deepEqual(onChange('(v: string) => this.applyQuery(v)', applies), []);
+  // The parent gets the text, or a @Watch callback runs.
+  const both = '(value: string) => { this.query = value; this.liveQuery = value }';
+  assert.deepEqual(onChange(both, '@Link liveQuery: string'), []);
+  assert.deepEqual(onChange(both, "@State @Watch('onLive') liveQuery: string = ''\n  onLive() {}"), []);
+});
+
 test('input-never-read: a Swiper or Tabs onChange is not an input', () => {
   const src = `@Component
 struct Banner {
@@ -221,6 +247,7 @@ test('the engine reports input-unbound as a finding and input-never-read as a qu
   assert.match(unbound.evidence, /edit\(\) also sets this\.name \(line 8\)/);
   assert.deepEqual(unbound.related, [{ file: unbound.file, line: 8 }]);
   assert.match(unbound.fix, /TextInput\(\{ text: this\.name, … \}\)/);
+  assert.match(unbound.fix, /\$\$this\.name \}\) in place of the onChange/);
   assert.match(neverRead.evidence, /TextInput at line 8 writes this\.query on every change, other code only resets it/);
   const text = formatForAgent(r4, dir);
   assert.match(
@@ -229,4 +256,21 @@ test('the engine reports input-unbound as a finding and input-never-read as a qu
   );
   assert.match(text, /\[R4\?\] Market\.ets:3 Market\.query \(facts\)/);
   assert.match(text, /disable-next-line R4 -- <reason>` above the field's decorators, or above the input/);
+});
+
+test('input-unbound: the $$ fix is offered only when the onChange does nothing but store the text', async () => {
+  const dir = tempDir();
+  const file = join(dir, 'Editor.ets');
+  // The onChange also marks the draft dirty: `$$` alone would drop that.
+  put(
+    file,
+    editDialog({ extra: '@State dirty: boolean = false' }).replace(
+      'this.name = value',
+      'this.name = value\n            this.dirty = true',
+    ),
+  );
+  const { findings } = await checkFiles([file], { backend: noJudge });
+  const [unbound] = findings.filter((f) => f.kind === 'input-unbound');
+  assert.match(unbound.fix, /keep the onChange\.$/);
+  assert.doesNotMatch(unbound.fix, /\$\$/);
 });

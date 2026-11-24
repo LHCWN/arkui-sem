@@ -37,10 +37,10 @@ export interface Typing {
   /** Whole-field assignments of the text itself, possibly normalized (`this.f = value`, `this.f = value.trim()`),
    *  anywhere in it; a value derived from it (`value.length > 0`) is not the text. */
   writes: InputFact['writes'];
-  /** It does more than store the text: a statement other than those writes, calls of component methods (whose own
-   *  typing is joined) and `console` calls. */
+  /** It does more than store the text: a statement other than those writes, calls that hand the text to a component
+   *  method (whose own typing is joined) and `console` calls. */
   effects: boolean;
-  /** The component methods it calls. */
+  /** The component methods it hands the text to (`this.setQuery(value)`); their first parameter is the text. */
   calls: string[];
 }
 
@@ -54,14 +54,21 @@ export function typing(fn: Handler, scan: FileScan, members: { fields: Set<strin
     const storesText = text !== undefined && ts.isBinaryExpression(n) && isText(n.right, text);
     return field !== undefined && members.fields.has(field) && storesText ? field : undefined;
   };
+  // The component method of `this.m(text)`: the text, possibly normalized, as the first argument.
+  const handsText = (n: ts.Node): string | undefined => {
+    const called = calledMethod(n);
+    const [arg] = ts.isCallExpression(n) ? n.arguments : [];
+    const passesText = text !== undefined && arg !== undefined && isText(arg, text);
+    return called !== undefined && members.methods.has(called) && passesText ? called : undefined;
+  };
   const out: Typing = { writes: [], effects: false, calls: [] };
   const visit = (n: ts.Node) => {
     const field = typed(n);
     if (field !== undefined) {
       out.writes.push({ field, line: scan.line(n) });
     }
-    const called = calledMethod(n);
-    if (called !== undefined && members.methods.has(called)) {
+    const called = handsText(n);
+    if (called !== undefined) {
       out.calls.push(called);
     }
     ts.forEachChild(n, visit);
@@ -74,8 +81,7 @@ export function typing(fn: Handler, scan: FileScan, members: { fields: Set<strin
   const statements = ts.isBlock(body) ? [...body.statements] : [body];
   out.effects = statements.some((statement) => {
     const e = ts.isExpressionStatement(statement) ? statement.expression : statement;
-    const methodCall = members.methods.has(calledMethod(e) ?? '');
-    return typed(e) === undefined && !methodCall && !isConsoleCall(e);
+    return typed(e) === undefined && handsText(e) === undefined && !isConsoleCall(e);
   });
   return out;
 }

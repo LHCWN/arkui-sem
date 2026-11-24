@@ -14,7 +14,7 @@ import type {
 import { type BuilderNames, climb, continues } from './callbacks.js';
 import { type FoundInput, inputsIn, type Typing, typing } from './inputs.js';
 import { LIFECYCLE } from './lifecycle.js';
-import { builderFact, loopsIn, type Members } from './loops.js';
+import { builderFact, loopsIn, type Members, reordersArray } from './loops.js';
 import { ts } from './parse.js';
 import { rebuiltElements } from './rebuilt.js';
 import { resources } from './resources.js';
@@ -252,7 +252,15 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders
     }
     return [...out];
   };
-  return { fields: new Set(fields.keys()), isHelper, fieldsOf };
+  const reorders = (name: string): boolean => {
+    const body = byName.get(name)?.method.body;
+    const returns = (n: ts.Node): boolean =>
+      ts.isReturnStatement(n)
+        ? n.expression !== undefined && reordersArray(n.expression)
+        : !isFunction(n) && ts.forEachChild(n, returns) === true;
+    return body !== undefined && ts.forEachChild(body, returns) === true;
+  };
+  return { fields: new Set(fields.keys()), isHelper, fieldsOf, reorders };
 }
 
 export function methodsOf(s: ts.StructDeclaration): Method[] {
@@ -567,7 +575,8 @@ function accumulates(assignment: ts.BinaryExpression, field: string): boolean {
   return reads(assignment.right);
 }
 
-/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]` or `this.F.slice(0, n)`: no other item at an old position. */
+/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]`, `this.F.slice()` or `this.F.slice(0, n)`: no other item at an
+ *  old position. */
 function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return false;
@@ -582,7 +591,7 @@ function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean
   }
   const method = value.expression.name.text;
   const [start] = value.arguments;
-  const fromStart = method === 'slice' && start !== undefined && ts.isNumericLiteral(start) && start.text === '0';
+  const fromStart = method === 'slice' && (start === undefined || (ts.isNumericLiteral(start) && start.text === '0'));
   return (method === 'concat' || fromStart) && thisMember(unwrap(value.expression.expression)) === field;
 }
 

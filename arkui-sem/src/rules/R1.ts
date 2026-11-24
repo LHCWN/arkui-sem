@@ -422,7 +422,7 @@ function indexKeyCandidates(
 
 /** The writes of a state field the loop's source reads that change which item sits at a position after the first
  *  render. Of the source's own array only writes that move items count, and through a method or getter none that
- *  keeps the positions of an array it may return (an append); none of a field written only in the other arm of an
+ *  keeps the positions of an array it may return (an append), unless the source reorders that array; none of a field written only in the other arm of an
  *  `if` that holds the loop, since switching arms recreates the loop. */
 function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): IndexShift[] {
   const field = component.fields.find((f) => f.name === name);
@@ -430,12 +430,15 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
     return [];
   }
   const how = name === loop.source.root ? 'move' : 'select';
-  // An array write that keeps positions: an append, a clear, a cut from the end.
-  const keepsArray = (write: WriteFact) => !moves(write) && (write.path === undefined || isIndex(write.path[0]));
+  // An array write that keeps positions: an append, a clear, a cut from the end. Under a source that reorders the
+  // array (`.reverse()`, `.slice(-n)`) it moves the items shown at a position all the same.
+  const keepsArray = (write: WriteFact) =>
+    !moves(write) && (write.path?.length ?? 0) <= 1 && (write.path === undefined || isIndex(write.path[0]));
+  const reorders = loop.source.reorders === true;
   const changes = (write: WriteFact) =>
     how === 'move'
-      ? moves(write)
-      : (write.path?.length ?? 0) <= 1 && !(loop.source.shape === 'call' && keepsArray(write));
+      ? moves(write) || (reorders && keepsArray(write))
+      : (write.path?.length ?? 0) <= 1 && !(loop.source.shape === 'call' && !reorders && keepsArray(write));
   const writes = field.writes.filter(
     (write) =>
       write.context !== 'render' &&

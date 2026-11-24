@@ -107,6 +107,26 @@ describe('foreach-index-key fires', () => {
     const src = page(getter, `      Button('r').onClick(() => { this.names = fetchNames() })\n${loop('this.visible')}`);
     assert.equal(indexKeyed(src)[0]?.fingerprint, 'T.ets#Trips.names#R1-foreach-index@this.visible');
   });
+
+  test('an append under a source that reverses the list or keeps its last items', () => {
+    const push = "      Button('a').onClick(() => { this.names.push('x') })";
+    const recent = '  get recent(): string[] {\n    return this.names.slice().reverse()\n  }';
+    const lastFive = '  lastFive(): string[] {\n    return this.names.slice(Math.max(0, this.names.length - 5))\n  }';
+    for (const [members, source] of [
+      [recent, 'this.recent'],
+      [lastFive, 'this.lastFive()'],
+      ['', 'this.names.slice(-5)'],
+      ['', '[...this.names].reverse()'],
+    ]) {
+      const [c, ...rest] = indexKeyed(page(members, `${push}\n${loop(source)}`));
+      assert.equal(rest.length, 0, source);
+      assert.deepEqual(
+        c?.shifts.map((s) => [s.field.name, s.write.call]),
+        [['names', 'push']],
+        source,
+      );
+    }
+  });
 });
 
 describe('foreach-index-key does not fire', () => {
@@ -129,6 +149,12 @@ describe('foreach-index-key does not fire', () => {
     const getter = '  get visible(): string[] {\n    return this.names.filter((n: string) => n.length > 2)\n  }';
     const push = page(getter, `      Button('a').onClick(() => { this.names.push('x') })\n${loop('this.visible')}`);
     assert.deepEqual(indexKeyed(push), []);
+    const firstTen = '  firstTen(): string[] {\n    return this.names.slice(0, 10)\n  }';
+    const page10 = page(
+      firstTen,
+      `      Button('a').onClick(() => { this.names.push('x') })\n${loop('this.firstTen()')}`,
+    );
+    assert.deepEqual(indexKeyed(page10), []);
     const rebuilt = `      Button('t').onClick(() => { this.trips = this.trips.map((t: Trip) => ({ id: t.id, name: '-', tags: t.tags })) })
       ForEach(this.trips, (t: Trip) => { Text(t.name) }, (t: Trip, i: number) => \`\${i}\`)`;
     const kinds = found(page('', rebuilt)).map((c) => c.kind);
@@ -144,6 +170,7 @@ describe('foreach-index-key does not fire', () => {
       'this.names = this.names.concat(["x"])',
       'this.names = []',
       'this.names = this.names.slice(0, 2)',
+      'this.names = this.names.slice()',
     ]) {
       assert.deepEqual(
         indexKeyed(page('', `      Button('a').onClick(() => { ${write} })\n${loop('this.names')}`)),

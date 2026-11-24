@@ -15,7 +15,10 @@
   count as the first load, so its writes fire. The if-arm exclusion follows @Builders and methods back to build()
   through `this.m` uses in the component only: a builder passed as `@BuilderParam` or a method other code also calls
   gets no arms, and a write in a timer started in the other arm, which may run after the switch, is still excluded. A
-  constant key generator under the ForEach index join (`(t) => 'row'`) is not taken as an index key.
+  constant key generator under the ForEach index join (`(t) => 'row'`) is not taken as an index key. Every write of
+  the first load counts as before the first render, also one after an await over a field that starts with items
+  (`= ['a', 'b']`), whose rows then keep the old items. A source reorders the array (an append moves its items) only
+  through a sort, reverse or cut from the end written in its chain or a helper's `return`, not through a local.
 - R4 input kinds are V1 only and see whole-field writes of the typed text (`this.f = value`), in the onChange or one
   method only inputs use and the onChange hands the text to: a path write (`this.form.name = value`) is not followed,
   and a helper that hands the text on again counts as an effect. Typed writes are matched to the field's writes by

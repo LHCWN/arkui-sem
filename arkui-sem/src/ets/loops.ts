@@ -22,11 +22,15 @@ export interface Members {
   isHelper(name: string, called: boolean): boolean;
   /** The fields a method or getter accesses outside handlers, through the helpers it uses there, transitively. */
   fieldsOf(name: string): string[];
+  /** A method or getter returns an array it sorts, reverses or cuts from the end (reordersArray). */
+  reorders(name: string): boolean;
 }
 
 const COMPONENT_NAME = /^[A-Z]/;
 /** Array calls whose result holds elements of the array itself. */
 const KEEPS_ELEMENTS = new Set(['filter', 'slice', 'sort', 'reverse', 'concat', 'toSorted', 'toReversed']);
+/** Array calls that put the elements in another order. */
+const REORDERS = new Set(['sort', 'reverse', 'toSorted', 'toReversed']);
 
 type FunctionNode = ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | ts.MethodDeclaration;
 
@@ -99,7 +103,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   }
   const helper = ts.isCallExpression(value) ? thisMember(value.expression) : member;
   if (helper !== undefined && members.isHelper(helper, ts.isCallExpression(value))) {
-    return { text, shape: 'call', fields };
+    return { text, shape: 'call', ...(members.reorders(helper) ? { reorders: true as const } : {}), fields };
   }
   if (fields.length === 0) {
     return { text, shape: 'other', fields };
@@ -107,7 +111,35 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const root = rootField(value, members);
   const filteredBy = root === undefined ? undefined : elementFilters(value);
   const items = filteredBy === undefined ? {} : { itemsOf: root, ...(filteredBy.length ? { filteredBy } : {}) };
-  return { text, shape: 'derived', ...(root === undefined ? {} : { root }), ...items, fields };
+  const reorders = reordersArray(value) ? { reorders: true as const } : {};
+  return { text, shape: 'derived', ...(root === undefined ? {} : { root }), ...items, ...reorders, fields };
+}
+
+/** A call chain that sorts or reverses an array, or cuts it from the end (`.slice(-5)`, `.slice(a.length - 5)`), so
+ *  an item appended to the array moves the others. */
+export function reordersArray(expr: ts.Expression): boolean {
+  for (let value = unwrap(expr); ts.isCallExpression(value); ) {
+    if (!ts.isPropertyAccessExpression(value.expression)) {
+      return false;
+    }
+    const method = value.expression.name.text;
+    if (REORDERS.has(method) || (method === 'slice' && value.arguments[0] && fromEnd(value.arguments[0]))) {
+      return true;
+    }
+    value = unwrap(value.expression.expression);
+  }
+  return false;
+}
+
+/** A negative number, or a value computed from a length. */
+function fromEnd(start: ts.Expression): boolean {
+  const value = unwrap(start);
+  if (ts.isPrefixUnaryExpression(value) && value.operator === ts.SyntaxKind.MinusToken) {
+    return true;
+  }
+  const length = (n: ts.Node): boolean =>
+    (ts.isPropertyAccessExpression(n) && n.name.text === 'length') || ts.forEachChild(n, length) === true;
+  return length(value);
 }
 
 /** For `this.F` through calls that keep its elements only (`this.F.filter(…).slice(…)`): the item properties the

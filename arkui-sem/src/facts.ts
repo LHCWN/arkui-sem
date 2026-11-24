@@ -235,6 +235,9 @@ export interface LoopSource {
   /** The item properties the filters in that chain test as flags (`s.liked`, `!s.hidden`): a change to one moves the
    *  element into the items or out of them. */
   filteredBy?: string[];
+  /** The source, or what the method or getter it calls returns, sorts or reverses an array or cuts it from the end
+   *  (`.reverse()`, `.slice(-n)`): an append moves the items at a position too. */
+  reorders?: true;
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */
   fields: string[];

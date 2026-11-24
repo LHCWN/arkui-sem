@@ -131,6 +131,16 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
     assert.equal(control.changes.length, 1);
   });
 
+  test("a source field reassigned to its initializer's call again: a singleton, the same object", () => {
+    const singleton = '  source: ProductSource = ProductSource.shared()';
+    const again = (value: string) =>
+      page(singleton, `      Button('sync').onClick(() => { this.source = ${value} })\n${lazy('this.source')}`);
+    assert.deepEqual(rebuilt(again('ProductSource.shared()')), []);
+    // Controls: another call, or a new object.
+    assert.equal(rebuilt(again('ProductSource.filtered(this.category)')).length, 1);
+    assert.equal(rebuilt(again('new ProductSource([])')).length, 1);
+  });
+
   test('a ForEach over a new source, and a LazyForEach over a model field', () => {
     assert.deepEqual(rebuilt(page('', lazy(filtered).replace('LazyForEach', 'ForEach'))), []);
     const model = '  model: Catalog = new Catalog()';

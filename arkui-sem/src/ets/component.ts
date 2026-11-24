@@ -108,12 +108,14 @@ export function component(
   const renderOnly = renderOnlyMethods(scans, drawing);
   const loads = new Set<WriteFact>();
   const arms = methodArms(scans);
+  const initCalls = initializerCalls(s, scan);
   for (const s of scans) {
     recordAccesses(s, byName, scan, builderNames, {
       drawn: drawing.get(s.method),
       renderOnly: renderOnly.has(s.method),
       arms: arms.get(s.method.name),
       loads,
+      initCalls,
     });
   }
   const external = externalMethods(scans);
@@ -455,7 +457,14 @@ function recordAccesses(
     renderOnly,
     arms,
     loads,
-  }: { drawn: DrawSite | undefined; renderOnly: boolean; arms: Branch[] | undefined; loads: Set<WriteFact> },
+    initCalls,
+  }: {
+    drawn: DrawSite | undefined;
+    renderOnly: boolean;
+    arms: Branch[] | undefined;
+    loads: Set<WriteFact>;
+    initCalls: Map<string, string>;
+  },
 ) {
   const m = walk.method;
   const context: AccessContext = {
@@ -471,6 +480,7 @@ function recordAccesses(
     tested: new Set(),
     arms,
     loads,
+    initCalls,
   };
   for (const base of walk.accesses) {
     const field = fields.get(base.name.text);
@@ -504,6 +514,8 @@ interface AccessContext {
   arms: Branch[] | undefined;
   /** Writes outside callbacks or in promise continuations only (`.then`): run once if their method is. */
   loads: Set<WriteFact>;
+  /** Each field whose initializer is a call, with that call's text. */
+  initCalls: Map<string, string>;
 }
 
 /** One `this.<field>…` access: the path below the field, then whether it writes (assignment, update, mutating call). */
@@ -575,6 +587,9 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     ...(assignment && segments.length === 0 && keepsItems(assignment, field.name) ? { keepsItems: true } : {}),
     ...(ctx.arms ? { branches: [...ctx.arms, ...branchesOf(base, ctx.method.body, ctx.scan.sf)] } : {}),
     ...(rebuilt.length ? { rebuilt } : {}),
+    ...(assignment && segments.length === 0 && repeatsInitializer(assignment, ctx.initCalls.get(field.name), ctx.scan)
+      ? { repeatsInitializer: true }
+      : {}),
     disabledRules: ctx.scan.disabledAt(line),
   };
   field.writes.push(write);
@@ -635,6 +650,29 @@ function keepsItems(assignment: ts.BinaryExpression, field: string): boolean {
     (method === 'slice' &&
       (args.length === 0 || (args.length === 1 && ts.isNumericLiteral(args[0]) && args[0].text === '0')));
   return copy && thisMember(unwrap(value.expression.expression)) === field;
+}
+
+/** The fields whose initializer is a call, with its text; a `new` expression is no call, so it never matches. */
+function initializerCalls(s: ts.StructDeclaration, scan: FileScan): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of s.members) {
+    const name = memberName(m.name);
+    const init = ts.isPropertyDeclaration(m) && m.initializer ? unwrap(m.initializer) : undefined;
+    if (name !== undefined && init && ts.isCallExpression(init)) {
+      out.set(name, scan.text(init));
+    }
+  }
+  return out;
+}
+
+function repeatsInitializer(assignment: ts.BinaryExpression, init: string | undefined, scan: FileScan): boolean {
+  const value = unwrap(assignment.right);
+  return (
+    init !== undefined &&
+    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isCallExpression(value) &&
+    scan.text(value) === init
+  );
 }
 
 /** What an assignment assigns: an object literal, a `new` instance, a constant, or anything else (compound and update

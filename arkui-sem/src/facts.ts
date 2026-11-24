@@ -60,6 +60,9 @@ export interface WriteFact {
   branches?: Branch[];
   /** The write runs before the first build(): in aboutToAppear before any await, or in a helper only that calls. */
   beforeFirstRender?: true;
+  /** The write assigns the same call as the field's initializer (`this.c = Store.getInstance()`): for a singleton or a
+   *  shared lookup, the same object. */
+  repeatsInitializer?: true;
   /** The new objects the write puts where elements of the field were (absent when none). */
   rebuilt?: RebuiltElement[];
   disabledRules: string[];

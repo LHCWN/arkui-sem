@@ -481,7 +481,8 @@ function sourceTag(loop: LoopFact, seen: Map<string, number>): string {
 }
 
 /** One candidate per LazyForEach whose source is created while drawing (a `new` expression, a method or a getter) or is
- *  a field reassigned after the first load; a method or getter that returns a field as is counts as that field. */
+ *  a field reassigned after the first load to another object (not the initializer's call again); a method or getter
+ *  that returns a field as is counts as that field. */
 function lazySourceCandidates(component: ComponentFact, facts: FileFacts): LazySourceRebuiltCandidate[] {
   const out: LazySourceRebuiltCandidate[] = [];
   const seen = new Map<string, number>();
@@ -502,7 +503,9 @@ function lazySourceCandidates(component: ComponentFact, facts: FileFacts): LazyS
     const reassigns =
       holder === undefined || holder.disabledRules.includes('R1')
         ? []
-        : holder.writes.filter((write) => write.path === undefined && laterWrite(write, loop));
+        : holder.writes.filter(
+            (write) => write.path === undefined && !write.repeatsInitializer && laterWrite(write, loop),
+          );
     if (holder !== undefined && reassigns.length === 0) {
       continue;
     }

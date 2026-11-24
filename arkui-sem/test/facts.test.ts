@@ -361,3 +361,25 @@ struct P {
   assert.deepEqual(toggle.branches, [{ at: sort.branches?.[0].at, arm: 'else' }]);
   assert.equal(items.writes[3].branches, undefined);
 });
+
+test("a reassignment to the field initializer's call, and nothing else, repeats the initializer", () => {
+  const facts = extract(`@Entry
+@Component
+struct P {
+  store: Store = Store.get('a')
+  item: Item = new Item()
+  sync() {
+    this.store = Store.get('a')
+    this.store = Store.get('b')
+    this.store.child = Store.get('a')
+    this.item = new Item()
+  }
+  build() {}
+}`);
+  const [store, item] = facts.components[0].fields;
+  assert.deepEqual(
+    store.writes.map((w) => w.repeatsInitializer),
+    [true, undefined, undefined],
+  );
+  assert.equal(item.writes[0].repeatsInitializer, undefined);
+});

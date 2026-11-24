@@ -104,7 +104,8 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const helper = ts.isCallExpression(value) ? thisMember(value.expression) : member;
   if (helper !== undefined && members.isHelper(helper, ts.isCallExpression(value))) {
     const returned = members.returned(helper);
-    const roots = new Set(returned.map((e) => rootField(e, members)));
+    // A guard that returns nothing (`return []`, `null`) shows no other array.
+    const roots = new Set(returned.filter((e) => !isEmptyValue(e)).map((e) => rootField(e, members)));
     const [from] = roots.size === 1 ? roots : [];
     return {
       text,
@@ -122,6 +123,16 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const items = filteredBy === undefined ? {} : { itemsOf: root, ...(filteredBy.length ? { filteredBy } : {}) };
   const reorders = reordersArray(value) ? { reorders: true as const } : {};
   return { text, shape: 'derived', ...(root === undefined ? {} : { root }), ...items, ...reorders, fields };
+}
+
+/** `[]`, `null` or `undefined`. */
+function isEmptyValue(expr: ts.Expression): boolean {
+  const value = unwrap(expr);
+  return (
+    (ts.isArrayLiteralExpression(value) && value.elements.length === 0) ||
+    value.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(value) && value.text === 'undefined')
+  );
 }
 
 /** A call chain that sorts or reverses an array, or cuts it from the end (`.slice(-5)`, `.slice(a.length - 5)`), so

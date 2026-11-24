@@ -412,7 +412,7 @@ function indexKeyCandidates(
       reads,
       fingerprint: fingerprint(
         facts.file,
-        `${component.name}.${loop.source.root ?? loop.source.fields[0]}`,
+        `${component.name}.${loop.source.root ?? loop.source.returnsFrom ?? loop.source.fields[0]}`,
         `R1-foreach-index@${source}${count > 1 ? `~${count}` : ''}`,
       ),
     });
@@ -423,8 +423,8 @@ function indexKeyCandidates(
 /** The writes of a state field the loop's source reads that change which item sits at a position after the first
  *  render. Of the source's own array only writes that move items count, and through a method or getter none that
  *  keeps the positions of an array it may return (an append), unless the source reorders that array and the write
- *  adds or removes items; none of a field written only in the other arm of an `if` that holds the loop, since
- *  switching arms recreates the loop. The array a method or getter returns moves like the source's own. */
+ *  adds or removes items; none in the other arm of an `if` that holds the loop, which runs while the loop is not
+ *  shown, and switching back recreates it. The array a method or getter returns moves like the source's own. */
 function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): IndexShift[] {
   const field = component.fields.find((f) => f.name === name);
   if (!field || isNonState(field) || !isReactive(field) || field.disabledRules.includes('R1')) {
@@ -447,11 +447,9 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
       !write.initialLoad &&
       !write.beforeFirstRender &&
       !write.disabledRules.includes('R1') &&
+      !exclusiveArms(write.branches ?? [], loop.branches) &&
       changes(write),
   );
-  if (writes.every((write) => exclusiveArms(write.branches ?? [], loop.branches))) {
-    return [];
-  }
   return writes.map((write) => ({ field, write, how }));
 }
 

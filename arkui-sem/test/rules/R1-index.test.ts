@@ -319,5 +319,27 @@ describe('foreach-index-key findings', () => {
       const [f] = await findingsOf(page(`${refresh}\n${helper}`, loop(source)));
       assert.equal(f?.band, 'question', source);
     }
+    // A guard that returns nothing still leaves the list as the array the helper shows.
+    const guarded =
+      '  get visible(): string[] {\n    if (this.sel < 0) {\n      return []\n    }\n    return this.names\n  }';
+    const src = page(`${refresh}\n${guarded}`, loop('this.visible'));
+    const [g] = await findingsOf(src);
+    assert.equal(g?.band, 'question');
+    // The fingerprint names the array the helper returns, not the first field it reads.
+    assert.equal(indexKeyed(src)[0]?.fingerprint, 'T.ets#Trips.names#R1-foreach-index@this.visible');
+  });
+
+  test('a handler in the other arm of the if that holds the list is left out of a method-only move', async () => {
+    const refresh = '  refresh() {\n    this.names = fetchNames()\n  }';
+    const body = `      if (this.sel < 0) {
+${loop('this.names')}
+      } else {
+        Button('reload').onClick(() => { this.names = fetchNames() })
+      }`;
+    const [f, ...rest] = await findingsOf(page(refresh, body));
+    assert.equal(rest.length, 0);
+    assert.equal(f.band, 'question');
+    assert.match(f.evidence, /in refresh\(\) line \d+\)/);
+    assert.doesNotMatch(f.evidence, /in build\(\)/);
   });
 });

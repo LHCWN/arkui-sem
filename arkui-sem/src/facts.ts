@@ -245,7 +245,7 @@ export interface LoopSource {
   /** The item properties the filters in that chain test as flags (`s.liked`, `!s.hidden`): a change to one moves the
    *  element into the items or out of them. */
   filteredBy?: string[];
-  /** For a call: the field the method or getter returns as is (`return this.F`). */
+  /** For a call: the field every value the method or getter returns is, as is (`return this.F`). */
   returns?: string;
   /** The source, or what the method or getter it calls returns, sorts or reverses an array or cuts it from the end
    *  (`.reverse()`, `.slice(-n)`): an append moves the items at a position too. */

@@ -23,7 +23,7 @@ export interface Members {
   isHelper(name: string, called: boolean): boolean;
   /** The fields a method or getter accesses outside handlers, through the helpers it uses there, transitively. */
   fieldsOf(name: string): string[];
-  /** The field a method or getter returns as is (`return this.F`, its only statement). */
+  /** The field every value a method or getter returns is, as is (`return this.F`, after any other statements). */
   returnsField(name: string): string | undefined;
   /** The expressions a method or getter returns, outside the functions it holds; each arm of a conditional apart. */
   returned(name: string): ts.Expression[];
@@ -80,7 +80,7 @@ function loopFact(
   return {
     kind,
     line: scan.line(call),
-    sourceLine: scan.line(source ?? call),
+    sourceLine: scan.line(source ? unwrap(source) : call),
     method,
     ...(itemParam === undefined ? {} : { itemParam }),
     ...(indexParam === undefined ? {} : { indexParam }),

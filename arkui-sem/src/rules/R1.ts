@@ -542,7 +542,7 @@ function lazySourceCandidates(component: ComponentFact, facts: FileFacts): LazyS
       changes: fields.filter((f) => f !== name).flatMap((f) => redraws(component, loop, f)),
       fingerprint: fingerprint(
         facts.file,
-        `${component.name}.${root ?? fields[0] ?? 'LazyForEach'}`,
+        `${component.name}.${holder?.name ?? fields[0] ?? 'LazyForEach'}`,
         `R1-lazy-source@${source}`,
       ),
     });

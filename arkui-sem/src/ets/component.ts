@@ -284,10 +284,8 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders
     return out;
   };
   const returnsField = (name: string): string | undefined => {
-    const body = byName.get(name)?.method.body;
-    const [only] = body && ts.isBlock(body) && body.statements.length === 1 ? body.statements : [];
-    const value =
-      only && ts.isReturnStatement(only) && only.expression ? thisMember(unwrap(only.expression)) : undefined;
+    const values = new Set(returned(name).map((e) => thisMember(unwrap(e))));
+    const [value] = values.size === 1 ? values : [];
     return value !== undefined && fields.has(value) ? value : undefined;
   };
   return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned, returnsField };
@@ -663,14 +661,15 @@ function keepsItems(assignment: ts.BinaryExpression, field: string): boolean {
   return copy && thisMember(unwrap(value.expression.expression)) === field;
 }
 
-/** The fields whose initializer is a call, with its text; a `new` expression is no call, so it never matches. */
+/** The fields whose initializer is a call, with its tokens, so that formatting doesn't tell two calls apart; a `new`
+ *  expression is no call, so it never matches. */
 function initializerCalls(s: ts.StructDeclaration, scan: FileScan): Map<string, string> {
   const out = new Map<string, string>();
   for (const m of s.members) {
     const name = memberName(m.name);
     const init = ts.isPropertyDeclaration(m) && m.initializer ? unwrap(m.initializer) : undefined;
     if (name !== undefined && init && ts.isCallExpression(init)) {
-      out.set(name, scan.text(init));
+      out.set(name, tokens(scan.text(init)));
     }
   }
   return out;
@@ -682,8 +681,18 @@ function repeatsInitializer(assignment: ts.BinaryExpression, init: string | unde
     init !== undefined &&
     assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ts.isCallExpression(value) &&
-    scan.text(value) === init
+    tokens(scan.text(value)) === init
   );
+}
+
+/** The tokens of source text, without whitespace and comments, one space apart. */
+function tokens(text: string): string {
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
+  const out: string[] = [];
+  while (scanner.scan() !== ts.SyntaxKind.EndOfFileToken) {
+    out.push(scanner.getTokenText());
+  }
+  return out.join(' ');
 }
 
 /** What an assignment assigns: an object literal, a `new` instance, a constant, or anything else (compound and update

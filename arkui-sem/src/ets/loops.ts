@@ -120,6 +120,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     return {
       text,
       shape: 'call',
+      helper,
       ...(returns === undefined ? {} : { returns }),
       ...(shown.from === undefined ? {} : { returnsFrom: shown.from }),
       ...(shown.reorders ? { reorders: true as const } : {}),

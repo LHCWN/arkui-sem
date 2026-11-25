@@ -394,7 +394,10 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
           (read) =>
             read.inForEach &&
             loops.some((loop) =>
-              read.via === undefined ? loop.sourceLine === read.line : loop.source.text === read.via,
+              // Through a getter or method, `via` names it: `this.shown`, or `this.load()` whatever the arguments.
+              read.via === undefined
+                ? loop.sourceLine === read.line
+                : read.via === `this.${loop.source.helper}` || read.via === `this.${loop.source.helper}()`,
             ),
         )
       );

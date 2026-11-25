@@ -101,6 +101,17 @@ describe('lazyforeach-source-rebuilt fires', () => {
       viaGetter.map((c) => c.kind),
       ['lazyforeach-source-rebuilt'],
     );
+    // Nor through a getter written in parentheses, with `!` or a cast, or a method called with arguments.
+    const method = '  load(fresh: boolean): ProductSource {\n    return this.source\n  }';
+    for (const [helper, source] of [
+      [getter, '(this.shown)'],
+      [getter, 'this.shown!'],
+      [getter, 'this.shown as ProductSource'],
+      [method, 'this.load(true)'],
+    ]) {
+      const kinds = found(page(`${plainSource}\n${helper}`, `${reassignSource}\n${lazy(source)}`)).map((c) => c.kind);
+      assert.deepEqual(kinds, ['lazyforeach-source-rebuilt'], source);
+    }
     // Nor when the call spans lines.
     const multiline = lazy('\n        this.source').replace(', (p: Product)', ',\n        (p: Product)');
     const split = found(page(plainSource, `${reassignSource}\n${multiline}`)).map((c) => c.kind);

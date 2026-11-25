@@ -30,6 +30,8 @@ export interface Members {
 const COMPONENT_NAME = /^[A-Z]/;
 /** Array calls whose result holds elements of the array itself. */
 const KEEPS_ELEMENTS = new Set(['filter', 'slice', 'sort', 'reverse', 'concat', 'toSorted', 'toReversed']);
+/** Array calls after which an item that comes before another still does. */
+const KEEPS_PLACES = new Set(['filter', 'map', 'slice']);
 /** Array calls that put the elements in another order. */
 const REORDERS = new Set(['sort', 'reverse', 'toSorted', 'toReversed']);
 
@@ -141,14 +143,15 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   };
 }
 
-/** The fields the chain reads only in the end of a `.slice(0, n)` that nothing reorders after: a change shows more
- *  or fewer items at the end, and the same ones at each position. */
+/** The fields the chain reads only in the end of a `.slice(0, n)` followed only by calls that keep the items in place
+ *  (`filter`, `map`, `slice` from the start): a change shows more or fewer items at the end, and the same ones at each
+ *  position. A `concat` after it would move what it appends; a sort, everything. */
 function prefixEnds(expr: ts.Expression, members: Members): string[] {
   const ends = new Set<ts.Node>();
   for (let value = unwrap(expr); ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression); ) {
     const method = value.expression.name.text;
     const [start, end] = value.arguments;
-    if (REORDERS.has(method) || (method === 'slice' && start && fromEnd(start))) {
+    if (!KEEPS_PLACES.has(method) || (method === 'slice' && start && fromEnd(start))) {
       break;
     }
     if (method === 'slice' && end && start && isZero(start)) {

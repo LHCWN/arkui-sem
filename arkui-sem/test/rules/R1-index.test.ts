@@ -212,8 +212,12 @@ describe('foreach-index-key does not fire', () => {
     }
     const firstSel = '  get firstSel(): string[] {\n    return this.names.slice(0, this.sel)\n  }';
     assert.deepEqual(indexKeyed(page(firstSel, `${more}\n${loop('this.firstSel')}`)), []);
-    // Controls: a window that starts at the bound, or one reversed after the cut.
-    for (const source of ['this.names.slice(this.sel)', 'this.names.slice(0, this.sel).reverse()']) {
+    // Controls: a window that starts at the bound, one reversed after the cut, one followed by other items.
+    for (const source of [
+      'this.names.slice(this.sel)',
+      'this.names.slice(0, this.sel).reverse()',
+      'this.names.slice(0, this.sel).concat(this.trips[0].tags)',
+    ]) {
       assert.equal(indexKeyed(page('', `${more}\n${loop(source)}`)).length, 1, source);
     }
   });

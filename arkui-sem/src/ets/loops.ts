@@ -54,6 +54,8 @@ export function loopsIn(
   body: ts.Node,
   /** The `if` arms of build() the method runs in. */
   arms: Branch[],
+  /** The arms in the method's own body count too: false when it may run several times at once. */
+  ownArms: boolean,
   scan: FileScan,
   names: BuilderNames,
   members: Members,
@@ -63,7 +65,8 @@ export function loopsIn(
     if ((ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) && ts.isIdentifier(node.expression)) {
       const callee = node.expression.text;
       if (isKeyedLoop(callee) && !climb(node, body, names).inHandler) {
-        out.push(loopFact(node, callee, method, body, arms, scan, names, members));
+        const branches = [...arms, ...(ownArms ? branchesOf(node, body, scan.sf) : [])];
+        out.push(loopFact(node, callee, method, branches, scan, names, members));
       }
     }
     ts.forEachChild(node, visit);
@@ -76,8 +79,7 @@ function loopFact(
   call: ts.CallExpression | ts.EtsComponentExpression,
   kind: LoopFact['kind'],
   method: string,
-  body: ts.Node,
-  arms: Branch[],
+  branches: Branch[],
   scan: FileScan,
   names: BuilderNames,
   members: Members,
@@ -101,7 +103,7 @@ function loopFact(
     row: row?.body && itemParam !== undefined ? valueUses(itemParam, row.body, scan, names) : noUses(),
     creates: row?.body ? componentsIn(row.body, names) : [],
     comparisons: row?.body ? comparisonsIn(row.body, itemParam, indexParam, members, scan, names) : [],
-    branches: [...arms, ...branchesOf(call, body, scan.sf)],
+    branches,
     disabledRules: scan.disabledFor(call),
   };
 }
@@ -125,6 +127,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     return {
       text,
       shape: 'call',
+      helper,
       ...(returns === undefined ? {} : { returns }),
       ...(shown.from === undefined ? {} : { returnsFrom: shown.from }),
       ...(shown.reorders ? { reorders: true as const } : {}),
@@ -198,10 +201,17 @@ function startsOf(expr: ts.Expression, field: string): boolean {
 
 /** The ends of each `.slice(0, n)` in the chain followed only by calls that keep the items in place (`filter`, `map`,
  *  `slice` from the start): a change shows more or fewer items at the end, and the same ones at each position. A
- *  `concat` after it would move what it appends; a sort, everything. */
+ *  `concat` after it would move what it appends; a sort, everything. A copy (`[...x]`) keeps the items in place. */
 function prefixEnds(expr: ts.Expression): ts.Expression[] {
   const ends: ts.Expression[] = [];
-  for (let value = unwrap(expr); ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression); ) {
+  for (let value = unwrap(expr); ; ) {
+    if (isSpreadCopy(value)) {
+      value = unwrap(value.elements[0].expression);
+      continue;
+    }
+    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
+      break;
+    }
     const method = value.expression.name.text;
     const [start, end] = value.arguments;
     if (!KEEPS_PLACES.has(method) || (method === 'slice' && start && fromEnd(start))) {
@@ -226,10 +236,14 @@ function isEmptyValue(expr: ts.Expression): boolean {
 }
 
 /** A call chain that sorts or reverses an array, or cuts it from the end (`.slice(-5)`, `.slice(a.length - 5)`), so
- *  an item appended to the array moves the others. */
+ *  an item appended to the array moves the others; also through a copy (`[...this.F.slice(-5)]`). */
 function reordersArray(expr: ts.Expression): boolean {
-  for (let value = unwrap(expr); ts.isCallExpression(value); ) {
-    if (!ts.isPropertyAccessExpression(value.expression)) {
+  for (let value = unwrap(expr); ; ) {
+    if (isSpreadCopy(value)) {
+      value = unwrap(value.elements[0].expression);
+      continue;
+    }
+    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
       return false;
     }
     const method = value.expression.name.text;
@@ -238,7 +252,6 @@ function reordersArray(expr: ts.Expression): boolean {
     }
     value = unwrap(value.expression.expression);
   }
-  return false;
 }
 
 /** A negative number, or a value computed from a length. */

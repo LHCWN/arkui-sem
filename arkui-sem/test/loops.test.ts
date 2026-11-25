@@ -80,12 +80,14 @@ describe('loop source', () => {
   get all(): Song[] { return this.songs }`;
     const called = source('this.liked()', members);
     assert.equal(called.shape, 'call');
+    assert.equal(called.helper, 'liked');
     assert.equal(called.returns, undefined);
     assert.deepEqual(called.fields.sort(), ['shelf', 'songs']);
     assert.equal(called.returnsFrom, 'songs');
     assert.deepEqual(source('this.all', members), {
       text: 'this.all',
       shape: 'call',
+      helper: 'all',
       returns: 'songs',
       returnsFrom: 'songs',
       fields: ['songs'],

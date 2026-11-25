@@ -101,6 +101,17 @@ describe('lazyforeach-source-rebuilt fires', () => {
       viaGetter.map((c) => c.kind),
       ['lazyforeach-source-rebuilt'],
     );
+    // Nor through a getter written in parentheses, with `!` or a cast, or a method called with arguments.
+    const method = '  load(fresh: boolean): ProductSource {\n    return this.source\n  }';
+    for (const [helper, source] of [
+      [getter, '(this.shown)'],
+      [getter, 'this.shown!'],
+      [getter, 'this.shown as ProductSource'],
+      [method, 'this.load(true)'],
+    ]) {
+      const kinds = found(page(`${plainSource}\n${helper}`, `${reassignSource}\n${lazy(source)}`)).map((c) => c.kind);
+      assert.deepEqual(kinds, ['lazyforeach-source-rebuilt'], source);
+    }
     // Nor when the call spans lines.
     const multiline = lazy('\n        this.source').replace(', (p: Product)', ',\n        (p: Product)');
     const split = found(page(plainSource, `${reassignSource}\n${multiline}`)).map((c) => c.kind);
@@ -194,6 +205,12 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
     assert.deepEqual(found(store(commented('main'), "ProductSource.of('main')")), []);
     assert.equal(rebuilt(store(commented('main'), commented('other'))).length, 1);
     assert.equal(rebuilt(store("ProductSource.of('a  b')", "ProductSource.of('a b')")).length, 1);
+    // So do the parts of a template after a substitution, and a regex.
+    const template = (tail: string) => `ProductSource.of(\`a\${this.category}${tail}\`)`;
+    assert.deepEqual(found(store(template('//one').replace('(', '( '), template('//one'))), []);
+    assert.equal(rebuilt(store(template('//one'), template('//two'))).length, 1);
+    assert.equal(rebuilt(store(template('  b'), template(' b'))).length, 1);
+    assert.equal(rebuilt(store('ProductSource.of(/a  b/)', 'ProductSource.of(/a b/)')).length, 1);
   });
 
   test('a ForEach over a new source, and a LazyForEach over a model field', () => {

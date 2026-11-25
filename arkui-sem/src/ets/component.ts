@@ -111,13 +111,14 @@ export function component(
   const drawing = drawingMethods(scans);
   const renderOnly = renderOnlyMethods(scans, drawing);
   const loads = new Set<WriteFact>();
-  const arms = methodArms(scans);
+  const { arms, repeated } = methodArms(scans);
   const initCalls = initializerCalls(s, scan);
   for (const s of scans) {
     recordAccesses(s, byName, scan, builderNames, {
       drawn: drawing.get(s.method),
       renderOnly: renderOnly.has(s.method),
       arms: arms.get(s.method.name),
+      ownArms: !repeated.has(s.method.name),
       loads,
       initCalls,
     });
@@ -151,7 +152,9 @@ export function component(
     resources: resources(scans, scan),
     loops: methods
       .filter((m) => drawing.has(m))
-      .flatMap((m) => loopsIn(m.name, m.body, arms.get(m.name) ?? [], scan, builderNames, members)),
+      .flatMap((m) =>
+        loopsIn(m.name, m.body, arms.get(m.name) ?? [], !repeated.has(m.name), scan, builderNames, members),
+      ),
     builders: builderMethods.flatMap((m) => {
       const name = memberName(m.name);
       return name === undefined ? [] : [builderFact(name, m, scan, builderNames)];
@@ -465,12 +468,14 @@ function recordAccesses(
     drawn,
     renderOnly,
     arms,
+    ownArms,
     loads,
     initCalls,
   }: {
     drawn: DrawSite | undefined;
     renderOnly: boolean;
     arms: Branch[] | undefined;
+    ownArms: boolean;
     loads: Set<WriteFact>;
     initCalls: Map<string, string>;
   },
@@ -488,6 +493,7 @@ function recordAccesses(
     calls: [],
     tested: new Set(),
     arms,
+    ownArms,
     loads,
     initCalls,
   };
@@ -521,6 +527,8 @@ interface AccessContext {
   tested: Set<FieldFact>;
   /** The `if` arms of build() the method runs in (methodArms); undefined when not known. */
   arms: Branch[] | undefined;
+  /** The `if` arms in the method's own body count too: false when it may run several times at once (methodArms). */
+  ownArms: boolean;
   /** Writes outside callbacks or in promise continuations only (`.then`): run once if their method is. */
   loads: Set<WriteFact>;
   /** Each field whose initializer is a call, with that call's text. */
@@ -605,7 +613,9 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     ...(callName === undefined ? {} : { call: callName }),
     ...(assignment && segments.length === 0 && keepsPositions(assignment, field.name) ? { keepsPositions: true } : {}),
     ...(assignment && segments.length === 0 && keepsItems(assignment, field.name) ? { keepsItems: true } : {}),
-    ...(ctx.arms ? { branches: [...ctx.arms, ...branchesOf(base, ctx.method.body, ctx.scan.sf)] } : {}),
+    ...(ctx.arms
+      ? { branches: [...ctx.arms, ...(ctx.ownArms ? branchesOf(base, ctx.method.body, ctx.scan.sf) : [])] }
+      : {}),
     ...(rebuilt.length ? { rebuilt } : {}),
     ...(assignment && segments.length === 0 && repeatsInitializer(assignment, ctx.initCalls.get(field.name), ctx.scan)
       ? { repeatsInitializer: true }
@@ -680,7 +690,7 @@ function initializerCalls(s: ts.StructDeclaration, scan: FileScan): Map<string, 
     const name = memberName(m.name);
     const init = ts.isPropertyDeclaration(m) && m.initializer ? unwrap(m.initializer) : undefined;
     if (name !== undefined && init && ts.isCallExpression(init)) {
-      out.set(name, tokens(init.getText(scan.sf)));
+      out.set(name, tokens(init, scan.sf));
     }
   }
   return out;
@@ -692,18 +702,22 @@ function repeatsInitializer(assignment: ts.BinaryExpression, init: string | unde
     init !== undefined &&
     assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ts.isCallExpression(value) &&
-    tokens(value.getText(scan.sf)) === init
+    tokens(value, scan.sf) === init
   );
 }
 
-/** The tokens of source text as written (not on one line: a line comment would swallow the rest), without whitespace
- *  and comments, one space apart. */
-function tokens(text: string): string {
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
+/** The tokens of an expression, one space apart: the leaves of its syntax tree, so whitespace and comments between them
+ *  drop out while a string, template part or regex keeps its text as written. */
+function tokens(node: ts.Node, sf: ts.SourceFile): string {
   const out: string[] = [];
-  while (scanner.scan() !== ts.SyntaxKind.EndOfFileToken) {
-    out.push(scanner.getTokenText());
-  }
+  const visit = (n: ts.Node) => {
+    const children = n.getChildren(sf).filter((child) => !ts.isJSDoc(child));
+    if (children.length === 0) {
+      out.push(n.getText(sf));
+    }
+    children.forEach(visit);
+  };
+  visit(node);
   return out.join(' ');
 }
 
@@ -802,22 +816,46 @@ function setupMethods(scans: MethodWalk[], afterAwait: boolean): Set<string> {
  * shares, each use's arms in its own body after those of the method holding it. A @Builder that only one arm calls, or
  * a method only a handler in that arm calls, runs only while the arm is shown. A method with a use in a lifecycle hook,
  * or with no use in the component (other code calls it), has none known.
+ *
+ * repeated: the methods that may run several times at once, whose own `if` arms then don't exclude each other (one
+ * run may take one arm, another the other): a use in a loop row or in a repeated method, or uses not all in exclusive
+ * arms of one method. They keep only the arms they inherit.
  */
-function methodArms(scans: MethodScan[]): Map<string, Branch[]> {
+function methodArms(scans: MethodScan[]): { arms: Map<string, Branch[]>; repeated: Set<string> } {
   const arms = new Map<string, Branch[]>([['build', []]]);
-  const uses = new Map<string, { caller: string; branches: Branch[] }[]>();
+  const uses = new Map<string, { caller: string; branches: Branch[]; inForEach: boolean }[]>();
   for (const scan of scans) {
     for (const use of scan.uses) {
-      uses.set(use.name, [...(uses.get(use.name) ?? []), { caller: scan.method.name, branches: use.branches }]);
+      const site = { caller: scan.method.name, branches: use.branches, inForEach: use.inForEach };
+      uses.set(use.name, [...(uses.get(use.name) ?? []), site]);
     }
   }
+  const repeated = new Set<string>();
+  // Two uses in different arms of one `if` of the same method (queries.exclusiveArms) never run at once.
+  const apart = (a: { caller: string; branches: Branch[] }, b: { caller: string; branches: Branch[] }) =>
+    a.caller === b.caller && a.branches.some((x) => b.branches.some((y) => x.at === y.at && x.arm !== y.arm));
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [name, sites] of uses) {
+      const several = sites.some((a, i) => sites.slice(0, i).some((b) => !apart(a, b)));
+      if (
+        !repeated.has(name) &&
+        name !== 'build' &&
+        (several || sites.some((site) => site.inForEach || repeated.has(site.caller)))
+      ) {
+        repeated.add(name);
+        changed = true;
+      }
+    }
+  }
+  const own = (site: { caller: string; branches: Branch[] }) => (repeated.has(site.caller) ? [] : site.branches);
   for (let changed = true; changed; ) {
     changed = false;
     for (const [name, sites] of uses) {
       if (arms.has(name) || name === 'build' || !sites.every((site) => arms.has(site.caller))) {
         continue;
       }
-      const [first, ...rest] = sites.map((site) => [...(arms.get(site.caller) ?? []), ...site.branches]);
+      const [first, ...rest] = sites.map((site) => [...(arms.get(site.caller) ?? []), ...own(site)]);
       arms.set(
         name,
         first.filter((arm) => rest.every((other) => other.some((b) => b.at === arm.at && b.arm === arm.arm))),
@@ -825,7 +863,7 @@ function methodArms(scans: MethodScan[]): Map<string, Branch[]> {
       changed = true;
     }
   }
-  return arms;
+  return { arms, repeated };
 }
 
 /**

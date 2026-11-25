@@ -240,6 +240,22 @@ describe('foreach-index-key does not fire', () => {
     );
   });
 
+  test('a toggle between the list, its first items or nothing: only rows at the end come and go', () => {
+    const more = "      Button('more').onClick(() => { this.sel += 5 })";
+    const getter =
+      '  get shown(): string[] {\n    if (this.sel > 0) {\n      return this.names\n    }\n    return this.names.slice(0, 3)\n  }';
+    for (const [members, source] of [
+      ['', 'this.sel > 0 ? this.names : this.names.slice(0, 3)'],
+      ['', 'this.sel > 0 ? [...this.names] : []'],
+      [getter, 'this.shown'],
+    ]) {
+      assert.deepEqual(indexKeyed(page(members, `${more}\n${loop(source)}`)), [], source);
+    }
+    // Control: an arm that filters drops items from the middle.
+    const filtered = 'this.sel > 0 ? this.names : this.names.filter((n: string) => n !== "")';
+    assert.equal(indexKeyed(page('', `${more}\n${loop(filtered)}`)).length, 1);
+  });
+
   test('a copy or a clear under a source that reverses the list or keeps its last items', () => {
     const recent = '  get recent(): string[] {\n    return this.names.slice().reverse()\n  }';
     for (const write of [

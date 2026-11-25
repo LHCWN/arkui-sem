@@ -144,7 +144,9 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
  *  common. from: the field every one starts from; a value that shows nothing (`[]`, `null`) or no field's array
  *  (`DEFAULTS`) shows no other one. reorders: one sorts, reverses or cuts from the end. windowEnds: the fields read only
  *  as the end of a `.slice(0, n)` that keeps the items in place, nowhere else in `around` (the conditional or the
- *  method's body), whose other reads may pick another array. */
+ *  method's body), whose other reads may pick another array; when every value shows nothing or the start of that
+ *  field's array (`this.showAll ? this.F : this.F.slice(0, 3)`), every field `around` reads but that one: a change
+ *  can only show more or fewer items at the end. */
 function shownArrays(
   values: ts.Expression[],
   around: ts.Node,
@@ -154,10 +156,32 @@ function shownArrays(
   const [from] = roots.size === 1 ? roots : [];
   const ends = new Set(values.flatMap(prefixEnds));
   const elsewhere = new Set(fieldsRead(around, members, ends));
-  const windowEnds = [...new Set([...ends].flatMap((end) => fieldsRead(end, members)))].filter(
-    (f) => !elsewhere.has(f),
-  );
+  const windowEnds =
+    from !== undefined && values.every((e) => isEmptyValue(e) || startsOf(e, from))
+      ? fieldsRead(around, members).filter((f) => f !== from)
+      : [...new Set([...ends].flatMap((end) => fieldsRead(end, members)))].filter((f) => !elsewhere.has(f));
   return { ...(from === undefined ? {} : { from }), reorders: values.some(reordersArray), windowEnds };
+}
+
+/** The value is the start of this.field's array, or all of it: `this.F`, `this.F.slice(0, n)`, `[...this.F]`. */
+function startsOf(expr: ts.Expression, field: string): boolean {
+  for (let value = unwrap(expr); ; ) {
+    if (thisMember(value) === field) {
+      return true;
+    }
+    if (isSpreadCopy(value)) {
+      value = unwrap(value.elements[0].expression);
+    } else if (
+      ts.isCallExpression(value) &&
+      ts.isPropertyAccessExpression(value.expression) &&
+      value.expression.name.text === 'slice' &&
+      (value.arguments.length === 0 || isZero(value.arguments[0]))
+    ) {
+      value = unwrap(value.expression.expression);
+    } else {
+      return false;
+    }
+  }
 }
 
 /** The ends of each `.slice(0, n)` in the chain followed only by calls that keep the items in place (`filter`, `map`,

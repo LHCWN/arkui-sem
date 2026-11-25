@@ -119,6 +119,7 @@ describe('foreach-index-key fires', () => {
       [lastFive, 'this.lastFive()'],
       ['', 'this.names.slice(-5)'],
       ['', '[...this.names].reverse()'],
+      ['', '[...this.names.slice(-5)]'],
     ]) {
       const [c, ...rest] = indexKeyed(page(members, `${push}\n${loop(source)}`));
       assert.equal(rest.length, 0, source);
@@ -147,6 +148,28 @@ describe('foreach-index-key fires', () => {
         }
       })`;
     assert.equal(indexKeyed(page('', repeat)).length, 1);
+  });
+
+  test('a write in the other arm of an if inside a @Builder that runs several times at once', () => {
+    const panel = `  @Builder Panel(on: boolean) {
+    if (on) {
+${loop('this.names')}
+    } else {
+      Button('sort').onClick(() => { this.names.sort() })
+    }
+  }`;
+    // Each row calls it; build() calls it twice; the else arm hands the write to another @Builder.
+    const rowCalls = '      ForEach(this.trips, (g: Trip) => { this.Panel(g.id > 0) }, (g: Trip) => `${g.id}`)';
+    assert.equal(indexKeyed(page(panel, rowCalls)).length, 1);
+    assert.equal(indexKeyed(page(panel, '      this.Panel(true)\n      this.Panel(false)')).length, 1);
+    const sorter = "  @Builder Sorter() {\n    Button('sort').onClick(() => { this.names.sort() })\n  }";
+    const handsOn = panel.replace("Button('sort').onClick(() => { this.names.sort() })", 'this.Sorter()');
+    assert.equal(indexKeyed(page(`${handsOn}\n${sorter}`, rowCalls)).length, 1);
+    // Control: called once, or once in each arm of an if, it takes one arm at a time.
+    assert.deepEqual(indexKeyed(page(panel, '      this.Panel(this.sel > 0)')), []);
+    const eachArm =
+      '      if (this.sel > 0) {\n        this.Panel(true)\n      } else {\n        this.Panel(false)\n      }';
+    assert.deepEqual(indexKeyed(page(panel, eachArm)), []);
   });
 });
 
@@ -207,6 +230,7 @@ describe('foreach-index-key does not fire', () => {
     for (const source of [
       'this.names.slice(0, this.sel)',
       'this.names.filter((n: string) => n !== "").slice(0, this.sel)',
+      '[...this.names.slice(0, this.sel)]',
     ]) {
       assert.deepEqual(indexKeyed(page('', `${more}\n${loop(source)}`)), [], source);
     }

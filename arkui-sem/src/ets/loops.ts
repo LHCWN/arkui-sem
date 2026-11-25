@@ -5,6 +5,7 @@ import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
 import {
   argumentOf,
+  armsOf,
   branchesOf,
   isFunction,
   isKeyedLoop,
@@ -27,11 +28,15 @@ export interface Members {
   returnsField(name: string): string | undefined;
   /** The expressions a method or getter returns, outside the functions it holds; each arm of a conditional apart. */
   returned(name: string): ts.Expression[];
+  /** The body of a method or getter. */
+  body(name: string): ts.Node | undefined;
 }
 
 const COMPONENT_NAME = /^[A-Z]/;
 /** Array calls whose result holds elements of the array itself. */
 const KEEPS_ELEMENTS = new Set(['filter', 'slice', 'sort', 'reverse', 'concat', 'toSorted', 'toReversed']);
+/** Array calls after which an item that comes before another still does. */
+const KEEPS_PLACES = new Set(['filter', 'map', 'slice']);
 /** Array calls that put the elements in another order. */
 const REORDERS = new Set(['sort', 'reverse', 'toSorted', 'toReversed']);
 const EQUALITY = new Set([
@@ -113,63 +118,77 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     return { text, shape: 'new', fields };
   }
   const helper = ts.isCallExpression(value) ? thisMember(value.expression) : member;
-  if (helper !== undefined && members.isHelper(helper, ts.isCallExpression(value))) {
+  const body = helper === undefined ? undefined : members.body(helper);
+  if (helper !== undefined && body && members.isHelper(helper, ts.isCallExpression(value))) {
     const returns = members.returnsField(helper);
-    const returned = members.returned(helper);
-    // A guard that returns nothing (`return []`, `null`) or no field's array (`return DEFAULTS`) shows no other one.
-    const roots = new Set(returned.flatMap((e) => (isEmptyValue(e) ? [] : (rootField(e, members) ?? []))));
-    const [from] = roots.size === 1 ? roots : [];
-    // A window end in one returned value that another reads otherwise is no window end.
-    const ends = returned.map((e) => prefixEnds(e, members));
-    const windowEnds = [...new Set(ends.flat())].filter((f) =>
-      returned.every((e, i) => ends[i].includes(f) || !fieldsRead(e, members).includes(f)),
-    );
+    const shown = shownArrays(members.returned(helper), body, members);
     return {
       text,
       shape: 'call',
       ...(returns === undefined ? {} : { returns }),
-      ...(from === undefined ? {} : { returnsFrom: from }),
-      ...(returned.some(reordersArray) ? { reorders: true as const } : {}),
-      ...(windowEnds.length ? { windowEnds } : {}),
+      ...(shown.from === undefined ? {} : { returnsFrom: shown.from }),
+      ...(shown.reorders ? { reorders: true as const } : {}),
+      ...(shown.windowEnds.length ? { windowEnds: shown.windowEnds } : {}),
       fields,
     };
   }
   if (fields.length === 0) {
     return { text, shape: 'other', fields };
   }
-  const root = rootField(value, members);
-  const filteredBy = root === undefined ? undefined : elementFilters(value);
+  const arms = armsOf(value);
+  const shown = shownArrays(arms, value, members);
+  // Only a source without arms shows the field's own elements.
+  const root = arms.length === 1 ? rootField(value, members) : shown.from;
+  const filteredBy = root === undefined || arms.length > 1 ? undefined : elementFilters(value);
   const items = filteredBy === undefined ? {} : { itemsOf: root, ...(filteredBy.length ? { filteredBy } : {}) };
-  const reorders = reordersArray(value) ? { reorders: true as const } : {};
-  const windowEnds = prefixEnds(value, members);
   return {
     text,
     shape: 'derived',
     ...(root === undefined ? {} : { root }),
     ...items,
-    ...reorders,
-    ...(windowEnds.length ? { windowEnds } : {}),
+    ...(shown.reorders ? { reorders: true as const } : {}),
+    ...(shown.windowEnds.length ? { windowEnds: shown.windowEnds } : {}),
     fields,
   };
 }
 
-/** The fields the chain reads only in the end of a `.slice(0, n)` that nothing reorders after: a change shows more
- *  or fewer items at the end, and the same ones at each position. */
-function prefixEnds(expr: ts.Expression, members: Members): string[] {
-  const ends = new Set<ts.Node>();
+/** What the arrays a source may show (`values`: the arms of a conditional, or what a method or getter returns) have in
+ *  common. from: the field every one starts from; a value that shows nothing (`[]`, `null`) or no field's array
+ *  (`DEFAULTS`) shows no other one. reorders: one sorts, reverses or cuts from the end. windowEnds: the fields read only
+ *  as the end of a `.slice(0, n)` that keeps the items in place, nowhere else in `around` (the conditional or the
+ *  method's body), whose other reads may pick another array. */
+function shownArrays(
+  values: ts.Expression[],
+  around: ts.Node,
+  members: Members,
+): { from?: string; reorders: boolean; windowEnds: string[] } {
+  const roots = new Set(values.flatMap((e) => (isEmptyValue(e) ? [] : (rootField(e, members) ?? []))));
+  const [from] = roots.size === 1 ? roots : [];
+  const ends = new Set(values.flatMap(prefixEnds));
+  const elsewhere = new Set(fieldsRead(around, members, ends));
+  const windowEnds = [...new Set([...ends].flatMap((end) => fieldsRead(end, members)))].filter(
+    (f) => !elsewhere.has(f),
+  );
+  return { ...(from === undefined ? {} : { from }), reorders: values.some(reordersArray), windowEnds };
+}
+
+/** The ends of each `.slice(0, n)` in the chain followed only by calls that keep the items in place (`filter`, `map`,
+ *  `slice` from the start): a change shows more or fewer items at the end, and the same ones at each position. A
+ *  `concat` after it would move what it appends; a sort, everything. */
+function prefixEnds(expr: ts.Expression): ts.Expression[] {
+  const ends: ts.Expression[] = [];
   for (let value = unwrap(expr); ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression); ) {
     const method = value.expression.name.text;
     const [start, end] = value.arguments;
-    if (REORDERS.has(method) || (method === 'slice' && start && fromEnd(start))) {
+    if (!KEEPS_PLACES.has(method) || (method === 'slice' && start && fromEnd(start))) {
       break;
     }
     if (method === 'slice' && end && start && isZero(start)) {
-      ends.add(end);
+      ends.push(end);
     }
     value = unwrap(value.expression.expression);
   }
-  const elsewhere = new Set(fieldsRead(expr, members, ends));
-  return [...new Set([...ends].flatMap((end) => fieldsRead(end, members)))].filter((f) => !elsewhere.has(f));
+  return ends;
 }
 
 /** `[]`, `null` or `undefined`. */

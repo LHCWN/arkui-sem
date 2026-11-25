@@ -20,6 +20,7 @@ import { rebuiltElements } from './rebuilt.js';
 import { resources } from './resources.js';
 import type { FileScan } from './scan.js';
 import {
+  armsOf,
   branchesOf,
   calleeName,
   decoratorNames,
@@ -263,28 +264,18 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders
   };
   const returned = (name: string): ts.Expression[] => {
     const out: ts.Expression[] = [];
-    // Each arm of a conditional is a value of its own: `return this.ready ? this.F.filter(…) : []`.
-    const add = (e: ts.Expression) => {
-      const value = unwrap(e);
-      if (ts.isConditionalExpression(value)) {
-        add(value.whenTrue);
-        add(value.whenFalse);
-      } else {
-        out.push(e);
-      }
-    };
     const visit = (n: ts.Node) => {
       if (ts.isReturnStatement(n)) {
         if (n.expression) {
-          add(n.expression);
+          out.push(...armsOf(n.expression));
         }
       } else if (!isFunction(n)) {
         ts.forEachChild(n, visit);
       }
     };
-    const body = byName.get(name)?.method.body;
-    if (body) {
-      ts.forEachChild(body, visit);
+    const helper = byName.get(name)?.method.body;
+    if (helper) {
+      ts.forEachChild(helper, visit);
     }
     return out;
   };
@@ -293,7 +284,8 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders
     const [value] = values.size === 1 ? values : [];
     return value !== undefined && fields.has(value) ? value : undefined;
   };
-  return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned, returnsField };
+  const body = (name: string) => byName.get(name)?.method.body;
+  return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned, returnsField, body };
 }
 
 export function methodsOf(s: ts.StructDeclaration): Method[] {
@@ -655,7 +647,8 @@ function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean
   return (method === 'concat' || fromStart) && thisMember(unwrap(value.expression.expression)) === field;
 }
 
-/** `this.F = []`, `[...this.F]`, `this.F.slice()`, `this.F.slice(0)` or `this.F.concat()`: the same items or none. */
+/** `this.F = []`, `[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.slice(0, 0)` or `this.F.concat()`: the
+ *  same items or none. */
 function keepsItems(assignment: ts.BinaryExpression, field: string): boolean {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return false;
@@ -675,7 +668,7 @@ function keepsItems(assignment: ts.BinaryExpression, field: string): boolean {
   const args = value.arguments;
   const copy =
     (method === 'concat' && args.length === 0) ||
-    (method === 'slice' && (args.length === 0 || (args.length === 1 && isZero(args[0]))));
+    (method === 'slice' && (args.length === 0 || (isZero(args[0]) && (args.length === 1 || isZero(args[1])))));
   return copy && thisMember(unwrap(value.expression.expression)) === field;
 }
 

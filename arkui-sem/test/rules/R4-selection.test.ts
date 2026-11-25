@@ -89,6 +89,18 @@ struct Tabbar {
   const imported = `import { Tabbar } from './Tabbar'
 ${grid({ above: 'Tabbar({ current: this.selected })' })}`;
   assert.deepEqual(kinds(imported), []);
+  // A dialog a field's initializer builds, handed the field for a @Link; a constant is the positive control.
+  const dialog = (arg: string) =>
+    `${grid({ extra: `dialog: CustomDialogController = new CustomDialogController({ builder: Chooser({ current: ${arg} }) })` })}
+@CustomDialog
+struct Chooser {
+  controller?: CustomDialogController
+  @Link current: number
+  build() { Text('') }
+}`;
+  assert.deepEqual(kinds(dialog('$selected')), []);
+  assert.deepEqual(kinds(dialog('this.selected')), []);
+  assert.deepEqual(kinds(dialog('0')), FIRES);
 });
 
 test('selection-never-written: only owned V1 state without @Watch, compared in the row, not disabled', () => {

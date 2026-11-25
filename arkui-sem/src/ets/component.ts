@@ -27,6 +27,7 @@ import {
   hasModifier,
   isAssignment,
   isFunction,
+  isZero,
   memberName,
   pathBelow,
   thisMember,
@@ -187,6 +188,7 @@ function inputFacts(
         fact.effects ||
         joined.some((t) => t.effects || t.calls.length > 0) ||
         handlers.some((name) => !typingOf.has(name)),
+      normalizes: fact.normalizes || joined.some((t) => t.normalizes),
     };
   });
 }
@@ -256,10 +258,20 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders
   };
   const returned = (name: string): ts.Expression[] => {
     const out: ts.Expression[] = [];
+    // Each arm of a conditional is a value of its own: `return this.ready ? this.F.filter(…) : []`.
+    const add = (e: ts.Expression) => {
+      const value = unwrap(e);
+      if (ts.isConditionalExpression(value)) {
+        add(value.whenTrue);
+        add(value.whenFalse);
+      } else {
+        out.push(e);
+      }
+    };
     const visit = (n: ts.Node) => {
       if (ts.isReturnStatement(n)) {
         if (n.expression) {
-          out.push(n.expression);
+          add(n.expression);
         }
       } else if (!isFunction(n)) {
         ts.forEachChild(n, visit);
@@ -623,7 +635,7 @@ function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean
   }
   const method = value.expression.name.text;
   const [start] = value.arguments;
-  const fromStart = method === 'slice' && (start === undefined || (ts.isNumericLiteral(start) && start.text === '0'));
+  const fromStart = method === 'slice' && (start === undefined || isZero(start));
   return (method === 'concat' || fromStart) && thisMember(unwrap(value.expression.expression)) === field;
 }
 
@@ -647,8 +659,7 @@ function keepsItems(assignment: ts.BinaryExpression, field: string): boolean {
   const args = value.arguments;
   const copy =
     (method === 'concat' && args.length === 0) ||
-    (method === 'slice' &&
-      (args.length === 0 || (args.length === 1 && ts.isNumericLiteral(args[0]) && args[0].text === '0')));
+    (method === 'slice' && (args.length === 0 || (args.length === 1 && isZero(args[0]))));
   return copy && thisMember(unwrap(value.expression.expression)) === field;
 }
 

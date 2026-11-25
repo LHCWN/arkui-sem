@@ -9,6 +9,7 @@ import {
   isFunction,
   isKeyedLoop,
   isWrapper,
+  isZero,
   memberName,
   pathBelow,
   thisMember,
@@ -24,7 +25,7 @@ export interface Members {
   fieldsOf(name: string): string[];
   /** The field a method or getter returns as is (`return this.F`, its only statement). */
   returnsField(name: string): string | undefined;
-  /** The expressions a method or getter returns, outside the functions it holds. */
+  /** The expressions a method or getter returns, outside the functions it holds; each arm of a conditional apart. */
   returned(name: string): ts.Expression[];
 }
 
@@ -111,12 +112,18 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     // A guard that returns nothing (`return []`, `null`) or no field's array (`return DEFAULTS`) shows no other one.
     const roots = new Set(returned.flatMap((e) => (isEmptyValue(e) ? [] : (rootField(e, members) ?? []))));
     const [from] = roots.size === 1 ? roots : [];
+    // A window end in one returned value that another reads otherwise is no window end.
+    const ends = returned.map((e) => prefixEnds(e, members));
+    const windowEnds = [...new Set(ends.flat())].filter((f) =>
+      returned.every((e, i) => ends[i].includes(f) || !fieldsRead(e, members).includes(f)),
+    );
     return {
       text,
       shape: 'call',
       ...(returns === undefined ? {} : { returns }),
       ...(from === undefined ? {} : { returnsFrom: from }),
       ...(returned.some(reordersArray) ? { reorders: true as const } : {}),
+      ...(windowEnds.length ? { windowEnds } : {}),
       fields,
     };
   }
@@ -149,8 +156,7 @@ function prefixEnds(expr: ts.Expression, members: Members): string[] {
     if (REORDERS.has(method) || (method === 'slice' && start && fromEnd(start))) {
       break;
     }
-    const zero = start && unwrap(start);
-    if (method === 'slice' && end && zero && ts.isNumericLiteral(zero) && zero.text === '0') {
+    if (method === 'slice' && end && start && isZero(start)) {
       ends.add(end);
     }
     value = unwrap(value.expression.expression);
@@ -281,7 +287,8 @@ function fieldsRead(expr: ts.Node, members: Members, skip?: Set<ts.Node>): strin
   return [...out];
 }
 
-/** The field a chain of calls, property and element accesses starts from: `F` in `this.F.filter(…).slice(…)[0].p`. */
+/** The field a chain of calls, property and element accesses starts from: `F` in `this.F.filter(…).slice(…)[0].p`,
+ *  also through a copy (`[...this.F].reverse()`). */
 function rootField(expr: ts.Expression, members: Members): string | undefined {
   for (let value = unwrap(expr); ; ) {
     const member = thisMember(value);
@@ -290,10 +297,17 @@ function rootField(expr: ts.Expression, members: Members): string | undefined {
     }
     if (ts.isCallExpression(value) || ts.isPropertyAccessExpression(value) || ts.isElementAccessExpression(value)) {
       value = unwrap(value.expression);
+    } else if (isSpreadCopy(value)) {
+      value = unwrap(value.elements[0].expression);
     } else {
       return undefined;
     }
   }
+}
+
+/** `[...x]`: a copy of one array. */
+function isSpreadCopy(value: ts.Expression): value is ts.ArrayLiteralExpression & { elements: [ts.SpreadElement] } {
+  return ts.isArrayLiteralExpression(value) && value.elements.length === 1 && ts.isSpreadElement(value.elements[0]);
 }
 
 function loopKey(

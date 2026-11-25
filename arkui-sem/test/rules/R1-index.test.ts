@@ -112,8 +112,10 @@ describe('foreach-index-key fires', () => {
     const push = "      Button('a').onClick(() => { this.names.push('x') })";
     const recent = '  get recent(): string[] {\n    return this.names.slice().reverse()\n  }';
     const lastFive = '  lastFive(): string[] {\n    return this.names.slice(Math.max(0, this.names.length - 5))\n  }';
+    const guarded = '  get shown(): string[] {\n    return this.sel > 0 ? this.names.slice().reverse() : []\n  }';
     for (const [members, source] of [
       [recent, 'this.recent'],
+      [guarded, 'this.shown'],
       [lastFive, 'this.lastFive()'],
       ['', 'this.names.slice(-5)'],
       ['', '[...this.names].reverse()'],
@@ -170,6 +172,7 @@ describe('foreach-index-key does not fire', () => {
       'this.names = this.names.concat(["x"])',
       'this.names = []',
       'this.names = this.names.slice(0, 2)',
+      'this.names = this.names.slice((0), 2)',
       'this.names = this.names.slice()',
     ]) {
       assert.deepEqual(
@@ -188,6 +191,8 @@ describe('foreach-index-key does not fire', () => {
     ]) {
       assert.deepEqual(indexKeyed(page('', `${more}\n${loop(source)}`)), [], source);
     }
+    const firstSel = '  get firstSel(): string[] {\n    return this.names.slice(0, this.sel)\n  }';
+    assert.deepEqual(indexKeyed(page(firstSel, `${more}\n${loop('this.firstSel')}`)), []);
     // Controls: a window that starts at the bound, or one reversed after the cut.
     for (const source of ['this.names.slice(this.sel)', 'this.names.slice(0, this.sel).reverse()']) {
       assert.equal(indexKeyed(page('', `${more}\n${loop(source)}`)).length, 1, source);
@@ -205,6 +210,7 @@ describe('foreach-index-key does not fire', () => {
       for (const [members, source] of [
         [recent, 'this.recent'],
         ['', 'this.names.slice(-5)'],
+        ['', '[...this.names].reverse()'],
       ]) {
         const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
         assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);

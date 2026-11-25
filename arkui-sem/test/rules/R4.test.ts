@@ -296,4 +296,15 @@ test('input-unbound: the $$ fix is offered only when the onChange does nothing b
   const [unbound] = findings.filter((f) => f.kind === 'input-unbound');
   assert.match(unbound.fix, /keep the onChange\.$/);
   assert.doesNotMatch(unbound.fix, /\$\$/);
+  // The onChange trims the text, here or through a handler method: `$$` would store it untrimmed.
+  for (const store of ['this.name = value.trim()', 'this.setName(value.trim())']) {
+    put(
+      file,
+      editDialog({ extra: 'setName(v: string) {\n    this.name = v\n  }' }).replace('this.name = value', store),
+    );
+    const [trimmed] = (await checkFiles([file], { backend: noJudge })).findings.filter(
+      (f) => f.kind === 'input-unbound',
+    );
+    assert.match(trimmed.fix, /keep the onChange\.$/, store);
+  }
 });

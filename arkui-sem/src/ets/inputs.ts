@@ -42,6 +42,8 @@ export interface Typing {
   effects: boolean;
   /** The component methods it hands the text to (`this.setQuery(value)`); their first parameter is the text. */
   calls: string[];
+  /** A write or a call stores or hands on the text normalized (`value.trim()`), not as typed. */
+  normalizes: boolean;
 }
 
 type Handler = ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration | ts.MethodDeclaration;
@@ -61,15 +63,17 @@ export function typing(fn: Handler, scan: FileScan, members: { fields: Set<strin
     const passesText = text !== undefined && arg !== undefined && isText(arg, text);
     return called !== undefined && members.methods.has(called) && passesText ? called : undefined;
   };
-  const out: Typing = { writes: [], effects: false, calls: [] };
+  const out: Typing = { writes: [], effects: false, calls: [], normalizes: false };
   const visit = (n: ts.Node) => {
     const field = typed(n);
     if (field !== undefined) {
       out.writes.push({ field, line: scan.line(n) });
+      out.normalizes ||= ts.isBinaryExpression(n) && !ts.isIdentifier(unwrap(n.right));
     }
     const called = handsText(n);
     if (called !== undefined) {
       out.calls.push(called);
+      out.normalizes ||= ts.isCallExpression(n) && !ts.isIdentifier(unwrap(n.arguments[0]));
     }
     ts.forEachChild(n, visit);
   };
@@ -145,6 +149,7 @@ function inputFact(
   const writes: InputFact['writes'] = [];
   const handlers = new Set<string>();
   let effects = false;
+  let normalizes = false;
   for (const handler of attributeArguments(call, 'onChange')) {
     const fn = unwrap(handler);
     const passed = isFunction(fn) ? undefined : boundMethod(fn);
@@ -152,6 +157,7 @@ function inputFact(
       const found = typing(fn, scan, members);
       writes.push(...found.writes);
       effects ||= found.effects;
+      normalizes ||= found.normalizes;
       for (const name of found.calls) {
         handlers.add(name);
       }
@@ -169,6 +175,7 @@ function inputFact(
       binding: binding(call.arguments[0], TEXT_OPTION[kind], members.fields),
       writes,
       effects,
+      normalizes,
       disabledRules: scan.disabledFor(call),
     },
     handlers: [...handlers],

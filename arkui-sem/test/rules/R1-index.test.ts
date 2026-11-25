@@ -129,6 +129,25 @@ describe('foreach-index-key fires', () => {
       );
     }
   });
+
+  test('a write in the other arm of an if inside an outer loop row: other rows take that arm', () => {
+    const rows = (inner: string) => `      ForEach(this.trips, (g: Trip) => {
+        if (g.id > 0) {
+  ${inner}
+        } else {
+          Button('sort').onClick(() => { this.names.sort() })
+        }
+      }, (g: Trip) => \`\${g.id}\`)`;
+    assert.equal(indexKeyed(page('', rows(loop('this.names')))).length, 1);
+    const repeat = `      Repeat<Trip>(this.trips).each((r: RepeatItem<Trip>) => {
+        if (r.item.id > 0) {
+  ${loop('this.names')}
+        } else {
+          Button('sort').onClick(() => { this.names.sort() })
+        }
+      })`;
+    assert.equal(indexKeyed(page('', repeat)).length, 1);
+  });
 });
 
 describe('foreach-index-key does not fire', () => {

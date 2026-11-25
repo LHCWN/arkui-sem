@@ -49,6 +49,12 @@ export function unwrap(e: ts.Expression): ts.Expression {
   return e;
 }
 
+/** The values an expression may take: each arm of a conditional apart (`this.ready ? this.F.filter(…) : []`). */
+export function armsOf(e: ts.Expression): ts.Expression[] {
+  const value = unwrap(e);
+  return ts.isConditionalExpression(value) ? [...armsOf(value.whenTrue), ...armsOf(value.whenFalse)] : [e];
+}
+
 /** The literal `0`, possibly wrapped: `(0)`, `0 as number`. */
 export function isZero(e: ts.Expression): boolean {
   const value = unwrap(e);

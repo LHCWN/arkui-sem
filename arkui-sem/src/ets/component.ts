@@ -20,6 +20,7 @@ import { rebuiltElements } from './rebuilt.js';
 import { resources } from './resources.js';
 import type { FileScan } from './scan.js';
 import {
+  armsOf,
   branchesOf,
   calleeName,
   decoratorNames,
@@ -256,32 +257,23 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders
   };
   const returned = (name: string): ts.Expression[] => {
     const out: ts.Expression[] = [];
-    // Each arm of a conditional is a value of its own: `return this.ready ? this.F.filter(…) : []`.
-    const add = (e: ts.Expression) => {
-      const value = unwrap(e);
-      if (ts.isConditionalExpression(value)) {
-        add(value.whenTrue);
-        add(value.whenFalse);
-      } else {
-        out.push(e);
-      }
-    };
     const visit = (n: ts.Node) => {
       if (ts.isReturnStatement(n)) {
         if (n.expression) {
-          add(n.expression);
+          out.push(...armsOf(n.expression));
         }
       } else if (!isFunction(n)) {
         ts.forEachChild(n, visit);
       }
     };
-    const body = byName.get(name)?.method.body;
-    if (body) {
-      ts.forEachChild(body, visit);
+    const helper = byName.get(name)?.method.body;
+    if (helper) {
+      ts.forEachChild(helper, visit);
     }
     return out;
   };
-  return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned };
+  const body = (name: string) => byName.get(name)?.method.body;
+  return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned, body };
 }
 
 export function methodsOf(s: ts.StructDeclaration): Method[] {

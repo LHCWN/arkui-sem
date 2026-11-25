@@ -212,6 +212,8 @@ describe('foreach-index-key does not fire', () => {
     }
     const firstSel = '  get firstSel(): string[] {\n    return this.names.slice(0, this.sel)\n  }';
     assert.deepEqual(indexKeyed(page(firstSel, `${more}\n${loop('this.firstSel')}`)), []);
+    const guarded = 'this.trips.length > 0 ? this.names.slice(0, this.sel) : []';
+    assert.deepEqual(indexKeyed(page('', `${more}\n${loop(guarded)}`)), []);
     // Controls: a window that starts at the bound, one reversed after the cut, one followed by other items.
     for (const source of [
       'this.names.slice(this.sel)',
@@ -220,6 +222,22 @@ describe('foreach-index-key does not fire', () => {
     ]) {
       assert.equal(indexKeyed(page('', `${more}\n${loop(source)}`)).length, 1, source);
     }
+    // Nor a bound that also picks which array shows, in a condition or a guard.
+    const picks = 'this.sel > 0 ? this.names.slice(0, this.sel) : this.names.slice().reverse()';
+    assert.equal(indexKeyed(page('', `${more}\n${loop(picks)}`)).length, 1);
+    const picked =
+      '  get picked(): string[] {\n    if (this.sel === 0) {\n      return this.names.slice().reverse()\n    }\n    return this.names.slice(0, this.sel)\n  }';
+    assert.equal(indexKeyed(page(picked, `${more}\n${loop('this.picked')}`)).length, 1);
+  });
+
+  test('an inline conditional source: an append keeps positions, unless an arm reverses the list', () => {
+    const push = "      Button('a').onClick(() => { this.names.push('x') })";
+    assert.deepEqual(indexKeyed(page('', `${push}\n${loop('this.sel > 0 ? this.names : []')}`)), []);
+    const [c] = indexKeyed(page('', `${push}\n${loop('this.sel > 0 ? this.names.slice().reverse() : []')}`));
+    assert.deepEqual(
+      c?.shifts.map((s) => [s.field.name, s.how]),
+      [['names', 'move']],
+    );
   });
 
   test('a copy or a clear under a source that reverses the list or keeps its last items', () => {
@@ -359,6 +377,7 @@ describe('foreach-index-key findings', () => {
     for (const [helper, source] of [
       [getter, 'this.visible'],
       [method, 'this.shown()'],
+      ['', 'this.sel < 0 ? [] : this.names'],
     ]) {
       const [f] = await findingsOf(page(`${refresh}\n${helper}`, loop(source)));
       assert.equal(f?.band, 'question', source);

@@ -232,7 +232,8 @@ export interface Branch {
 export interface LoopSource {
   text: string;
   shape: 'field' | 'derived' | 'call' | 'new' | 'other';
-  /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`). */
+  /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`); for a conditional, the
+   *  field each arm that shows an array starts from (`this.ready ? this.F : []`). */
   root?: string;
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
    *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
@@ -246,9 +247,9 @@ export interface LoopSource {
   /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
    *  own array it shows. */
   returnsFrom?: string;
-  /** Fields the source, or every value its method or getter returns, reads only as the end of a `.slice(0, n)`
-   *  nothing reorders after (`this.F.slice(0, this.n)`): a change shows more or fewer items at the end, the same
-   *  ones at each position. */
+  /** Fields the source, or the method or getter it calls, reads only as the end of a `.slice(0, n)` followed by
+   *  calls that keep the items in place (`this.F.slice(0, this.n)`), not in a condition or guard: a change shows more
+   *  or fewer items at the end, the same ones at each position. */
   windowEnds?: string[];
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */

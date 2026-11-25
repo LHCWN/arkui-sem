@@ -617,7 +617,8 @@ function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean
   return (method === 'concat' || fromStart) && thisMember(unwrap(value.expression.expression)) === field;
 }
 
-/** `this.F = []`, `[...this.F]`, `this.F.slice()`, `this.F.slice(0)` or `this.F.concat()`: the same items or none. */
+/** `this.F = []`, `[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.slice(0, 0)` or `this.F.concat()`: the
+ *  same items or none. */
 function keepsItems(assignment: ts.BinaryExpression, field: string): boolean {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return false;
@@ -637,7 +638,7 @@ function keepsItems(assignment: ts.BinaryExpression, field: string): boolean {
   const args = value.arguments;
   const copy =
     (method === 'concat' && args.length === 0) ||
-    (method === 'slice' && (args.length === 0 || (args.length === 1 && isZero(args[0]))));
+    (method === 'slice' && (args.length === 0 || (isZero(args[0]) && (args.length === 1 || isZero(args[1])))));
   return copy && thisMember(unwrap(value.expression.expression)) === field;
 }
 

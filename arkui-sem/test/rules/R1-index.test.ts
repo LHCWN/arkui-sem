@@ -229,6 +229,7 @@ describe('foreach-index-key does not fire', () => {
       'this.names = this.names.slice()',
       'this.names = this.names.concat()',
       'this.names = []',
+      'this.names = this.names.slice(0, 0)',
     ]) {
       for (const [members, source] of [
         [recent, 'this.recent'],

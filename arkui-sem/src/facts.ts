@@ -255,8 +255,9 @@ export interface LoopSource {
    *  own array it shows. */
   returnsFrom?: string;
   /** Fields the source, or the method or getter it calls, reads only as the end of a `.slice(0, n)` followed by
-   *  calls that keep the items in place (`this.F.slice(0, this.n)`), not in a condition or guard: a change shows more
-   *  or fewer items at the end, the same ones at each position. */
+   *  calls that keep the items in place (`this.F.slice(0, this.n)`), not in a condition or guard; or any field but
+   *  F when every array it may show is F or its start (`this.showAll ? this.F : this.F.slice(0, 3)`): a change shows
+   *  more or fewer items at the end, the same ones at each position. */
   windowEnds?: string[];
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */

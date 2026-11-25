@@ -184,6 +184,16 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
     // Controls: another call, or a new object.
     assert.equal(rebuilt(again('ProductSource.filtered(this.category)')).length, 1);
     assert.equal(rebuilt(again('new ProductSource([])')).length, 1);
+    // A line comment in the call hides nothing after it; spaces in a string still tell two calls apart.
+    const store = (init: string, value: string) =>
+      page(
+        `  source: ProductSource = ${init}`,
+        `      Button('sync').onClick(() => { this.source = ${value} })\n${lazy('this.source')}`,
+      );
+    const commented = (arg: string) => `ProductSource.of(\n    // the store\n    '${arg}'\n  )`;
+    assert.deepEqual(found(store(commented('main'), "ProductSource.of('main')")), []);
+    assert.equal(rebuilt(store(commented('main'), commented('other'))).length, 1);
+    assert.equal(rebuilt(store("ProductSource.of('a  b')", "ProductSource.of('a b')")).length, 1);
   });
 
   test('a ForEach over a new source, and a LazyForEach over a model field', () => {

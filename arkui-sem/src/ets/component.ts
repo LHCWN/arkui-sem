@@ -662,7 +662,7 @@ function initializerCalls(s: ts.StructDeclaration, scan: FileScan): Map<string, 
     const name = memberName(m.name);
     const init = ts.isPropertyDeclaration(m) && m.initializer ? unwrap(m.initializer) : undefined;
     if (name !== undefined && init && ts.isCallExpression(init)) {
-      out.set(name, tokens(scan.text(init)));
+      out.set(name, tokens(init.getText(scan.sf)));
     }
   }
   return out;
@@ -674,11 +674,12 @@ function repeatsInitializer(assignment: ts.BinaryExpression, init: string | unde
     init !== undefined &&
     assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ts.isCallExpression(value) &&
-    tokens(scan.text(value)) === init
+    tokens(value.getText(scan.sf)) === init
   );
 }
 
-/** The tokens of source text, without whitespace and comments, one space apart. */
+/** The tokens of source text as written (not on one line: a line comment would swallow the rest), without whitespace
+ *  and comments, one space apart. */
 function tokens(text: string): string {
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
   const out: string[] = [];

@@ -49,6 +49,12 @@ export function unwrap(e: ts.Expression): ts.Expression {
   return e;
 }
 
+/** The literal `0`, possibly wrapped: `(0)`, `0 as number`. */
+export function isZero(e: ts.Expression): boolean {
+  const value = unwrap(e);
+  return ts.isNumericLiteral(value) && value.text === '0';
+}
+
 /** Parentheses, a cast or a non-null assertion: a value passed through unchanged. */
 export function isWrapper(
   n: ts.Node,

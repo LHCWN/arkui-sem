@@ -199,6 +199,8 @@ export interface InputFact {
    *  to a handler method and `console` calls; a handler method that does more, hands the text on again or that other
    *  code uses; a handler that can't be read. */
   effects: boolean;
+  /** A typed write stores the text normalized (`value.trim()`), here or in a handler method it joins. */
+  normalizes: boolean;
   disabledRules: string[];
 }
 
@@ -262,7 +264,7 @@ export interface LoopSource {
   /** The item properties the filters in that chain test as flags (`s.liked`, `!s.hidden`): a change to one moves the
    *  element into the items or out of them. */
   filteredBy?: string[];
-  /** For a call: the field the method or getter returns as is (`return this.F`). */
+  /** For a call: the field every value the method or getter returns is, as is (`return this.F`). */
   returns?: string;
   /** The source, or what the method or getter it calls returns, sorts or reverses an array or cuts it from the end
    *  (`.reverse()`, `.slice(-n)`): an append moves the items at a position too. */
@@ -270,8 +272,9 @@ export interface LoopSource {
   /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
    *  own array it shows. */
   returnsFrom?: string;
-  /** Fields the source reads only as the end of a `.slice(0, n)` nothing reorders after (`this.F.slice(0, this.n)`):
-   *  a change shows more or fewer items at the end, the same ones at each position. */
+  /** Fields the source, or every value its method or getter returns, reads only as the end of a `.slice(0, n)`
+   *  nothing reorders after (`this.F.slice(0, this.n)`): a change shows more or fewer items at the end, the same
+   *  ones at each position. */
   windowEnds?: string[];
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */

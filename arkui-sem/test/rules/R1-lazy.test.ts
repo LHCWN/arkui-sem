@@ -84,6 +84,12 @@ describe('lazyforeach-source-rebuilt fires', () => {
     assert.deepEqual(rebuilt(page(`${plainSource}\n${getter}`, lazy('this.shown'))), []);
     const [c] = rebuilt(page(`${plainSource}\n${getter}`, `${reassignSource}\n${lazy('this.shown')}`));
     assert.equal(c.holder?.name, 'source');
+    // Also after other statements, which may read other fields first; the fingerprint names the field it returns.
+    const logged = '  get shown(): ProductSource {\n    console.info(this.category)\n    return this.source\n  }';
+    const [d, ...rest] = rebuilt(page(`${plainSource}\n${logged}`, `${reassignSource}\n${lazy('this.shown')}`));
+    assert.equal(rest.length, 0);
+    assert.equal(d.holder?.name, 'source');
+    assert.equal(d.fingerprint, 'T.ets#Shop.source#R1-lazy-source@this.shown');
   });
 
   test('a reassigned source field is not also undecorated-mutated-rendered: @State would not help', () => {
@@ -99,6 +105,10 @@ describe('lazyforeach-source-rebuilt fires', () => {
     const multiline = lazy('\n        this.source').replace(', (p: Product)', ',\n        (p: Product)');
     const split = found(page(plainSource, `${reassignSource}\n${multiline}`)).map((c) => c.kind);
     assert.deepEqual(split, ['lazyforeach-source-rebuilt']);
+    // Or the source sits in parentheses that open a line before it.
+    const wrapped = lazy('(\n        this.source\n      )');
+    const parens = found(page(plainSource, `${reassignSource}\n${wrapped}`)).map((c) => c.kind);
+    assert.deepEqual(parens, ['lazyforeach-source-rebuilt']);
   });
 
   test('a reassigned source field build() also draws stays undecorated-mutated-rendered', () => {
@@ -168,6 +178,9 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
     const again = (value: string) =>
       page(singleton, `      Button('sync').onClick(() => { this.source = ${value} })\n${lazy('this.source')}`);
     assert.deepEqual(found(again('ProductSource.shared()')), []);
+    // Formatted otherwise, also over lines.
+    assert.deepEqual(found(again('ProductSource.shared( )')), []);
+    assert.deepEqual(found(again('ProductSource\n        .shared()')), []);
     // Controls: another call, or a new object.
     assert.equal(rebuilt(again('ProductSource.filtered(this.category)')).length, 1);
     assert.equal(rebuilt(again('new ProductSource([])')).length, 1);

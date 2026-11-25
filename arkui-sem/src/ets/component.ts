@@ -672,7 +672,7 @@ function initializerCalls(s: ts.StructDeclaration, scan: FileScan): Map<string, 
     const name = memberName(m.name);
     const init = ts.isPropertyDeclaration(m) && m.initializer ? unwrap(m.initializer) : undefined;
     if (name !== undefined && init && ts.isCallExpression(init)) {
-      out.set(name, tokens(init.getText(scan.sf)));
+      out.set(name, tokens(init, scan.sf));
     }
   }
   return out;
@@ -684,18 +684,22 @@ function repeatsInitializer(assignment: ts.BinaryExpression, init: string | unde
     init !== undefined &&
     assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
     ts.isCallExpression(value) &&
-    tokens(value.getText(scan.sf)) === init
+    tokens(value, scan.sf) === init
   );
 }
 
-/** The tokens of source text as written (not on one line: a line comment would swallow the rest), without whitespace
- *  and comments, one space apart. */
-function tokens(text: string): string {
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
+/** The tokens of an expression, one space apart: the leaves of its syntax tree, so whitespace and comments between them
+ *  drop out while a string, template part or regex keeps its text as written. */
+function tokens(node: ts.Node, sf: ts.SourceFile): string {
   const out: string[] = [];
-  while (scanner.scan() !== ts.SyntaxKind.EndOfFileToken) {
-    out.push(scanner.getTokenText());
-  }
+  const visit = (n: ts.Node) => {
+    const children = n.getChildren(sf).filter((child) => !ts.isJSDoc(child));
+    if (children.length === 0) {
+      out.push(n.getText(sf));
+    }
+    children.forEach(visit);
+  };
+  visit(node);
   return out.join(' ');
 }
 

@@ -194,6 +194,12 @@ describe('lazyforeach-source-rebuilt does not fire', () => {
     assert.deepEqual(found(store(commented('main'), "ProductSource.of('main')")), []);
     assert.equal(rebuilt(store(commented('main'), commented('other'))).length, 1);
     assert.equal(rebuilt(store("ProductSource.of('a  b')", "ProductSource.of('a b')")).length, 1);
+    // So do the parts of a template after a substitution, and a regex.
+    const template = (tail: string) => `ProductSource.of(\`a\${this.category}${tail}\`)`;
+    assert.deepEqual(found(store(template('//one').replace('(', '( '), template('//one'))), []);
+    assert.equal(rebuilt(store(template('//one'), template('//two'))).length, 1);
+    assert.equal(rebuilt(store(template('  b'), template(' b'))).length, 1);
+    assert.equal(rebuilt(store('ProductSource.of(/a  b/)', 'ProductSource.of(/a b/)')).length, 1);
   });
 
   test('a ForEach over a new source, and a LazyForEach over a model field', () => {

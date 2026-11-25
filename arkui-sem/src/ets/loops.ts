@@ -186,10 +186,17 @@ function startsOf(expr: ts.Expression, field: string): boolean {
 
 /** The ends of each `.slice(0, n)` in the chain followed only by calls that keep the items in place (`filter`, `map`,
  *  `slice` from the start): a change shows more or fewer items at the end, and the same ones at each position. A
- *  `concat` after it would move what it appends; a sort, everything. */
+ *  `concat` after it would move what it appends; a sort, everything. A copy (`[...x]`) keeps the items in place. */
 function prefixEnds(expr: ts.Expression): ts.Expression[] {
   const ends: ts.Expression[] = [];
-  for (let value = unwrap(expr); ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression); ) {
+  for (let value = unwrap(expr); ; ) {
+    if (isSpreadCopy(value)) {
+      value = unwrap(value.elements[0].expression);
+      continue;
+    }
+    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
+      break;
+    }
     const method = value.expression.name.text;
     const [start, end] = value.arguments;
     if (!KEEPS_PLACES.has(method) || (method === 'slice' && start && fromEnd(start))) {
@@ -214,10 +221,14 @@ function isEmptyValue(expr: ts.Expression): boolean {
 }
 
 /** A call chain that sorts or reverses an array, or cuts it from the end (`.slice(-5)`, `.slice(a.length - 5)`), so
- *  an item appended to the array moves the others. */
+ *  an item appended to the array moves the others; also through a copy (`[...this.F.slice(-5)]`). */
 function reordersArray(expr: ts.Expression): boolean {
-  for (let value = unwrap(expr); ts.isCallExpression(value); ) {
-    if (!ts.isPropertyAccessExpression(value.expression)) {
+  for (let value = unwrap(expr); ; ) {
+    if (isSpreadCopy(value)) {
+      value = unwrap(value.elements[0].expression);
+      continue;
+    }
+    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
       return false;
     }
     const method = value.expression.name.text;
@@ -226,7 +237,6 @@ function reordersArray(expr: ts.Expression): boolean {
     }
     value = unwrap(value.expression.expression);
   }
-  return false;
 }
 
 /** A negative number, or a value computed from a length. */

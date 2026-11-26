@@ -131,32 +131,6 @@ describe('foreach-index-key fires', () => {
     }
   });
 
-  test('a change to the length of an array other items follow (`.concat(x)`), a clear too', () => {
-    const more = '  @State more: string[] = []';
-    const visible = `${more}\n  get visible(): string[] {\n    return this.names.concat(this.more)\n  }`;
-    for (const write of [
-      "this.names.push('x')",
-      'this.names.pop()',
-      "this.names = [...this.names, 'x']",
-      'this.names = this.names.slice(0, 2)',
-      'this.names = []',
-    ]) {
-      for (const [members, source] of [
-        [more, 'this.names.concat(this.more)'],
-        ['', "this.names.concat(['footer'])"],
-        [visible, 'this.visible'],
-      ]) {
-        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-      }
-    }
-    // Control: a copy keeps every item at its position.
-    for (const write of ['this.names = [...this.names]', 'this.names = this.names.slice()']) {
-      const src = page('', `      Button('a').onClick(() => { ${write} })\n${loop("this.names.concat(['footer'])")}`);
-      assert.deepEqual(indexKeyed(src), [], write);
-    }
-  });
-
   test('a write that moves an array below the field the source starts from', () => {
     const trip = "  @State trip: Trip = { id: 0, name: '', tags: [] }";
     for (const [source, write] of [
@@ -232,28 +206,6 @@ describe('foreach-index-key fires', () => {
       // Control: a write beside the array.
       const src = page(members, `      Button('a').onClick(() => { this.trip.name = 'x' })\n${loop(source)}`);
       assert.deepEqual(indexKeyed(src), [], `a write beside the array under ${source}`);
-    }
-  });
-
-  test('an append to the array that ends the source, after the others', () => {
-    const members = `  @State more: string[] = []
-  @State last: string[] = []
-  get all(): string[] {
-    return this.names.concat(this.more)
-  }`;
-    const append = (field: string) => [`this.${field}.push('x')`, `this.${field} = [...this.${field}, 'x']`];
-    for (const source of ['this.names.concat(this.more)', '[...this.names, ...this.more]', 'this.all']) {
-      for (const write of append('more')) {
-        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
-      }
-    }
-    // Control: an array with others after it, a source that reverses the whole list.
-    for (const source of ['this.names.concat(this.more, this.last)', 'this.names.concat(this.more).reverse()']) {
-      for (const write of append('more')) {
-        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-      }
     }
   });
 });

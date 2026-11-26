@@ -393,11 +393,21 @@ describe('foreach-index-key does not fire', () => {
     );
   });
 
-  test('a null or undefined clear of a nullable source', () => {
-    const maybe = '  @State maybe: string[] | null | undefined = null';
+  test('a null or undefined clear of a nullable source, unless a fallback shows another array', () => {
+    const maybe = `  @State maybe: string[] | null | undefined = null
+  get shown(): string[] {
+    return this.maybe ?? this.names
+  }`;
     for (const write of ['this.maybe = null', 'this.maybe = undefined']) {
-      const src = page(maybe, `      Button('a').onClick(() => { ${write} })\n${loop('this.maybe ?? []')}`);
-      assert.deepEqual(indexKeyed(src), [], write);
+      for (const source of ['this.maybe ?? []', 'this.maybe || []']) {
+        const src = page(maybe, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
+      }
+      // Control: the fallback shows another array at the same positions.
+      for (const source of ['this.maybe ?? this.names', 'this.maybe || DEFAULTS', 'this.shown']) {
+        const src = page(maybe, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
+      }
     }
   });
 

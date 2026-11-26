@@ -157,6 +157,32 @@ describe('foreach-index-key fires', () => {
     }
   });
 
+  test('a write that moves an array below the field the source starts from', () => {
+    const trip = "  @State trip: Trip = { id: 0, name: '', tags: [] }";
+    for (const [source, write] of [
+      ['this.trip.tags', 'this.trip.tags = this.trip.tags.filter((t: string) => t.length > 0)'],
+      ['this.trip.tags', 'this.trip.tags.sort()'],
+      ['this.trip.tags.slice()', "this.trip.tags[0] = 'x'"],
+      ['this.trips[this.sel].tags', 'this.trips[this.sel].tags = []\n        this.trips[this.sel].tags.reverse()'],
+      ['this.trips[this.sel].tags', 'this.trips.sort()'],
+    ]) {
+      const src = page(trip, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+      assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
+    }
+    // Control: a write beside the array, an append, a clear.
+    for (const [source, write] of [
+      ['this.trip.tags', "this.trip.name = 'x'"],
+      ['this.trip.tags', "this.trip.tags.push('x')"],
+      ['this.trip.tags', "this.trip.tags = [...this.trip.tags, 'x']"],
+      ['this.trip.tags', 'this.trip.tags = []'],
+      ['this.trips[this.sel].tags', "this.trips[this.sel].name = 'x'"],
+      ['this.trips[this.sel].tags', 'this.trips.push(this.trip)'],
+    ]) {
+      const src = page(trip, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+      assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
+    }
+  });
+
   test('a write in the other arm of an if inside an outer loop row: other rows take that arm', () => {
     const rows = (inner: string) => `      ForEach(this.trips, (g: Trip) => {
         if (g.id > 0) {

@@ -236,6 +236,10 @@ export interface LoopSource {
   /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`); for a conditional, the
    *  field each arm that shows an array starts from (`this.ready ? this.F : []`). */
   root?: string;
+  /** The path from root to the array the source shows, when the accesses sit on the field before any call
+   *  (`.tags` in `this.F.tags.filter(…)`, `[i].tags` in `this.F[this.sel].tags`): writes below it move the array,
+   *  others beside it (`this.F.name`) don't. */
+  rootPath?: PathSegment[];
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
    *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
   itemsOf?: string;

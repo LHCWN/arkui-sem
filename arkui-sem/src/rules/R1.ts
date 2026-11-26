@@ -454,10 +454,13 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
     keepsArray(write) &&
     write.keepsItems !== 'copy' &&
     (loop.source.appends === true || (loop.source.reorders === true && write.keepsItems === undefined));
-  const changes = (write: WriteFact) =>
-    how === 'move'
-      ? moves(write) || slides(write)
-      : (write.path?.length ?? 0) <= 1 && !(loop.source.shape === 'call' && keepsArray(write) && !slides(write));
+  const changes = (write: WriteFact) => {
+    if (how === 'select') {
+      return (write.path?.length ?? 0) <= 1 && !(loop.source.shape === 'call' && keepsArray(write) && !slides(write));
+    }
+    const own = belowArray(write, loop.source.rootPath ?? []);
+    return own !== undefined && (moves(own) || slides(own));
+  };
   const writes = field.writes.filter(
     (write) =>
       write.context !== 'render' &&
@@ -468,6 +471,23 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
       changes(write),
   );
   return writes.map((write) => ({ field, write, how }));
+}
+
+/** A write of the root field as a write of the array at `path` below it: the rest of its path when it writes there or
+ *  below, itself when it writes a holder above (`this.F = …`, `this.F.sort()`), none when it writes beside it
+ *  (`this.F.name`). Indexes match whatever their text. */
+function belowArray(write: WriteFact, path: PathSegment[]): WriteFact | undefined {
+  const segments = write.path ?? [];
+  const same = (a: PathSegment, b: PathSegment) => ('prop' in a ? 'prop' in b && a.prop === b.prop : isIndex(b));
+  const n = Math.min(segments.length, path.length);
+  if (!segments.slice(0, n).every((s, i) => same(s, path[i]))) {
+    return undefined;
+  }
+  if (segments.length < path.length) {
+    return write;
+  }
+  const rest = segments.slice(path.length);
+  return { ...write, path: rest.length ? rest : undefined };
 }
 
 /** The ForEach loops over the field's own elements whose key stays with an element: item properties or the index. */

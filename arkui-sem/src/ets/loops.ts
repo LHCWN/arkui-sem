@@ -1,5 +1,5 @@
 // ForEach and LazyForEach calls, and what rows and builders do with the values they are given.
-import type { Branch, BuilderFact, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
+import type { Branch, BuilderFact, LoopFact, LoopKey, LoopSource, PathSegment, ValueUses } from '../facts.js';
 import { type BuilderNames, climb, isBuilderCall } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
@@ -130,12 +130,14 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const shown = shownArrays(arms, value, members);
   // Only a source without arms shows the field's own elements.
   const root = arms.length === 1 ? rootField(value, members) : shown.from;
+  const rootPath = root === undefined || arms.length > 1 ? [] : pathToArray(value, scan);
   const filteredBy = root === undefined || arms.length > 1 ? undefined : elementFilters(value);
   const items = filteredBy === undefined ? {} : { itemsOf: root, ...(filteredBy.length ? { filteredBy } : {}) };
   return {
     text,
     shape: 'derived',
     ...(root === undefined ? {} : { root }),
+    ...(rootPath.length ? { rootPath } : {}),
     ...items,
     ...(shown.reorders ? { reorders: true as const } : {}),
     ...(shown.appends ? { appends: true as const } : {}),
@@ -370,6 +372,30 @@ function rootField(expr: ts.Expression, members: Members): string | undefined {
       return undefined;
     }
   }
+}
+
+/** The property and element accesses on the field the chain starts from, before any call or copy: `.tags` in
+ *  `this.F.tags.filter(…)`, `[i].tags` in `this.F[i].tags`. */
+function pathToArray(expr: ts.Expression, scan: FileScan): PathSegment[] {
+  let path: PathSegment[] = [];
+  for (let value = unwrap(expr); thisMember(value) === undefined; ) {
+    if (ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)) {
+      path = [];
+      value = unwrap(value.expression.expression);
+    } else if (ts.isPropertyAccessExpression(value)) {
+      path.unshift({ prop: value.name.text });
+      value = unwrap(value.expression);
+    } else if (ts.isElementAccessExpression(value)) {
+      path.unshift({ index: scan.text(value.argumentExpression) });
+      value = unwrap(value.expression);
+    } else if (isSpreadCopy(value)) {
+      path = [];
+      value = unwrap(value.elements[0].expression);
+    } else {
+      return [];
+    }
+  }
+  return path;
 }
 
 /** `[...x]`: a copy of one array. */

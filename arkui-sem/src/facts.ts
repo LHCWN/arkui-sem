@@ -41,8 +41,27 @@ export interface WriteFact {
   value?: 'object-literal' | 'new' | 'constant' | 'other';
   /** The new value depends on the old one: `++`, `+=`, `this.f = g(this.f)`, a mutating call. */
   accumulates?: true;
+  /** The method a mutating call runs (`push`, `splice`); absent for an assignment or update. */
+  call?: string;
+  /** An assignment that puts no other item at an existing position: an append (`[...this.F, x]`, `this.F.concat(x)`), a
+   *  clear (`[]`) or a cut from the start (`this.F.slice(0, n)`). */
+  keepsPositions?: true;
+  /** Of those, one that keeps the same items (`copy`: `[...this.F]`, `this.F.slice()`, `this.F.concat()`) or none
+   *  (`clear`: `[]`, `this.F.slice(0, 0)`). Even a sorted or reversed view of the array shows the same item at each
+   *  position, or no rows. */
+  keepsItems?: 'copy' | 'clear';
+  /** An object literal that spreads the old value (`this.F = { ...this.F, name: x }`): the properties it sets; the
+   *  others keep their values. */
+  sets?: string[];
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
+  /** The write loads what the component starts with: in aboutToAppear or a helper only it calls, outside callbacks
+   *  other than promise continuations, before or after an await. */
+  initialLoad?: true;
+  /** The `if` arms of build() the write runs in, outermost first: through the @Builders and methods that reach it from
+   *  build() (handlers included), then those in its own method. Absent when its method is not known to run only from
+   *  build() (a lifecycle hook, other code). */
+  branches?: Branch[];
   /** The write runs before the first build(): in aboutToAppear before any await, or in a helper only that calls. */
   beforeFirstRender?: true;
   /** The new objects the write puts where elements of the field were (absent when none). */
@@ -197,7 +216,24 @@ export interface LoopFact {
   row: ValueUses;
   /** The components the row creates outside handlers (`TextInput`, `Child`), by name. */
   creates: string[];
+  /** The `if` arms of build() the loop runs in, through the @Builders that reach it, outermost first: switching arms
+   *  recreates the loop. */
+  branches: Branch[];
   disabledRules: string[];
+}
+
+/** One arm of an `if` statement; `at` is the statement's offset in the file. */
+export interface Branch {
+  at: number;
+  arm: 'then' | 'else';
+}
+
+/** An array a loop's source may show: the field it starts from and the accesses on that field before any call (`.tags`
+ *  in `this.F.tags.filter(…)`, `[i].tags` in `this.F[this.sel].tags`). A write of the field at or below that array may
+ *  move it; one beside it (`this.F.name`) does not. */
+export interface ShownArray {
+  field: string;
+  path: PathSegment[];
 }
 
 /**
@@ -208,14 +244,38 @@ export interface LoopFact {
 export interface LoopSource {
   text: string;
   shape: 'field' | 'derived' | 'call' | 'new' | 'other';
-  /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`). */
+  /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`); for a conditional, the
+   *  field each arm that shows an array starts from (`this.ready ? this.F : []`). */
   root?: string;
+  /** Every array the source may show: of each arm of a conditional or fallback, or each value a method or getter it
+   *  calls returns, that starts from a field. */
+  shows?: ShownArray[];
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
    *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
   itemsOf?: string;
   /** The item properties the filters in that chain test as flags (`s.liked`, `!s.hidden`): a change to one moves the
    *  element into the items or out of them. */
   filteredBy?: string[];
+  /** The source, or what the method or getter it calls returns, sorts or reverses an array or cuts it from the end
+   *  (`.reverse()`, `.slice(-n)`): an append moves the items at a position too. */
+  reorders?: true;
+  /** The source, or what the method or getter it calls returns, shows other items after an array's
+   *  (`this.F.concat(this.more)`): any change to that array's length, a clear too, moves them. */
+  appends?: true;
+  /** The field whose array ends every array the source shows, after others (`this.more` in `this.F.concat(this.more)`,
+   *  `[...this.F, ...this.more]`): a write that keeps its positions only adds or removes rows at the end. */
+  tail?: string;
+  /** Fields on the left of a `??` or `||` in the source, or in the method or getter it calls, whose right side shows
+   *  something (`this.F ?? this.other`): a `null` or `undefined` write of one shows that at the same positions. */
+  fallbacks?: string[];
+  /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
+   *  own array it shows. */
+  returnsFrom?: string;
+  /** Fields the source, or the method or getter it calls, reads only as the end of a `.slice(0, n)` followed by
+   *  calls that keep the items in place (`this.F.slice(0, this.n)`), not in a condition or guard; or any field but
+   *  F when every array it may show is F or its start (`this.showAll ? this.F : this.F.slice(0, 3)`): a change shows
+   *  more or fewer items at the end, the same ones at each position. */
+  windowEnds?: string[];
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */
   fields: string[];

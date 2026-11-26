@@ -43,7 +43,7 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/queries.ts       queries derived from the facts: paths, rendering reads, declared types, class hierarchies
   src/files.ts         .ets discovery under a path; the files an agent's edit touched
   src/rules/           one module per rule on one file's facts: R1.ts (undecorated-mutated-rendered, nested-write-unobserved,
-                       depth-aware, V2 gaps; foreach-key-stale), R2.ts (event-unwired, given call sites by the engine), R3.ts (unreleased-resource),
+                       depth-aware, V2 gaps; foreach-key-stale, foreach-index-key), R2.ts (event-unwired, given call sites by the engine), R3.ts (unreleased-resource),
                        R4.ts (input-unbound, input-never-read: text inputs wired one way);
                        candidate.ts (candidate, kinds, fingerprint), index.ts (candidates())
   src/ets/parse.ts     ArkTS parser: ohos-typescript with the SDK ets-loader options (bundled copy: src/ets/options.json,

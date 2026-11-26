@@ -2,7 +2,7 @@
 // access sits (climb). A denylist: a function no rule here names counts as running while the UI is described.
 import type { BuildRead } from '../facts.js';
 import { ts } from './parse.js';
-import { argumentOf, calleeName, isFunction, memberName, onComponent, thisMember } from './syntax.js';
+import { argumentOf, calleeName, drawsRows, isFunction, memberName, onComponent, thisMember } from './syntax.js';
 
 /** The names a component's code can call as builders: its builder methods (`this.B(…)`), the file's builder functions,
  *  and imported names, which may be builders (`B(…)`). */
@@ -14,6 +14,7 @@ export interface BuilderNames {
 
 /** Calls whose function arguments run later, after the calling code has returned. */
 const DEFERRING_CALLS = new Set(['then', 'catch', 'finally', 'setTimeout', 'setInterval', 'on', 'subscribe']);
+const PROMISE_CALLS = new Set(['then', 'catch', 'finally']);
 /** Calls whose function arguments animate a change: they run once, not while the UI is described. */
 const ANIMATIONS = new Set(['animateTo', 'animateToImmediately']);
 /** Event callbacks: `.onClick(…)`, `PanGesture().onActionStart(…)`, `ctrl.onReady(…)`. */
@@ -36,6 +37,11 @@ const BUILTIN_FUNCTIONS = new Set([
 /** fn is passed to a deferring call: `setTimeout(fn)`, `p.then(fn)`, `emitter.on('e', fn)`. */
 export function defers(fn: ts.Node): boolean {
   return DEFERRING_CALLS.has(callName(fn));
+}
+
+/** fn is a promise continuation: `p.then(fn)`, `.catch(fn)`, `.finally(fn)`. */
+export function continues(fn: ts.Node): boolean {
+  return PROMISE_CALLS.has(callName(fn));
 }
 
 /** fn runs on an event or later and draws nothing: a deferred callback, an event callback, an animation body. names:
@@ -147,7 +153,7 @@ export function climb(
     ) {
       attribute = callee.name.text;
     }
-    if (ts.isIdentifier(callee) && LOOPS.has(callee.text)) {
+    if ((ts.isIdentifier(callee) && LOOPS.has(callee.text)) || drawsRows(n)) {
       inForEach = true;
     }
   }

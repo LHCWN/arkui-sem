@@ -1,5 +1,5 @@
 // Small readers of ohos-typescript nodes shared by the extractor.
-import type { PathSegment } from '../facts.js';
+import type { Branch, PathSegment } from '../facts.js';
 import { ts } from './parse.js';
 
 export function decoratorNames(n: ts.Node): string[] {
@@ -49,6 +49,31 @@ export function unwrap(e: ts.Expression): ts.Expression {
   return e;
 }
 
+/** The values an expression may take: each arm of a conditional apart (`this.ready ? this.F.filter(…) : []`), each
+ *  side of a fallback (`this.F ?? []`, `this.F || []`). */
+export function armsOf(e: ts.Expression): ts.Expression[] {
+  const value = unwrap(e);
+  if (ts.isConditionalExpression(value)) {
+    return [...armsOf(value.whenTrue), ...armsOf(value.whenFalse)];
+  }
+  const fallback =
+    ts.isBinaryExpression(value) &&
+    (value.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+      value.operatorToken.kind === ts.SyntaxKind.BarBarToken);
+  return fallback ? [...armsOf(value.left), ...armsOf(value.right)] : [e];
+}
+
+/** `null` or `undefined`. */
+export function isNullish(expr: ts.Expression): boolean {
+  return expr.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(expr) && expr.text === 'undefined');
+}
+
+/** The literal `0`, possibly wrapped: `(0)`, `0 as number`. */
+export function isZero(e: ts.Expression): boolean {
+  const value = unwrap(e);
+  return ts.isNumericLiteral(value) && value.text === '0';
+}
+
 /** Parentheses, a cast or a non-null assertion: a value passed through unchanged. */
 export function isWrapper(
   n: ts.Node,
@@ -90,6 +115,45 @@ export function isKeyedLoop(name: string): name is 'ForEach' | 'LazyForEach' {
 export function isFunction(n: ts.Node): n is ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration {
   return ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n);
 }
+
+/** The `if` arms between root and node, outermost first. Only those outside the innermost loop row that holds node:
+ *  rows can take different arms of an `if` inside them at once. */
+export function branchesOf(node: ts.Node, root: ts.Node, sf: ts.SourceFile): Branch[] {
+  const out: Branch[] = [];
+  for (let child = node, parent = node.parent; parent && child !== root; child = parent, parent = parent.parent) {
+    if (ts.isIfStatement(parent) && child !== parent.expression) {
+      out.unshift({ at: parent.getStart(sf), arm: child === parent.thenStatement ? 'then' : 'else' });
+    } else if (drawsRows(child)) {
+      out.length = 0;
+    }
+  }
+  return out;
+}
+
+/** fn draws a loop's rows: a function passed to ForEach, LazyForEach or Repeat, or to a Repeat's `.each(…)` or
+ *  `.template(…)`. */
+export function drawsRows(fn: ts.Node): boolean {
+  const call = isFunction(fn) ? argumentOf(fn) : undefined;
+  if (call === undefined) {
+    return false;
+  }
+  const callee = call.expression;
+  if (ts.isIdentifier(callee)) {
+    return LOOPS.has(callee.text);
+  }
+  if (!(ts.isPropertyAccessExpression(callee) && ROW_ATTRIBUTES.has(callee.name.text))) {
+    return false;
+  }
+  // The call the attribute chain starts from: `Repeat(…)` in `Repeat(…).key(…).each(…)`.
+  let start = callee.expression;
+  while (ts.isCallExpression(start) && ts.isPropertyAccessExpression(start.expression)) {
+    start = start.expression.expression;
+  }
+  return ts.isCallExpression(start) && ts.isIdentifier(start.expression) && start.expression.text === 'Repeat';
+}
+
+const LOOPS = new Set(['ForEach', 'LazyForEach', 'Repeat']);
+const ROW_ATTRIBUTES = new Set(['each', 'template']);
 
 export function isAssignment(kind: ts.SyntaxKind): boolean {
   return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;

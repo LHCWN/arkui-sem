@@ -13,6 +13,7 @@ import type {
   InputFact,
   LoopFact,
   Project,
+  WriteFact,
 } from './facts.js';
 import { buildSlice, Q_R1, Q_R2, Q_R3, type SystemOneBackend } from './judge.js';
 import { ProjectIndex } from './project.js';
@@ -304,6 +305,32 @@ function describeKeyStale(candidate: CandidateOf<'foreach-key-stale'>): Descript
   };
 }
 
+function describeIndexKey(candidate: CandidateOf<'foreach-index-key'>): Description {
+  const { loop } = candidate;
+  const item = loop.itemParam ?? 'item';
+  const writes = [
+    ...new Set(
+      candidate.shifts.map(
+        (shift) => `${writeText(shift.field.name, shift.write)} in ${shift.write.method}() line ${shift.write.line}`,
+      ),
+    ),
+  ];
+  return {
+    subject: `${candidate.component.name}.${candidate.field.name}`,
+    evidence: `ForEach keys its rows by position (${loop.key.text}, line ${loop.line}), but other items come to those positions (${writes.join('; ')}); ForEach keeps the existing row for an unchanged key, so rows at the same positions keep showing the old items`,
+    fix: `key the rows by the item instead of its position, e.g. (${item}) => ${item}.id for objects with an id, or (${item}: string) => ${item} for unique strings; if values can repeat, (${item}, i) => \`\${i}-\${${item}}\` puts the content in the key. If elements are later replaced under the same id, put the properties the row shows in the key too.`,
+  };
+}
+
+/** A write as the agent reads it: `this.items = …`, `this.items[…] = …`, `this.items.sort(…)`. */
+function writeText(field: string, write: WriteFact): string {
+  const path = write.path ?? [];
+  // A call's path ends in an empty index for the container it changes.
+  return write.call === undefined
+    ? `this.${field}${pathText(path)} = …`
+    : `this.${field}${pathText(path.slice(0, -1))}.${write.call}(…)`;
+}
+
 function rebuiltLines(candidate: CandidateOf<'foreach-key-stale'>): number[] {
   return [...new Set(candidate.rebuilds.map((rebuild) => rebuild.element.line))];
 }
@@ -422,6 +449,13 @@ const KINDS: { [K in CandidateKind]: KindSpec<CandidateOf<K>> } = {
     ask: 'If the row should show the change',
     disableWhere: "above the ForEach call, or above the field's decorators for every R1 kind",
     related: (c) => rebuiltLines(c).map((line) => ({ file: c.file, line })),
+  },
+  'foreach-index-key': {
+    path: { facts: (c) => (c.methodMovesOnly ? 'question' : 'finding') },
+    describe: describeIndexKey,
+    ask: 'If the rows should follow the items',
+    disableWhere: "above the ForEach call, or above the field's decorators for every R1 kind",
+    related: (c) => [...new Set(c.shifts.map((shift) => shift.write.line))].map((line) => ({ file: c.file, line })),
   },
   // The label assumes the @Link → @Prop mismatch (shared intent); callers map the other intent × decorator pairs.
   'ownership-intent': {

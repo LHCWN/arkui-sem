@@ -18,6 +18,7 @@ export type Candidate =
   | FieldCandidateBase<'R1', 'undecorated-mutated-rendered'> // plain member written after init and read in build()
   | NestedWriteCandidate
   | ForEachKeyStaleCandidate
+  | ForEachIndexKeyCandidate
   | FieldCandidateBase<'R2', 'ownership-intent'> // passed-in field; candidates() does not emit it (callers build it)
   | EventUnwiredCandidate
   | ResourceCandidate
@@ -66,6 +67,25 @@ export interface ForEachKeyStaleCandidate extends FieldCandidateBase<'R1', 'fore
   staleReads: RowRead[];
   /** Rebuilding the row would reset state it holds: the fix leads with @ObjectLink. */
   statefulRow: boolean;
+}
+
+/** R1: a ForEach keyed by position whose items at a position change: ForEach keeps the row of an existing key. */
+export interface ForEachIndexKeyCandidate extends FieldCandidateBase<'R1', 'foreach-index-key'> {
+  loop: LoopFact;
+  /** The writes that change which item sits at a position, in source order; `field` is the first one's. */
+  shifts: IndexShift[];
+  /** The only shifts are moves of the source's own array in methods, not in handlers in build(). */
+  methodMovesOnly: boolean;
+  /** The row's reads of the item. */
+  reads: RowRead[];
+}
+
+/** select: a write of a field the source reads besides its array (`this.sel` in `this.items[this.sel].tags`).
+ *  move: a write of that array that puts other items at existing positions (a reassignment, sort, splice). */
+export interface IndexShift {
+  field: FieldFact;
+  write: WriteFact;
+  how: 'select' | 'move';
 }
 
 export interface KeyStaleRebuild {

@@ -306,3 +306,58 @@ struct P {
   assert.equal(text.writes.length, 1);
   assert.equal(text.buildReads.length, 1);
 });
+
+test('a write records its array call, a reassignment that keeps positions, an initial load and its if arms in build()', () => {
+  const facts = extract(`@Component
+struct P {
+  @State items: string[] = []
+  @State open: boolean = false
+  aboutToAppear() {
+    this.load()
+  }
+  async load() {
+    this.items = await fetchItems()
+    setInterval(() => { this.items = [] }, 1000)
+  }
+  onPageShow() {
+    this.items.reverse()
+  }
+  add(s: string) {
+    this.items.push(s)
+    this.items = [...this.items, s]
+    this.items = this.items.concat([s])
+    this.items = [s, ...this.items]
+    this.items = this.items.slice(0, 2)
+  }
+  build() {
+    Column() {
+      if (this.open) {
+        Button('x').onClick(() => { this.items.sort() })
+      } else {
+        Button('y').onClick(() => { this.open = true })
+      }
+    }
+  }
+}`);
+  const [items, open] = facts.components[0].fields;
+  assert.deepEqual(
+    items.writes.map((w) => [w.method, w.call, w.keepsPositions, w.initialLoad]),
+    [
+      ['load', undefined, undefined, true],
+      ['load', undefined, true, undefined],
+      ['onPageShow', 'reverse', undefined, undefined],
+      ['add', 'push', undefined, undefined],
+      ['add', undefined, true, undefined],
+      ['add', undefined, true, undefined],
+      ['add', undefined, undefined, undefined],
+      ['add', undefined, true, undefined],
+      ['build', 'sort', undefined, undefined],
+    ],
+  );
+  const [sort] = items.writes.filter((w) => w.method === 'build');
+  const [toggle] = open.writes;
+  assert.equal(sort.branches?.length, 1);
+  assert.equal(sort.branches?.[0].arm, 'then');
+  assert.deepEqual(toggle.branches, [{ at: sort.branches?.[0].at, arm: 'else' }]);
+  assert.equal(items.writes[3].branches, undefined);
+});

@@ -17,6 +17,7 @@ import {
   className,
   declarationOf,
   elementType,
+  exclusiveArms,
   feedsRender,
   hierarchy,
   isCallSegment,
@@ -26,8 +27,10 @@ import {
   isOwnedV2,
   isReactive,
   isReactiveV1,
+  keepsPositionsCall,
   linkTypesOf,
   memberOf,
+  moves,
   nestedDepth,
   nonNull,
   own,
@@ -39,7 +42,7 @@ import {
   segmentText,
   typeFact,
 } from '../queries.js';
-import { type Candidate, fingerprint, type KeyStaleRebuild, type V2Gap } from './candidate.js';
+import { type Candidate, fingerprint, type IndexShift, type KeyStaleRebuild, type V2Gap } from './candidate.js';
 
 /** Types whose index writes and API calls V2 observes on an observed property, besides arrays. */
 const V2_CONTAINERS = new Set(['Map', 'Set', 'Date', 'WeakMap', 'WeakSet']);
@@ -362,7 +365,156 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
       out.push(...keyStaleCandidates(c, f, facts, resolver));
     }
   }
+  if (c.version === 'V1') {
+    const stale = new Set(out.flatMap((candidate) => (candidate.kind === 'foreach-key-stale' ? [candidate.loop] : [])));
+    out.push(...indexKeyCandidates(c, facts, stale, resolver));
+  }
   return out;
+}
+
+/** ForEach keeps the row of an existing key (OpenHarmony ForEach docs, 渲染结果非预期): under a key from the index
+ *  alone, other items at a position leave the old rows there. One candidate per such loop whose row renders the item and
+ *  whose items at a position change after the first render; loops foreach-key-stale reports are left to it. The
+ *  fingerprint names the source as written, plus a counter when two loops share it. */
+function indexKeyCandidates(
+  component: ComponentFact,
+  facts: FileFacts,
+  stale: Set<LoopFact>,
+  resolver?: ClassResolver,
+): Candidate[] {
+  const out: Candidate[] = [];
+  const seen = new Map<string, number>();
+  for (const loop of component.loops) {
+    if (loop.kind !== 'ForEach' || loop.key.kind !== 'index') {
+      continue;
+    }
+    const source = loop.source.text.replace(/\s+/g, ' ');
+    const count = (seen.get(source) ?? 0) + 1;
+    seen.set(source, count);
+    if (loop.disabledRules.includes('R1') || stale.has(loop)) {
+      continue;
+    }
+    const shifts = loop.source.fields.flatMap((name) => shiftsOf(component, loop, name));
+    const reads = shifts.length ? rowReads(loop, component, facts, resolver) : [];
+    if (reads.length === 0) {
+      continue;
+    }
+    const [first] = shifts;
+    out.push({
+      rule: 'R1',
+      kind: 'foreach-index-key',
+      file: facts.file,
+      component,
+      field: first.field,
+      line: loop.line,
+      loop,
+      shifts,
+      // A handler in build() or a @Builder is one even after an await.
+      methodMovesOnly: shifts.every(
+        ({ how, write }) =>
+          how === 'move' &&
+          write.context !== 'build-closure' &&
+          write.method !== 'build' &&
+          !component.builders.some((builder) => builder.name === write.method),
+      ),
+      reads,
+      fingerprint: fingerprint(
+        facts.file,
+        `${component.name}.${loop.source.root ?? loop.source.returnsFrom ?? loop.source.fields[0]}`,
+        `R1-foreach-index@${source}${count > 1 ? `~${count}` : ''}`,
+      ),
+    });
+  }
+  return out;
+}
+
+/** The writes of a state field the loop's source reads that change which item sits at a position after the first
+ *  render. Of the source's own array only writes that move items count, and through a method or getter none that
+ *  keeps the positions of an array it may return (an append), unless the source reorders that array or shows other
+ *  items after it (`.concat(x)`) and the write adds or removes items; none in the other arm of an `if` that holds the
+ *  loop, which runs while the loop is not shown, and switching back recreates it. The array a method or getter
+ *  returns moves like the source's own. */
+function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): IndexShift[] {
+  const field = component.fields.find((f) => f.name === name);
+  if (
+    !field ||
+    isNonState(field) ||
+    !isReactive(field) ||
+    field.disabledRules.includes('R1') ||
+    loop.source.windowEnds?.includes(name)
+  ) {
+    return [];
+  }
+  const arrays = (loop.source.shows ?? []).filter((a) => a.field === name);
+  const how = arrays.length || name === (loop.source.root ?? loop.source.returnsFrom) ? 'move' : 'select';
+  const paths = arrays.length ? arrays.map((a) => a.path) : [[]];
+  // An array write that keeps positions: an append, a clear, a cut from the end. Under a source that reorders the
+  // array (`.reverse()`, `.slice(-n)`) one that adds or removes items moves those shown at a position all the same; a
+  // copy or a clear does not.
+  const keepsArray = (write: WriteFact) =>
+    !moves(write) && (write.path?.length ?? 0) <= 1 && (write.path === undefined || isIndex(write.path[0]));
+  // A source that shows other items after the array (`.concat(x)`) moves them on any change to its length, a clear too.
+  // The array that ends the source (`.concat(this.more)`) has no other items after it.
+  const tail = name === loop.source.tail;
+  const slides = (write: WriteFact) =>
+    keepsArray(write) &&
+    write.keepsItems !== 'copy' &&
+    ((loop.source.appends === true && !tail) || (loop.source.reorders === true && write.keepsItems === undefined));
+  const changes = (write: WriteFact) => {
+    if (how === 'select') {
+      const shown = loop.source.shape === 'call' || tail;
+      return (write.path?.length ?? 0) <= 1 && !(shown && keepsArray(write) && !slides(write));
+    }
+    // `null` or `undefined` under a fallback (`this.F ?? this.other`) shows the other array at the same positions.
+    const revealsFallback = (own: WriteFact) =>
+      own.path === undefined && own.value === 'constant' && loop.source.fallbacks?.includes(name) === true;
+    return paths.some((path) => {
+      const own = belowArray(write, path);
+      if (own === 'above') {
+        return replacesHolder(write, path);
+      }
+      return own !== undefined && (moves(own) || slides(own) || revealsFallback(own));
+    });
+  };
+  const writes = field.writes.filter(
+    (write) =>
+      write.context !== 'render' &&
+      !write.initialLoad &&
+      !write.beforeFirstRender &&
+      !write.disabledRules.includes('R1') &&
+      !exclusiveArms(write.branches ?? [], loop.branches) &&
+      changes(write),
+  );
+  return writes.map((write) => ({ field, write, how }));
+}
+
+/** A write of the root field as a write of the array at `path` below it: the rest of its path when it writes there or
+ *  below, `above` when it writes a holder above (`this.F = …`, `this.F.sort()`), none when it writes beside it
+ *  (`this.F.name`). Indexes match whatever their text. */
+function belowArray(write: WriteFact, path: PathSegment[]): WriteFact | 'above' | undefined {
+  const segments = write.path ?? [];
+  const same = (a: PathSegment, b: PathSegment) => ('prop' in a ? 'prop' in b && a.prop === b.prop : isIndex(b));
+  const n = Math.min(segments.length, path.length);
+  if (!segments.slice(0, n).every((s, i) => same(s, path[i]))) {
+    return undefined;
+  }
+  if (segments.length < path.length) {
+    return 'above';
+  }
+  const rest = segments.slice(path.length);
+  return { ...write, path: rest.length ? rest : undefined };
+}
+
+/** A write of a holder above the array at `path` (`this.F = …`, `this.F[i] = …`, `this.F.trip = …`, `this.F.sort()`)
+ *  puts another array there, unless it keeps the positions of the holder array it writes (`push`, an append, a clear)
+ *  or spreads the old object and leaves the next property on the path alone (`this.F = { ...this.F, name: x }`). */
+function replacesHolder(write: WriteFact, path: PathSegment[]): boolean {
+  if (write.call !== undefined) {
+    return !keepsPositionsCall(write.call);
+  }
+  const next = path[write.path?.length ?? 0];
+  const kept = write.sets !== undefined && next !== undefined && 'prop' in next && !write.sets.includes(next.prop);
+  return !write.keepsPositions && !kept;
 }
 
 /** The ForEach loops over the field's own elements whose key stays with an element: item properties or the index. */

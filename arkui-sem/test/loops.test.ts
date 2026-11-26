@@ -81,7 +81,27 @@ describe('loop source', () => {
     const called = source('this.liked()', members);
     assert.equal(called.shape, 'call');
     assert.deepEqual(called.fields.sort(), ['shelf', 'songs']);
-    assert.deepEqual(source('this.all', members), { text: 'this.all', shape: 'call', fields: ['songs'] });
+    assert.equal(called.returnsFrom, 'songs');
+    assert.deepEqual(source('this.all', members), {
+      text: 'this.all',
+      shape: 'call',
+      returnsFrom: 'songs',
+      shows: [{ field: 'songs', path: [] }],
+      fields: ['songs'],
+    });
+  });
+
+  test('the arrays a source may show: the field each starts from and the accesses on it before any call', () => {
+    const at = [{ index: 'this.shelf' }, { prop: 'artist' }];
+    assert.deepEqual(source('this.songs[this.shelf].artist.slice().reverse()').shows, [{ field: 'songs', path: at }]);
+    assert.deepEqual(source('this.songs.slice(0, 2)[0].artist').shows, [{ field: 'songs', path: [] }]);
+    assert.deepEqual(source('this.shelf > 0 ? this.songs[this.shelf].artist : []').shows, [
+      { field: 'songs', path: at },
+    ]);
+    const members = '  get artist() { return this.songs[this.shelf]?.artist ?? [] }';
+    assert.deepEqual(source('this.artist', members).shows, [
+      { field: 'songs', path: [{ index: 'this.shelf' }, { prop: 'artist' }] },
+    ]);
   });
 
   test("a helper's accesses in its handlers are left out", () => {
@@ -404,5 +424,38 @@ struct SongRow {
       ),
     );
     assert.deepEqual(paths(reads(facts)), ['.title']);
+  });
+});
+
+describe('loop branches', () => {
+  test('the if arms that hold the loop, outermost first', () => {
+    const [loop] = loopsOf(
+      page(
+        '',
+        "      if (this.shelf > 0) { Text('x') } else { if (this.songs.length) { ForEach(this.songs, (s: Song) => { Text(s.title) }) } }",
+      ),
+    );
+    assert.deepEqual(
+      loop.branches.map((b) => b.arm),
+      ['else', 'then'],
+    );
+  });
+
+  test('through the @Builders that reach it: nested calls compose, calls from both arms leave none', () => {
+    const builders = `  @Builder Outer() {
+    if (this.songs.length) { this.Inner() }
+  }
+  @Builder Inner() {
+    ForEach(this.songs, (s: Song) => { Text(s.title) })
+  }
+  @Builder Both() {
+    ForEach(this.songs, (s: Song) => { Text(s.artist.name) })
+  }`;
+    const loops = loopsOf(
+      page(builders, '      if (this.shelf > 0) { this.Outer(); this.Both() } else { this.Both() }'),
+    );
+    const armsOf = (method: string) => loops.find((l) => l.method === method)?.branches.map((b) => b.arm);
+    assert.deepEqual(armsOf('Inner'), ['then', 'then']);
+    assert.deepEqual(armsOf('Both'), []);
   });
 });

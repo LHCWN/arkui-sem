@@ -1,6 +1,7 @@
 // A component (an @Component / @ComponentV2 / @CustomDialog struct): its fields, where build() reads them, where methods
 // write them.
 import type {
+  Branch,
   BuildRead,
   CallbackCall,
   ComponentFact,
@@ -10,7 +11,7 @@ import type {
   WriteContext,
   WriteFact,
 } from '../facts.js';
-import { type BuilderNames, climb } from './callbacks.js';
+import { type BuilderNames, climb, continues } from './callbacks.js';
 import { type FoundInput, inputsIn, type Typing, typing } from './inputs.js';
 import { LIFECYCLE } from './lifecycle.js';
 import { builderFact, loopsIn, type Members } from './loops.js';
@@ -19,12 +20,16 @@ import { rebuiltElements } from './rebuilt.js';
 import { resources } from './resources.js';
 import type { FileScan } from './scan.js';
 import {
+  armsOf,
+  branchesOf,
   calleeName,
   decoratorNames,
   expressionName,
   hasModifier,
   isAssignment,
   isFunction,
+  isNullish,
+  isZero,
   memberName,
   pathBelow,
   thisMember,
@@ -68,7 +73,10 @@ export interface MethodScan {
   method: Method;
   /** `this.<m>` for each method, getter or handler m of the component, other than the method itself; called:
    *  `this.m(…)`; where it sits (climb): in a handler (callbacks.ts), in a loop, in an attribute call. */
-  uses: ({ name: string; called: boolean } & Pick<BuildRead, 'inHandler' | 'inForEach' | 'attribute'>)[];
+  uses: ({ name: string; called: boolean; branches: Branch[] } & Pick<
+    BuildRead,
+    'inHandler' | 'inForEach' | 'attribute'
+  >)[];
   /** Every call, in source order. */
   calls: ts.CallExpression[];
 }
@@ -101,17 +109,26 @@ export function component(
   const scans = methods.map((m) => scanMethod(m, byName, names, builderNames));
   const drawing = drawingMethods(scans);
   const renderOnly = renderOnlyMethods(scans, drawing);
+  const loads = new Set<WriteFact>();
+  const { arms, repeated } = methodArms(scans);
   for (const s of scans) {
     recordAccesses(s, byName, scan, builderNames, {
       drawn: drawing.get(s.method),
       renderOnly: renderOnly.has(s.method),
+      arms: arms.get(s.method.name),
+      ownArms: !repeated.has(s.method.name),
+      loads,
     });
   }
   const external = externalMethods(scans);
-  const setup = setupMethods(scans);
+  const setup = setupMethods(scans, false);
+  const loading = setupMethods(scans, true);
   for (const f of fields) {
     for (const w of f.writes) {
       w.external = external.has(w.method);
+      if (loading.has(w.method) && loads.has(w)) {
+        w.initialLoad = true;
+      }
       if (w.context !== 'async-callback' && setup.has(w.method)) {
         w.beforeFirstRender = true;
       }
@@ -130,7 +147,11 @@ export function component(
     version: decorators.includes('@ComponentV2') ? 'V2' : 'V1',
     fields,
     resources: resources(scans, scan),
-    loops: methods.filter((m) => drawing.has(m)).flatMap((m) => loopsIn(m.name, m.body, scan, builderNames, members)),
+    loops: methods
+      .filter((m) => drawing.has(m))
+      .flatMap((m) =>
+        loopsIn(m.name, m.body, arms.get(m.name) ?? [], !repeated.has(m.name), scan, builderNames, members),
+      ),
     builders: builderMethods.flatMap((m) => {
       const name = memberName(m.name);
       return name === undefined ? [] : [builderFact(name, m, scan, builderNames)];
@@ -238,7 +259,25 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders
     }
     return [...out];
   };
-  return { fields: new Set(fields.keys()), isHelper, fieldsOf };
+  const returned = (name: string): ts.Expression[] => {
+    const out: ts.Expression[] = [];
+    const visit = (n: ts.Node) => {
+      if (ts.isReturnStatement(n)) {
+        if (n.expression) {
+          out.push(...armsOf(n.expression));
+        }
+      } else if (!isFunction(n)) {
+        ts.forEachChild(n, visit);
+      }
+    };
+    const helper = byName.get(name)?.method.body;
+    if (helper) {
+      ts.forEachChild(helper, visit);
+    }
+    return out;
+  };
+  const body = (name: string) => byName.get(name)?.method.body;
+  return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned, body };
 }
 
 export function methodsOf(s: ts.StructDeclaration): Method[] {
@@ -328,6 +367,7 @@ function scanMethod(m: Method, fields: Map<string, FieldFact>, names: Set<string
           inHandler,
           inForEach,
           ...(attribute === undefined ? {} : { attribute }),
+          branches: branchesOf(n, m.body, n.getSourceFile()),
         };
         out.uses.push(use);
         // The walk is in source order, so every await that ends before n is already recorded.
@@ -411,7 +451,19 @@ function recordAccesses(
   fields: Map<string, FieldFact>,
   scan: FileScan,
   builders: BuilderNames,
-  { drawn, renderOnly }: { drawn: DrawSite | undefined; renderOnly: boolean },
+  {
+    drawn,
+    renderOnly,
+    arms,
+    ownArms,
+    loads,
+  }: {
+    drawn: DrawSite | undefined;
+    renderOnly: boolean;
+    arms: Branch[] | undefined;
+    ownArms: boolean;
+    loads: Set<WriteFact>;
+  },
 ) {
   const m = walk.method;
   const context: AccessContext = {
@@ -425,6 +477,9 @@ function recordAccesses(
     via: drawn && !rendersUi(m) ? (m.kind === 'getter' ? `this.${m.name}` : `this.${m.name}()`) : undefined,
     calls: [],
     tested: new Set(),
+    arms,
+    ownArms,
+    loads,
   };
   for (const base of walk.accesses) {
     const field = fields.get(base.name.text);
@@ -454,6 +509,12 @@ interface AccessContext {
   /** The method's calls of fields, and the fields it reads without calling or writing them. */
   calls: { field: FieldFact; call: CallbackCall }[];
   tested: Set<FieldFact>;
+  /** The `if` arms of build() the method runs in (methodArms); undefined when not known. */
+  arms: Branch[] | undefined;
+  /** The `if` arms in the method's own body count too: false when it may run several times at once (methodArms). */
+  ownArms: boolean;
+  /** Writes outside callbacks or in promise continuations only (`.then`): run once if their method is. */
+  loads: Set<WriteFact>;
 }
 
 /** One `this.<field>…` access: the path below the field, then whether it writes (assignment, update, mutating call). */
@@ -462,7 +523,9 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
   const parent = top.parent;
   const last = segments.at(-1);
   const called = ts.isCallExpression(parent) && parent.expression === top;
-  const mutatingCall = called && last !== undefined && 'prop' in last && MUTATING_CALLS.has(last.prop);
+  const callName =
+    called && last !== undefined && 'prop' in last && MUTATING_CALLS.has(last.prop) ? last.prop : undefined;
+  const mutatingCall = callName !== undefined;
   const assignment =
     ts.isBinaryExpression(parent) && parent.left === top && isAssignment(parent.operatorToken.kind)
       ? parent
@@ -518,10 +581,20 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     path: path.length ? path : undefined,
     value: mutatingCall ? undefined : assignedValue(assignment),
     ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
+    ...(callName === undefined ? {} : { call: callName }),
+    ...(assignment && keepsPositions(assignment) ? { keepsPositions: true } : {}),
+    ...(assignment ? keptItems(assignment) : {}),
+    ...(assignment ? spreadSets(assignment) : {}),
+    ...(ctx.arms
+      ? { branches: [...ctx.arms, ...(ctx.ownArms ? branchesOf(base, ctx.method.body, ctx.scan.sf) : [])] }
+      : {}),
     ...(rebuilt.length ? { rebuilt } : {}),
     disabledRules: ctx.scan.disabledAt(line),
   };
   field.writes.push(write);
+  if (where.functions.every(continues)) {
+    ctx.loads.add(write);
+  }
 }
 
 /** The assignment's new value depends on the field's old one: `+=` and the like, or `this.f = g(this.f)`. */
@@ -531,6 +604,90 @@ function accumulates(assignment: ts.BinaryExpression, field: string): boolean {
   }
   const reads = (n: ts.Node): boolean => thisMember(n) === field || ts.forEachChild(n, reads) === true;
   return reads(assignment.right);
+}
+
+/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]`, `null`, `this.F.slice()` or `this.F.slice(0, n)`, also of an array
+ *  below the field (`this.F.tags = [...this.F.tags, x]`): no other item at an old position. */
+function keepsPositions(assignment: ts.BinaryExpression): boolean {
+  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+    return false;
+  }
+  const value = unwrap(assignment.right);
+  if (isNullish(value)) {
+    return true;
+  }
+  if (ts.isArrayLiteralExpression(value)) {
+    const [first] = value.elements;
+    return first === undefined || (ts.isSpreadElement(first) && sameTarget(first.expression, assignment.left));
+  }
+  if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
+    return false;
+  }
+  const method = value.expression.name.text;
+  const [start] = value.arguments;
+  const fromStart = method === 'slice' && (start === undefined || isZero(start));
+  return (method === 'concat' || fromStart) && sameTarget(value.expression.expression, assignment.left);
+}
+
+/** `this.F = { ...this.F, name: x }`: the properties set next to a spread of the old value. None when another spread
+ *  or a computed name may set any. */
+function spreadSets(assignment: ts.BinaryExpression): Pick<WriteFact, 'sets'> {
+  const value = unwrap(assignment.right);
+  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isObjectLiteralExpression(value)) {
+    return {};
+  }
+  let self = false;
+  const sets: string[] = [];
+  for (const p of value.properties) {
+    if (ts.isSpreadAssignment(p) && sameTarget(p.expression, assignment.left)) {
+      self = true;
+    } else if (p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && !ts.isSpreadAssignment(p)) {
+      sets.push(p.name.text);
+    } else {
+      return {};
+    }
+  }
+  return self ? { sets } : {};
+}
+
+/** Both name the same place: `this.F.tags` and `(this.F.tags)`. */
+function sameTarget(a: ts.Expression, b: ts.Expression): boolean {
+  return unwrap(a).getText() === unwrap(b).getText();
+}
+
+/** The same items (`[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.concat()`) or none (`[]`, `null`,
+ *  `this.F.slice(0, 0)`), also of an array below the field. */
+function keptItems(assignment: ts.BinaryExpression): Pick<WriteFact, 'keepsItems'> {
+  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+    return {};
+  }
+  const value = unwrap(assignment.right);
+  if (isNullish(value)) {
+    return { keepsItems: 'clear' };
+  }
+  if (ts.isArrayLiteralExpression(value)) {
+    const [first, ...rest] = value.elements;
+    if (first === undefined) {
+      return { keepsItems: 'clear' };
+    }
+    const copy = rest.length === 0 && ts.isSpreadElement(first) && sameTarget(first.expression, assignment.left);
+    return copy ? { keepsItems: 'copy' } : {};
+  }
+  if (
+    !(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)) ||
+    !sameTarget(value.expression.expression, assignment.left)
+  ) {
+    return {};
+  }
+  const method = value.expression.name.text;
+  const args = value.arguments;
+  if (method === 'slice' && args.length === 2 && isZero(args[0]) && isZero(args[1])) {
+    return { keepsItems: 'clear' };
+  }
+  const copy =
+    (method === 'concat' && args.length === 0) ||
+    (method === 'slice' && (args.length === 0 || (args.length === 1 && isZero(args[0]))));
+  return copy ? { keepsItems: 'copy' } : {};
 }
 
 /** What an assignment assigns: an object literal, a `new` instance, a constant, or anything else (compound and update
@@ -587,14 +744,11 @@ function readsTime(e: ts.Node): boolean {
   return ts.forEachChild(e, (c) => readsTime(c) || undefined) ?? false;
 }
 
-/**
- * Methods no code in the component reaches from build()/@Builder (calls or `this.m` references, e.g. `.onClick(this.m)`)
- * or from lifecycle hooks (calls): entry points for listeners, callbacks and other classes.
- */
 /** The methods that run only before the first build(): aboutToAppear, and helpers whose every use is a call outside
  *  handlers in such a method, with no await before it in its scope. Code after an await may run after the first
- *  build(); an await in another callback (`setTimeout(async () => …)`) doesn't delay the call. */
-function setupMethods(scans: MethodWalk[]): Set<string> {
+ *  build(); an await in another callback (`setTimeout(async () => …)`) doesn't delay the call. afterAwait: also calls
+ *  after an await, i.e. the methods that run once, from aboutToAppear. */
+function setupMethods(scans: MethodWalk[], afterAwait: boolean): Set<string> {
   const first = scans.find((scan) => scan.method.name === 'aboutToAppear');
   if (!first) {
     return new Set();
@@ -604,7 +758,8 @@ function setupMethods(scans: MethodWalk[]): Set<string> {
     scans.every((scan) =>
       scan.uses.every(
         (use) =>
-          use.name !== name || (setup.has(scan.method.name) && !scan.delayed.has(use) && use.called && !use.inHandler),
+          use.name !== name ||
+          (setup.has(scan.method.name) && (afterAwait || !scan.delayed.has(use)) && use.called && !use.inHandler),
       ),
     );
   for (let changed = true; changed; ) {
@@ -625,6 +780,65 @@ function setupMethods(scans: MethodWalk[]): Set<string> {
   return setup;
 }
 
+/**
+ * The `if` arms of build() each method runs in: none for build() itself; for another method, the arms every use of it
+ * shares, each use's arms in its own body after those of the method holding it. A @Builder that only one arm calls, or
+ * a method only a handler in that arm calls, runs only while the arm is shown. A method with a use in a lifecycle hook,
+ * or with no use in the component (other code calls it), has none known.
+ *
+ * repeated: the methods that may run several times at once, whose own `if` arms then don't exclude each other (one
+ * run may take one arm, another the other): a use in a loop row or in a repeated method, or uses not all in exclusive
+ * arms of one method. They keep only the arms they inherit.
+ */
+function methodArms(scans: MethodScan[]): { arms: Map<string, Branch[]>; repeated: Set<string> } {
+  const arms = new Map<string, Branch[]>([['build', []]]);
+  const uses = new Map<string, { caller: string; branches: Branch[]; inForEach: boolean }[]>();
+  for (const scan of scans) {
+    for (const use of scan.uses) {
+      const site = { caller: scan.method.name, branches: use.branches, inForEach: use.inForEach };
+      uses.set(use.name, [...(uses.get(use.name) ?? []), site]);
+    }
+  }
+  const repeated = new Set<string>();
+  // Two uses in different arms of one `if` of the same method (queries.exclusiveArms) never run at once.
+  const apart = (a: { caller: string; branches: Branch[] }, b: { caller: string; branches: Branch[] }) =>
+    a.caller === b.caller && a.branches.some((x) => b.branches.some((y) => x.at === y.at && x.arm !== y.arm));
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [name, sites] of uses) {
+      const several = sites.some((a, i) => sites.slice(0, i).some((b) => !apart(a, b)));
+      if (
+        !repeated.has(name) &&
+        name !== 'build' &&
+        (several || sites.some((site) => site.inForEach || repeated.has(site.caller)))
+      ) {
+        repeated.add(name);
+        changed = true;
+      }
+    }
+  }
+  const own = (site: { caller: string; branches: Branch[] }) => (repeated.has(site.caller) ? [] : site.branches);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [name, sites] of uses) {
+      if (arms.has(name) || name === 'build' || !sites.every((site) => arms.has(site.caller))) {
+        continue;
+      }
+      const [first, ...rest] = sites.map((site) => [...(arms.get(site.caller) ?? []), ...own(site)]);
+      arms.set(
+        name,
+        first.filter((arm) => rest.every((other) => other.some((b) => b.at === arm.at && b.arm === arm.arm))),
+      );
+      changed = true;
+    }
+  }
+  return { arms, repeated };
+}
+
+/**
+ * Methods no code in the component reaches from build()/@Builder (calls or `this.m` references, e.g. `.onClick(this.m)`)
+ * or from lifecycle hooks (calls): entry points for listeners, callbacks and other classes.
+ */
 function externalMethods(scans: MethodScan[]): Set<string> {
   const edges = new Map(
     scans.map((s) => [

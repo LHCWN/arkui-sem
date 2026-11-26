@@ -274,6 +274,9 @@ export interface LoopSource {
   /** The field whose array ends every array the source shows, after others (`this.more` in `this.F.concat(this.more)`,
    *  `[...this.F, ...this.more]`): a write that keeps its positions only adds or removes rows at the end. */
   tail?: string;
+  /** Fields on the left of a `??` or `||` in the source, or in the method or getter it calls, whose right side shows
+   *  something (`this.F ?? this.other`): a `null` or `undefined` write of one shows that at the same positions. */
+  fallbacks?: string[];
   /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
    *  own array it shows. */
   returnsFrom?: string;

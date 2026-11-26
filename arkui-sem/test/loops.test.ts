@@ -102,10 +102,6 @@ describe('loop source', () => {
     assert.deepEqual(source('this.shelf > 0 ? this.songs[this.shelf].artist : []').shows, [
       { field: 'songs', path: at },
     ]);
-    const members = '  get artist() { return this.songs[this.shelf]?.artist ?? [] }';
-    assert.deepEqual(source('this.artist', members).shows, [
-      { field: 'songs', path: [{ index: 'this.shelf' }, { prop: 'artist' }] },
-    ]);
   });
 
   test("a helper's accesses in its handlers are left out", () => {

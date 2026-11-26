@@ -143,7 +143,6 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
       ...(shown.reorders ? { reorders: true as const } : {}),
       ...(shown.appends ? { appends: true as const } : {}),
       ...(shown.tail === undefined ? {} : { tail: shown.tail }),
-      ...(shown.fallbacks.length ? { fallbacks: shown.fallbacks } : {}),
       ...(shown.windowEnds.length ? { windowEnds: shown.windowEnds } : {}),
       fields,
     };
@@ -166,18 +165,17 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     ...(shown.reorders ? { reorders: true as const } : {}),
     ...(shown.appends ? { appends: true as const } : {}),
     ...(shown.tail === undefined ? {} : { tail: shown.tail }),
-    ...(shown.fallbacks.length ? { fallbacks: shown.fallbacks } : {}),
     ...(shown.windowEnds.length ? { windowEnds: shown.windowEnds } : {}),
     fields,
   };
 }
 
 /** What the arrays a source may show (`values`: the arms of a conditional, or what a method or getter returns) have in
- *  common. from: the field every one starts from; a value that shows nothing (`[]`, `null`) or no field's array
+ *  common. from: the field every one starts from; a value that shows nothing (`[]`) or no field's array
  *  (`DEFAULTS`) shows no other one. arrays: the arrays of fields the values show. reorders: one sorts, reverses or cuts
  *  from the end. appends: one shows other items after an array's (`.concat(x)`). tail: the field whose array ends
- *  every one. fallbacks: see `fallbackFields`. windowEnds: the fields read only as
- *  the end of a `.slice(0, n)` that keeps the items in place, nowhere else in `around` (the conditional or the
+ *  every one. windowEnds: the fields read only as the end
+ *  of of a `.slice(0, n)` that keeps the items in place, nowhere else in `around` (the conditional or the
  *  method's body), whose other reads may pick another array; when every value shows nothing or the start of that
  *  field's array (`this.showAll ? this.F : this.F.slice(0, 3)`), every field `around` reads but that one: a change
  *  can only show more or fewer items at the end. */
@@ -192,7 +190,6 @@ function shownArrays(
   reorders: boolean;
   appends: boolean;
   tail?: string;
-  fallbacks: string[];
   windowEnds: string[];
 } {
   const arrays = new Map<string, ShownArray>();
@@ -220,7 +217,6 @@ function shownArrays(
     reorders: values.some((e) => inChain(e, reordersCall)),
     appends: values.some((e) => inChain(e, appendsCall)),
     ...(tail === undefined ? {} : { tail }),
-    fallbacks: fallbackFields(around, members),
     windowEnds,
   };
 }
@@ -272,10 +268,10 @@ function prefixEnds(expr: ts.Expression): ts.Expression[] {
   return ends;
 }
 
-/** `[]`, `null` or `undefined`. */
+/** `[]`. */
 function isEmptyValue(expr: ts.Expression): boolean {
   const value = unwrap(expr);
-  return (ts.isArrayLiteralExpression(value) && value.elements.length === 0) || isNullish(value);
+  return ts.isArrayLiteralExpression(value) && value.elements.length === 0;
 }
 
 /** A call of the chain passes the test, also through a copy (`[...this.F.slice(-5)]`). */
@@ -319,30 +315,6 @@ function tailField(expr: ts.Expression, members: Members): string | undefined {
     }
     value = unwrap(value.expression.expression);
   }
-}
-
-/** The fields on the left of a `??` or `||` under `around` whose right side may show something (`this.F ?? this.other`,
- *  not `this.F ?? []`): when one is `null` or `undefined`, the source shows the right side instead. */
-function fallbackFields(around: ts.Node, members: Members): string[] {
-  const out = new Set<string>();
-  const visit = (n: ts.Node) => {
-    if (
-      ts.isBinaryExpression(n) &&
-      (n.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
-        n.operatorToken.kind === ts.SyntaxKind.BarBarToken) &&
-      armsOf(n.right).some((e) => !isEmptyValue(e))
-    ) {
-      for (const e of armsOf(n.left)) {
-        const field = rootField(e, members);
-        if (field !== undefined) {
-          out.add(field);
-        }
-      }
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(around);
-  return [...out];
 }
 
 /** Sorts or reverses an array, or cuts it from the end (`.slice(-5)`, `.slice(a.length - 5)`), so an item appended to

@@ -211,14 +211,13 @@ describe('foreach-index-key fires', () => {
     }
   });
 
-  test('a nested array under a fallback, a conditional, a getter, or one of two holders', () => {
+  test('a nested array under a conditional, a getter, or one of two holders', () => {
     const members = `  @State trip: Trip = { id: 0, name: '', tags: [] }
   @State other: Trip = { id: 0, name: '', tags: [] }
   get tags(): string[] {
     return this.trip.tags
   }`;
     for (const source of [
-      'this.trip?.tags ?? []',
       'this.sel > 0 ? this.trip.tags : []',
       'this.tags',
       'this.sel > 0 ? this.trip.tags : this.other.tags',
@@ -350,28 +349,10 @@ describe('foreach-index-key does not fire', () => {
     );
   });
 
-  test('a null or undefined clear of a nullable source, unless a fallback shows another array', () => {
-    const maybe = `  @State maybe: string[] | null | undefined = null
-  get shown(): string[] {
-    return this.maybe ?? this.names
-  }`;
-    for (const write of ['this.maybe = null', 'this.maybe = undefined']) {
-      for (const source of ['this.maybe ?? []', 'this.maybe || []']) {
-        const src = page(maybe, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
-      }
-      // Control: the fallback shows another array at the same positions.
-      for (const source of ['this.maybe ?? this.names', 'this.maybe || DEFAULTS', 'this.shown']) {
-        const src = page(maybe, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-      }
-    }
-  });
-
-  test('an append to one of the arrays a conditional or a fallback may show', () => {
-    const more = '  @State more: string[] = []\n  @State maybe: string[] | null = null';
-    for (const source of ['this.sel > 0 ? this.names : this.more', 'this.maybe ?? []', 'this.maybe || this.names']) {
-      for (const field of ['names', 'more', 'maybe']) {
+  test('an append to one of the arrays a conditional may show', () => {
+    const more = '  @State more: string[] = []';
+    for (const source of ['this.sel > 0 ? this.names : this.more']) {
+      for (const field of ['names', 'more']) {
         const write = `if (this.${field}) { this.${field}.push('x') }`;
         const src = page(more, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
         assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);

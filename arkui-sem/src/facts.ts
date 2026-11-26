@@ -269,7 +269,7 @@ export interface LoopSource {
   /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`); for a conditional, the
    *  field each arm that shows an array starts from (`this.ready ? this.F : []`). */
   root?: string;
-  /** Every array the source may show: of each arm of a conditional or fallback, or each value a method or getter it
+  /** Every array the source may show: of each arm of a conditional, or each value a method or getter it
    *  calls returns, that starts from a field. */
   shows?: ShownArray[];
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
@@ -291,9 +291,6 @@ export interface LoopSource {
   /** The field whose array ends every array the source shows, after others (`this.more` in `this.F.concat(this.more)`,
    *  `[...this.F, ...this.more]`): a write that keeps its positions only adds or removes rows at the end. */
   tail?: string;
-  /** Fields on the left of a `??` or `||` in the source, or in the method or getter it calls, whose right side shows
-   *  something (`this.F ?? this.other`): a `null` or `undefined` write of one shows that at the same positions. */
-  fallbacks?: string[];
   /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
    *  own array it shows. */
   returnsFrom?: string;

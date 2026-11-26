@@ -496,15 +496,12 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
       const shown = loop.source.shape === 'call' || tail;
       return (write.path?.length ?? 0) <= 1 && !(shown && keepsArray(write) && !slides(write));
     }
-    // `null` or `undefined` under a fallback (`this.F ?? this.other`) shows the other array at the same positions.
-    const revealsFallback = (own: WriteFact) =>
-      own.path === undefined && own.value === 'constant' && loop.source.fallbacks?.includes(name) === true;
     return paths.some((path) => {
       const own = belowArray(write, path);
       if (own === 'above') {
         return replacesHolder(write, path);
       }
-      return own !== undefined && (moves(own) || slides(own) || revealsFallback(own));
+      return own !== undefined && (moves(own) || slides(own));
     });
   };
   const writes = field.writes.filter(

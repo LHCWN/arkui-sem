@@ -47,8 +47,7 @@ export interface WriteFact {
    *  clear (`[]`) or a cut from the start (`this.F.slice(0, n)`). */
   keepsPositions?: true;
   /** Of those, one that keeps the same items (`copy`: `[...this.F]`, `this.F.slice()`, `this.F.concat()`) or none
-   *  (`clear`: `[]`). Even a sorted or reversed view of the array shows the same item at each
-   *  position, or no rows. */
+   *  (`clear`: `[]`). Even a sorted or reversed view of the array shows the same item at each position, or no rows. */
   keepsItems?: 'copy' | 'clear';
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
@@ -275,9 +274,9 @@ export interface LoopSource {
    *  own array it shows. */
   returnsFrom?: string;
   /** Fields the source, or the method or getter it calls, reads only as the end of a `.slice(0, n)`
-   *  (`this.F.slice(0, this.n)`), not in a condition or guard; or any field but
-   *  F when every array it may show is F or its start (`this.showAll ? this.F : this.F.slice(0, 3)`): a change shows
-   *  more or fewer items at the end, the same ones at each position. */
+   *  (`this.F.slice(0, this.n)`), not in a condition or guard; or any field but F when every array it may show is F
+   *  or its start (`this.showAll ? this.F : this.F.slice(0, 3)`): a change shows more or fewer items at the end, the
+   *  same ones at each position. */
   windowEnds?: string[];
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */

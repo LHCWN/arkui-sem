@@ -467,9 +467,8 @@ function indexKeyCandidates(
 /** The writes of a state field the loop's source reads that change which item sits at a position after the first
  *  render. Of the source's own array only writes that move items count, and through a method or getter none that
  *  keeps the positions of an array it may return (an append), unless the source reorders that array and the write
- *  adds or removes items; none in the other arm of an `if` that holds the
- *  loop, which runs while the loop is not shown, and switching back recreates it. The array a method or getter
- *  returns moves like the source's own. */
+ *  adds or removes items; none in the other arm of an `if` that holds the loop, which runs while the loop is not
+ *  shown, and switching back recreates it. The array a method or getter returns moves like the source's own. */
 function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): IndexShift[] {
   const field = observedField(component, name);
   if (!field || loop.source.windowEnds?.includes(name)) {
@@ -481,8 +480,7 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
   // copy or a clear does not.
   const keepsArray = (write: WriteFact) =>
     !moves(write) && (write.path?.length ?? 0) <= 1 && (write.path === undefined || isIndex(write.path[0]));
-  const slides = (write: WriteFact) =>
-    keepsArray(write) && loop.source.reorders === true && write.keepsItems === undefined;
+  const slides = (write: WriteFact) => keepsArray(write) && loop.source.reorders === true && !write.keepsItems;
   const changes = (write: WriteFact) => {
     if (how === 'select') {
       return (write.path?.length ?? 0) <= 1 && !(loop.source.shape === 'call' && keepsArray(write) && !slides(write));

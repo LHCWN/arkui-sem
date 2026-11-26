@@ -221,7 +221,6 @@ describe('foreach-index-key does not fire', () => {
       '  get shown(): string[] {\n    if (this.sel > 0) {\n      return this.names\n    }\n    return this.names.slice(0, 3)\n  }';
     for (const [members, source] of [
       ['', 'this.sel > 0 ? this.names : this.names.slice(0, 3)'],
-      ['', 'this.sel > 0 ? [...this.names] : []'],
       [getter, 'this.shown'],
     ]) {
       assert.deepEqual(indexKeyed(page(members, `${more}\n${loop(source)}`)), [], source);

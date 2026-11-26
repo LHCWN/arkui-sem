@@ -153,21 +153,16 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
 }
 
 /** What the arrays a source may show (`values`: the arms of a conditional, or what a method or getter returns) have in
- *  common. from: the field every one starts from; a value that shows nothing (`[]`) or no field's array
- *  (`DEFAULTS`) shows no other one. reorders: one sorts, reverses or cuts from the end. windowEnds: the fields read
- *  only as the end of a `.slice(0, n)`, nowhere else in `around` (the conditional or the
- *  method's body), whose other reads may pick another array; when every value shows nothing or the start of that
- *  field's array (`this.showAll ? this.F : this.F.slice(0, 3)`), every field `around` reads but that one: a change
- *  can only show more or fewer items at the end. */
+ *  common. from: the field every one starts from; a value that shows nothing (`[]`) or no field's array (`DEFAULTS`)
+ *  shows no other one. reorders: one sorts, reverses or cuts from the end. windowEnds: the fields read only as the end
+ *  of a `.slice(0, n)`, nowhere else in `around` (the conditional or the method's body); when every value shows
+ *  nothing or the start of from's array (`this.showAll ? this.F : this.F.slice(0, 3)`), every field `around` reads
+ *  but that one: a change can only show more or fewer items at the end. */
 function shownArrays(
   values: ts.Expression[],
   around: ts.Node,
   members: Members,
-): {
-  from?: string;
-  reorders: boolean;
-  windowEnds: string[];
-} {
+): { from?: string; reorders: boolean; windowEnds: string[] } {
   const roots = new Set(values.flatMap((e) => (isEmptyValue(e) ? [] : (rootField(e, members) ?? []))));
   const [from] = roots.size === 1 ? roots : [];
   const ends = new Set(values.flatMap(prefixEnds));
@@ -183,15 +178,13 @@ function shownArrays(
   };
 }
 
-/** The value is the start of this.field's array, or all of it: `this.F`, `this.F.slice(0, n)`, `[...this.F]`. */
+/** The value is the start of this.field's array, or all of it: `this.F`, `this.F.slice(0, n)`. */
 function startsOf(expr: ts.Expression, field: string): boolean {
   for (let value = unwrap(expr); ; ) {
     if (thisMember(value) === field) {
       return true;
     }
-    if (isSpreadCopy(value)) {
-      value = unwrap(value.elements[0].expression);
-    } else if (
+    if (
       ts.isCallExpression(value) &&
       ts.isPropertyAccessExpression(value.expression) &&
       value.expression.name.text === 'slice' &&

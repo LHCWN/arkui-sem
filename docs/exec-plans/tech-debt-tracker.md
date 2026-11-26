@@ -46,7 +46,7 @@
   - The `if` arms around the loop exclude a write in the other arm also inside an outer loop row, a @Builder called
     more than once or a `Repeat` row, where another row or call takes that arm at the same time: it goes quiet. The
     same holds for `lazyforeach-source-rebuilt`, which shares the arms. Reads in a `Repeat(…).each` or `.template` row
-    are not marked as inside a loop (`inForEach`), as before #37.
+    are not marked as inside a loop (`inForEach`).
   - `&&` is not split into arms (`this.ready && this.a`).
 - R4 input kinds are V1 only and see whole-field writes of the typed text (`this.f = value`), in the onChange or one
   method only inputs use and the onChange hands the text to: a path write (`this.form.name = value`) is not followed,

@@ -13,12 +13,12 @@ The user sets direction; agents plan and execute. Plans live in the repo so ever
 | Plan | About |
 |---|---|
 | [roadmap.md](exec-plans/active/roadmap.md) | the one forward plan: plugin status and P-A roadmap, rule coverage R1–R5 and phases 0–6 (evaluation status: `bench/docs/RESULTS.md`) |
-| [coverage-extensions.md](exec-plans/active/coverage-extensions.md) | list rendering (ForEach/LazyForEach keys and sources) and R4 wiring kinds: kinds and PR sequence |
 
 ## Completed
 
 | Plan | About |
 |---|---|
+| [coverage-extensions.md](exec-plans/completed/coverage-extensions.md) | list rendering (ForEach/LazyForEach keys and sources) and R4 wiring kinds: the kinds and the PR per step |
 | [cross-file-facts.md](exec-plans/completed/cross-file-facts.md) | handoff: project index, cross-file R1 nested write, call-site edges (scan and per-struct search), R2 event unwired, the language server's lifecycle in the plugin (roadmap phase 2) |
 
 The dataset plans are in the private bench, `bench/docs/plans/`.

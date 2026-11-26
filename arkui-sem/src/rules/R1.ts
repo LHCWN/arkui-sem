@@ -431,7 +431,8 @@ function indexKeyCandidates(
  *  render. Of the source's own array only writes that move items count, and through a method or getter none that
  *  keeps the positions of an array it may return (an append), unless the source reorders that array or shows other
  *  items after it (`.concat(x)`) and the write adds or removes items; none in the other arm of an `if` that holds the
- *  loop, which runs while the loop is not shown, and switching back recreates it. The array a method or getter returns moves like the source's own. */
+ *  loop, which runs while the loop is not shown, and switching back recreates it. The array a method or getter
+ *  returns moves like the source's own. */
 function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): IndexShift[] {
   const field = component.fields.find((f) => f.name === name);
   if (

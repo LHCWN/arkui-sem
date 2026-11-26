@@ -50,6 +50,9 @@ export interface WriteFact {
    *  (`clear`: `[]`, `this.F.slice(0, 0)`). Even a sorted or reversed view of the array shows the same item at each
    *  position, or no rows. */
   keepsItems?: 'copy' | 'clear';
+  /** An object literal that spreads the old value (`this.F = { ...this.F, name: x }`): the properties it sets; the
+   *  others keep their values. */
+  sets?: string[];
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
   /** The write loads what the component starts with: in aboutToAppear or a helper only it calls, outside callbacks

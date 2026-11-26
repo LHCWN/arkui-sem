@@ -28,6 +28,11 @@ export function feedsRender(w: WriteFact): boolean {
 /** Array calls that leave every element at its position. */
 const KEEPS_POSITIONS = new Set(['push', 'pop']);
 
+/** A mutating array call that leaves every element at its position: `push`, `pop`. */
+export function keepsPositionsCall(call: string): boolean {
+  return KEEPS_POSITIONS.has(call);
+}
+
 /** The write of an array field may put other items at its existing positions: a reassignment other than an append,
  *  a clear or a cut, an index write, or a call that reorders, inserts or removes before the end. */
 export function moves(w: WriteFact): boolean {
@@ -35,7 +40,7 @@ export function moves(w: WriteFact): boolean {
   if (first === undefined) {
     return !w.keepsPositions;
   }
-  return isIndex(first) && below.length === 0 && !(w.call !== undefined && KEEPS_POSITIONS.has(w.call));
+  return isIndex(first) && below.length === 0 && !(w.call !== undefined && keepsPositionsCall(w.call));
 }
 
 /** Two places sit in different arms of one `if`, so they never exist at once. */

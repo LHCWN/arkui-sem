@@ -183,6 +183,34 @@ describe('foreach-index-key fires', () => {
     }
   });
 
+  test('a write of a holder above the array the source shows', () => {
+    const members =
+      "  @State trip: Trip = { id: 0, name: '', tags: [] }\n  @State state: { trip: Trip } = { trip: { id: 0, name: '', tags: [] } }\n  @State more: string[] = []";
+    const fires = [
+      ['this.state.trip.tags', "this.state.trip = { id: 1, name: 'b', tags: ['x'] }"],
+      ['this.trips[this.sel].tags', 'this.trips[0] = this.trip'],
+      ['this.trip.tags', 'this.trip = { ...this.trip, tags: this.trip.tags.slice().reverse() }'],
+    ];
+    for (const [source, write] of fires) {
+      const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+      assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
+    }
+    // Control: a holder array that keeps its positions, an object spread that leaves the array alone.
+    const quiet = [
+      ['this.trips[this.sel].tags.slice().reverse()', 'this.trips.push(this.trip)'],
+      ['this.trips[this.sel].tags.concat(this.more)', 'this.trips = [...this.trips, this.trip]'],
+      ['this.trip.tags', "this.trip = { ...this.trip, name: 'x' }"],
+      [
+        'this.state.trip.tags',
+        'this.state = { ...this.state }\n        this.state.trip = { ...this.state.trip, id: 2 }',
+      ],
+    ];
+    for (const [source, write] of quiet) {
+      const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+      assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
+    }
+  });
+
   test('a write in the other arm of an if inside an outer loop row: other rows take that arm', () => {
     const rows = (inner: string) => `      ForEach(this.trips, (g: Trip) => {
         if (g.id > 0) {

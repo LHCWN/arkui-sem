@@ -1,8 +1,8 @@
 # arkui-sem
 
 Semantic linting of ArkTS/ArkUI declarative state inside coding agents. A fact extractor finds candidate bugs
-(a field that is written and rendered but not reactive, a nested write the state decorator does not observe, a
-resource that is never released), and a small "System One" decision model (Cloudflare Clef, TypeSafe Jev, DeepSeek
+(a field that is written and rendered but not reactive, a nested write the state decorator does not observe, a list
+row that keeps stale content, an event or input wired one way only, a resource that is never released), and a small "System One" decision model (Cloudflare Clef, TypeSafe Jev, DeepSeek
 flash as System One, ...) judges each one. Confident verdicts go back to the agent as findings, uncertain ones as
 questions. It ships as an [opencode](https://opencode.ai) plugin and a CLI. **Prototype.**
 

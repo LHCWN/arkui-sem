@@ -39,7 +39,7 @@ flowchart LR
 
   subgraph ENGINE["Engine (one code path)"]
     FX["Facts<br/>fact extractor (ohos-typescript tree)"]
-    RU["Rules R1/R3 (→ R2, R4)"]
+    RU["Rules R1–R4"]
     SL["Slice builder<br/>(+ task context, opt-in)"]
     JU{{"Judge<br/>heuristic · Jev · Clef-flash · Laya-FT · DeepSeek"}}
     PO["Policy: finding ≥ τ_hi · question ≥ τ_lo"]

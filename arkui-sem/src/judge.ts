@@ -370,6 +370,8 @@ const FIELD_SLICE: Record<CandidateKind, 'intent' | 'state' | null> = {
   'event-unwired': null, // decided by the facts, never judged
   'foreach-key-stale': null, // decided by the facts; a `new T(…)` makes a question without a judge call
   'unreleased-resource': null,
+  'input-unbound': null, // decided by the facts
+  'input-never-read': null, // decided by the facts
 };
 
 /** extras: harness-supplied facts merged into the slice (for example an R2 parent call site). */

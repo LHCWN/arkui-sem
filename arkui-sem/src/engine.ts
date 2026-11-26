@@ -10,6 +10,7 @@ import type {
   Declaration,
   FieldFact,
   FileFacts,
+  InputFact,
   LoopFact,
   Project,
 } from './facts.js';
@@ -318,6 +319,45 @@ function rowKind(via: RowRead['via']): string {
   }
 }
 
+/** The inputs as the agent reads them: "TextInput at line 12", "TextInput and Search at lines 12 and 30". */
+function inputsText(inputs: InputFact[]): string {
+  const kinds = [...new Set(inputs.map((input) => input.kind))];
+  const named = kinds.length === 1 ? kinds[0] : `${kinds.slice(0, -1).join(', ')} and ${kinds[kinds.length - 1]}`;
+  return `${named} at ${lineList([...new Set(inputs.map((input) => input.line))])}`;
+}
+
+function describeInputUnbound(c: CandidateOf<'input-unbound'>): Description {
+  const name = c.field.name;
+  const [input] = c.inputs;
+  const option = input.kind === 'Search' ? 'value' : 'text';
+  // `$` replaces the onChange: offered only when the onChange does nothing but store the text, as typed, in this field.
+  const twoWay = c.inputs.every((i) => !i.effects && !i.normalizes && i.writes.every((w) => w.field === name));
+  const setters = [
+    ...new Set(
+      c.sets.map((write) =>
+        write.context === 'build-closure' ? `an event handler in ${write.method}()` : `${write.method}()`,
+      ),
+    ),
+  ];
+  return {
+    subject: `${c.component.name}.${name}`,
+    evidence: `the ${inputsText(c.inputs)} writes this.${name} on change but has no ${option} option, and ${setters.join(', ')} also set${setters.length === 1 ? 's' : ''} this.${name} (${lineList([...new Set(c.sets.map((write) => write.line))])}): the input never shows that value, so it stays empty or keeps the old typed text while the state holds another`,
+    fix: `bind it: ${input.kind}({ ${option}: this.${name}, … }) and keep the onChange${twoWay ? `, or ${input.kind}({ ${option}: $$this.${name} }) in place of the onChange` : ''}.`,
+  };
+}
+
+function describeInputNeverRead(c: CandidateOf<'input-never-read'>): Description {
+  const name = c.field.name;
+  // A handler method several inputs share joins each of them: compare lines, not counts.
+  const typed = new Set(c.inputs.flatMap((input) => input.writes.filter((w) => w.field === name).map((w) => w.line)));
+  const resets = c.field.writes.some((w) => !typed.has(w.line));
+  return {
+    subject: `${c.component.name}.${name}`,
+    evidence: `the ${inputsText(c.inputs)} writes this.${name} on every change${resets ? ', other code only resets it to a constant,' : ''} and nothing reads it: typing has no effect`,
+    fix: `use this.${name} where the input should act (filter the list by it, send it on submit), or remove the field and the onChange.`,
+  };
+}
+
 function describeUndecorated(c: CandidateOf<'undecorated-mutated-rendered'>): Description {
   const f = c.field;
   const writes = f.writes
@@ -399,6 +439,19 @@ const KINDS: { [K in CandidateKind]: KindSpec<CandidateOf<K>> } = {
     path: { judge: { questions: Q_R3, violation: 'leak_bug' } },
     describe: describeResource,
     ask: 'If it should be released',
+  },
+  'input-unbound': {
+    path: { facts: 'finding' },
+    describe: describeInputUnbound,
+    ask: 'If the input should show the value',
+    disableWhere: "above the input, or above the field's decorators",
+    related: (c) => c.sets.map((write) => ({ file: c.file, line: write.line })),
+  },
+  'input-never-read': {
+    path: { facts: 'question' },
+    describe: describeInputNeverRead,
+    ask: 'If the input should do something',
+    disableWhere: "above the field's decorators, or above the input",
   },
 };
 

@@ -3,6 +3,7 @@ import type {
   CallSite,
   ComponentFact,
   FieldFact,
+  InputFact,
   LoopFact,
   RebuiltElement,
   ResourceFact,
@@ -10,7 +11,7 @@ import type {
 } from '../facts.js';
 import type { RowRead } from '../queries.js';
 
-export type RuleId = 'R1' | 'R2' | 'R3';
+export type RuleId = 'R1' | 'R2' | 'R3' | 'R4';
 
 /** A candidate of each kind, keyed by kind: the facts its rule found. */
 export type Candidate =
@@ -19,7 +20,9 @@ export type Candidate =
   | ForEachKeyStaleCandidate
   | FieldCandidateBase<'R2', 'ownership-intent'> // passed-in field; candidates() does not emit it (callers build it)
   | EventUnwiredCandidate
-  | ResourceCandidate;
+  | ResourceCandidate
+  | InputUnboundCandidate
+  | InputNeverReadCandidate;
 
 export type CandidateKind = Candidate['kind'];
 export type CandidateOf<K extends CandidateKind> = Extract<Candidate, { kind: K }>;
@@ -80,6 +83,20 @@ export interface EventUnwiredCandidate extends FieldCandidateBase<'R2', 'event-u
 /** R3: acquired in a lifecycle hook, no matching release. */
 export interface ResourceCandidate extends CandidateBase<'R3', 'unreleased-resource'> {
   resource: ResourceFact;
+}
+
+/** R4: a field typing writes, which code also sets to a value, shown by no input: the input never shows that value. */
+export interface InputUnboundCandidate extends FieldCandidateBase<'R4', 'input-unbound'> {
+  /** The unbound inputs whose onChange writes the field. */
+  inputs: InputFact[];
+  /** The writes that set another value, in source order. */
+  sets: WriteFact[];
+}
+
+/** R4: a field typing writes that nothing reads: the input has no effect. */
+export interface InputNeverReadCandidate extends FieldCandidateBase<'R4', 'input-never-read'> {
+  /** The inputs whose onChange writes the field. */
+  inputs: InputFact[];
 }
 
 /** Why V2 misses a write: its owner is a plain class, a plain object type (interface or object type alias), an object

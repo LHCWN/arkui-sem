@@ -36,8 +36,9 @@ export interface WriteFact {
   method: string;
   /** Path below the field for in-place mutation (see pathText); absent for reassignment. */
   path?: PathSegment[];
-  /** For an assignment (`=`, compound or update), what the assigned value is. */
-  value?: 'object-literal' | 'new' | 'other';
+  /** For an assignment (`=`, compound or update), what the assigned value is. constant: a string, number or boolean
+   *  literal, `null` or `undefined` (a reset such as `this.query = ''`). */
+  value?: 'object-literal' | 'new' | 'constant' | 'other';
   /** The new value depends on the old one: `++`, `+=`, `this.f = g(this.f)`, a mutating call. */
   accumulates?: true;
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
@@ -82,6 +83,9 @@ export interface FieldFact {
   /** An object-literal initializer. */
   literal?: ObjectLiteralFact;
   buildReads: BuildRead[];
+  /** Every read in the component's code: any method, getter or handler, another field's initializer, and two-way
+   *  bindings (`$$this.f`). */
+  reads: FieldRead[];
   writes: WriteFact[];
   /** Where the component calls the field as a function (`this.f(…)`): a callback it invokes. */
   calls: CallbackCall[];
@@ -89,6 +93,12 @@ export interface FieldFact {
    *  clock (`Date.now()`, `performance.now()`, `new Date()`) or starts a timer inside a larger expression. */
   timeValue?: 'timer' | 'clock';
   disabledRules: string[];
+}
+
+export interface FieldRead {
+  line: number;
+  /** The method, getter or handler; for a field initializer, that field's name. */
+  method: string;
 }
 
 export interface CallbackCall {
@@ -142,6 +152,32 @@ export interface ComponentFact {
   loops: LoopFact[];
   /** The struct's @Builder and @LocalBuilder methods. */
   builders: BuilderFact[];
+  /** Text inputs in the methods that draw the UI, in source order. */
+  inputs: InputFact[];
+  /** The code uses `this` as a value (`save(this)`, `const { a } = this`, `this['a']`), so it may read any field without
+   *  a `this.f` access; `getContext(this)` and `f.bind(this)` don't count. */
+  thisEscapes?: true;
+}
+
+/** A TextInput, TextArea or Search call: `TextInput({ text: this.name }).onChange((value) => { this.name = value })`. */
+export interface InputFact {
+  kind: 'TextInput' | 'TextArea' | 'Search';
+  line: number;
+  method: string;
+  /** The text option (`value` for Search). none: absent. field: `this.f`, `$$this.f` or `this.f!!` (twoWay). other:
+   *  any other expression, or options that can't be read (`TextInput(this.options)`, a spread). */
+  binding: { kind: 'none' } | { kind: 'field'; field: string; twoWay: boolean } | { kind: 'other' };
+  /** Whole-field assignments of the typed text, possibly normalized (`this.f = value`, `this.f = value.trim()`, not
+   *  `this.valid = value.length > 0`), in its onChange, or in a component method the onChange hands the text to
+   *  (`this.setName(value)`) or passes (`.onChange(this.setName)`) that nothing else uses. */
+  writes: { field: string; line: number }[];
+  /** The onChange does more than store the typed text: a statement other than those writes, calls that hand the text
+   *  to a handler method and `console` calls; a handler method that does more, hands the text on again or that other
+   *  code uses; a handler that can't be read. */
+  effects: boolean;
+  /** A typed write stores the text normalized (`value.trim()`), here or in a handler method it joins. */
+  normalizes: boolean;
+  disabledRules: string[];
 }
 
 /** A ForEach or LazyForEach call: `ForEach(source, (item, index) => row, (item, index) => key)`. */

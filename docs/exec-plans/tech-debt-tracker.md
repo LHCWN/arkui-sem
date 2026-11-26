@@ -19,6 +19,34 @@
   the first load counts as before the first render, also one after an await over a field that starts with items
   (`= ['a', 'b']`), whose rows then keep the old items. A source reorders the array (an append moves its items) only
   through a sort, reverse or cut from the end written in its chain or a helper's `return`, not through a local.
+- `foreach-index-key` (R1), source shapes. A source is read by its syntax only; these rarer shapes are left as they are:
+  - A condition that reads the array it picks (`this.a.length > 0 ? this.a : this.b`): an append to `a`, or a clear
+    (`this.a = []`, `pop`), switches to the other arm at the same positions, and goes quiet.
+  - A holder picked through a call (`this.trips.filter(…)[0].tags`): the path to the array starts after the call, so a
+    write of `this.trips[i].tags` goes quiet.
+  - Indexes in a path match whatever their text: `this.trips[0].tags.sort()` fires for a loop over
+    `this.trips[this.sel].tags` even when `sel` is never 0.
+  - A source that is an element of an array (`this.matrix[this.sel]`): `push` or `pop` on the outer array counts as a
+    move of the shown one and fires.
+  - An array literal of several items (`[...this.a, ...this.b]`, `[...this.a, 'footer']`) has no root: written in
+    place, any write of `a` fires, a copy too, and a move in a method is a finding, not a question; returned by a
+    method or getter, an append to `a` goes quiet.
+  - The tail of a `.concat(…)` is taken to appear once, at the end: an append to it goes quiet when the field also
+    comes earlier (`this.a.concat(this.a)`) or feeds the items before it (a filter reading it); it fires when a reorder
+    comes before the concat (`this.a.slice().reverse().concat(this.b)`); a move of it in a method is a finding, not a
+    question. A field that ends one arm and is shown alone in another (`c ? this.a.concat(this.b) : this.b`) counts as
+    an array with items after it, so an append to `b` fires.
+  - What a source shows is read one helper deep: a getter that returns another helper, or a derived source over a
+    helper call (`this.visible().slice().reverse()`), has no shown arrays, reorders or window ends. An append under a
+    reversing helper goes quiet; a copy, or a change of a window's bound, fires; a move in a method is a finding, not
+    a question.
+  - A write keeps an array's positions only when it names the array as the source does: `this.trip!.tags =
+    [...this.trip.tags, x]` and other spellings count as a move and fire.
+  - An object spread keeps the array only as `{ ...this.F, p: x }` with plain property names; `Object.assign`, another
+    spread or a computed name counts as replacing the holder and fires.
+  - A `null` write shows a fallback (`this.F ?? this.other`) when any `??` or `||` in the source, or in the method or
+    getter it calls, has `this.F` on its left, including one that doesn't decide what the source returns.
+  - `&&` is not split into arms (`this.ready && this.a`).
 - R4 input kinds are V1 only and see whole-field writes of the typed text (`this.f = value`), in the onChange or one
   method only inputs use and the onChange hands the text to: a path write (`this.form.name = value`) is not followed,
   and a helper that hands the text on again counts as an effect. Typed writes are matched to the field's writes by

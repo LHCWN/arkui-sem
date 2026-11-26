@@ -131,6 +131,32 @@ describe('foreach-index-key fires', () => {
     }
   });
 
+  test('a change to the length of an array other items follow (`.concat(x)`), a clear too', () => {
+    const more = '  @State more: string[] = []';
+    const visible = `${more}\n  get visible(): string[] {\n    return this.names.concat(this.more)\n  }`;
+    for (const write of [
+      "this.names.push('x')",
+      'this.names.pop()',
+      "this.names = [...this.names, 'x']",
+      'this.names = this.names.slice(0, 2)',
+      'this.names = []',
+    ]) {
+      for (const [members, source] of [
+        [more, 'this.names.concat(this.more)'],
+        ['', "this.names.concat(['footer'])"],
+        [visible, 'this.visible'],
+      ]) {
+        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
+      }
+    }
+    // Control: a copy keeps every item at its position.
+    for (const write of ['this.names = [...this.names]', 'this.names = this.names.slice()']) {
+      const src = page('', `      Button('a').onClick(() => { ${write} })\n${loop("this.names.concat(['footer'])")}`);
+      assert.deepEqual(indexKeyed(src), [], write);
+    }
+  });
+
   test('a write in the other arm of an if inside an outer loop row: other rows take that arm', () => {
     const rows = (inner: string) => `      ForEach(this.trips, (g: Trip) => {
         if (g.id > 0) {

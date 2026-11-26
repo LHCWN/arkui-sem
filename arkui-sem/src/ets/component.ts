@@ -582,7 +582,7 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
     ...(callName === undefined ? {} : { call: callName }),
     ...(assignment && segments.length === 0 && keepsPositions(assignment, field.name) ? { keepsPositions: true } : {}),
-    ...(assignment && segments.length === 0 && keepsItems(assignment, field.name) ? { keepsItems: true } : {}),
+    ...(assignment && segments.length === 0 ? keptItems(assignment, field.name) : {}),
     ...(ctx.arms
       ? { branches: [...ctx.arms, ...(ctx.ownArms ? branchesOf(base, ctx.method.body, ctx.scan.sf) : [])] }
       : {}),
@@ -624,29 +624,36 @@ function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean
   return (method === 'concat' || fromStart) && thisMember(unwrap(value.expression.expression)) === field;
 }
 
-/** `this.F = []`, `[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.slice(0, 0)` or `this.F.concat()`: the
- *  same items or none. */
-function keepsItems(assignment: ts.BinaryExpression, field: string): boolean {
+/** The same items (`[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.concat()`) or none (`[]`,
+ *  `this.F.slice(0, 0)`). */
+function keptItems(assignment: ts.BinaryExpression, field: string): Pick<WriteFact, 'keepsItems'> {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
-    return false;
+    return {};
   }
   const value = unwrap(assignment.right);
   if (ts.isArrayLiteralExpression(value)) {
     const [first, ...rest] = value.elements;
-    return (
-      first === undefined ||
-      (rest.length === 0 && ts.isSpreadElement(first) && thisMember(unwrap(first.expression)) === field)
-    );
+    if (first === undefined) {
+      return { keepsItems: 'clear' };
+    }
+    const copy = rest.length === 0 && ts.isSpreadElement(first) && thisMember(unwrap(first.expression)) === field;
+    return copy ? { keepsItems: 'copy' } : {};
   }
-  if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
-    return false;
+  if (
+    !(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)) ||
+    thisMember(unwrap(value.expression.expression)) !== field
+  ) {
+    return {};
   }
   const method = value.expression.name.text;
   const args = value.arguments;
+  if (method === 'slice' && args.length === 2 && isZero(args[0]) && isZero(args[1])) {
+    return { keepsItems: 'clear' };
+  }
   const copy =
     (method === 'concat' && args.length === 0) ||
-    (method === 'slice' && (args.length === 0 || (isZero(args[0]) && (args.length === 1 || isZero(args[1])))));
-  return copy && thisMember(unwrap(value.expression.expression)) === field;
+    (method === 'slice' && (args.length === 0 || (args.length === 1 && isZero(args[0]))));
+  return copy ? { keepsItems: 'copy' } : {};
 }
 
 /** What an assignment assigns: an object literal, a `new` instance, a constant, or anything else (compound and update

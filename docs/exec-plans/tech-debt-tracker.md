@@ -32,24 +32,21 @@
   - An array below a holder (`this.trip.tags`, `this.trips[this.sel].tags`) is judged by the holder field: a
     reassignment of the holder fires, an object spread that keeps the array too (`{ ...this.trip, name: x }`); a write
     below it (`this.trip.tags.sort()`, `this.trips[0].tags = …`) goes quiet.
-  - A conditional between two fields (`c ? this.a : this.b`, `this.a.length > 0 ? this.a : this.b`) and a fallback
-    (`this.F ?? []`, `this.F || []`) have no root. Written in place, any whole-array or index write of a field fires,
-    an append too; returned by a method or getter, an append or a clear goes quiet. A `null` or `undefined` write
-    counts as a reassignment and fires.
-  - Other items after the array: under `this.a.concat(this.b)` written in place, an append or a clear of `a` goes
-    quiet though it moves the items of `b`, and an append to `b` fires. An array literal (`[...this.a, ...this.b]`) has
-    no root: any whole-array write of either fires, an append too. Returned by a method or getter, an append to either
-    goes quiet.
+  - A source with no single root field: a conditional between two fields (`c ? this.a : this.b`), a fallback
+    (`this.F ?? []`), an array literal of several items (`[...this.a, ...this.b]`), a source over a helper call
+    (`this.visible().slice().reverse()`) or a getter that returns another helper. Its fields count as a selection:
+    written in place, a write of a field or one level below it fires, an append too; through a method or getter, a
+    write that keeps positions (append, clear, copy) goes quiet. The rules for every source still apply: under a
+    reorder an append fires, and a `.slice(0, n)` bound never counts. A move in a method is a finding, not a question.
+    A `null` or `undefined` write counts as a reassignment.
+  - Under `this.a.concat(this.b)` written in place, an append or a clear of `a` goes quiet though it moves the items
+    of `b`, and an append to `b` fires.
   - The bound of a `.slice(0, n)` counts as a window end anywhere in the chain: under a later reorder or concat
     (`this.F.slice(0, this.n).reverse()`), a change of `n` goes quiet.
   - The `if` arms around the loop exclude a write in the other arm also inside an outer loop row, a @Builder called
     more than once or a `Repeat` row, where another row or call takes that arm at the same time: it goes quiet. The
     same holds for `lazyforeach-source-rebuilt`, which shares the arms. Reads in a `Repeat(…).each` or `.template` row
     are not marked as inside a loop (`inForEach`), as before #37.
-  - What a source shows is read one helper deep: a getter that returns another helper, or a derived source over a
-    helper call (`this.visible().slice().reverse()`), has no root, reorders or window ends. An append under a
-    reversing helper goes quiet; a copy, or a change of a window's bound, fires; a move in a method is a finding, not
-    a question.
   - `&&` is not split into arms (`this.ready && this.a`).
 - R4 input kinds are V1 only and see whole-field writes of the typed text (`this.f = value`), in the onChange or one
   method only inputs use and the onChange hands the text to: a path write (`this.form.name = value`) is not followed,

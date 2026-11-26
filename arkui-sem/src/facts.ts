@@ -46,9 +46,10 @@ export interface WriteFact {
   /** An assignment that puts no other item at an existing position: an append (`[...this.F, x]`, `this.F.concat(x)`), a
    *  clear (`[]`) or a cut from the start (`this.F.slice(0, n)`). */
   keepsPositions?: true;
-  /** Of those, one that keeps the same items or none: a copy (`[...this.F]`, `this.F.slice()`, `this.F.concat()`) or a
-   *  clear (`[]`). Even a sorted or reversed view of the array shows the same item at each position, or no rows. */
-  keepsItems?: true;
+  /** Of those, one that keeps the same items (`copy`: `[...this.F]`, `this.F.slice()`, `this.F.concat()`) or none
+   *  (`clear`: `[]`, `this.F.slice(0, 0)`). Even a sorted or reversed view of the array shows the same item at each
+   *  position, or no rows. */
+  keepsItems?: 'copy' | 'clear';
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
   /** The write loads what the component starts with: in aboutToAppear or a helper only it calls, outside callbacks
@@ -240,6 +241,13 @@ export interface LoopSource {
   /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`); for a conditional, the
    *  field each arm that shows an array starts from (`this.ready ? this.F : []`). */
   root?: string;
+  /** The path from root to the array the source shows, when the accesses sit on the field before any call
+   *  (`.tags` in `this.F.tags.filter(…)`, `[i].tags` in `this.F[this.sel].tags`): writes below it move the array,
+   *  others beside it (`this.F.name`) don't. */
+  rootPath?: PathSegment[];
+  /** The fields whose arrays the arms of a conditional or fallback show when they start from several
+   *  (`this.show ? this.A : this.B`): a write that keeps the positions of one keeps those of the rows. */
+  shows?: string[];
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
    *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
   itemsOf?: string;
@@ -253,6 +261,9 @@ export interface LoopSource {
   /** The source, or what the method or getter it calls returns, sorts or reverses an array or cuts it from the end
    *  (`.reverse()`, `.slice(-n)`): an append moves the items at a position too. */
   reorders?: true;
+  /** The source, or what the method or getter it calls returns, shows other items after an array's
+   *  (`this.F.concat(this.more)`): any change to that array's length, a clear too, moves them. */
+  appends?: true;
   /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
    *  own array it shows. */
   returnsFrom?: string;

@@ -207,6 +207,16 @@ function componentOf(
   return decl && component && { decl, component };
 }
 
+/** The field `name` of the struct a component use creates; undefined when the struct or field can't be found. */
+export function childField(
+  child: string,
+  name: string,
+  facts: FileFacts,
+  resolver: ClassResolver | undefined,
+): FieldFact | undefined {
+  return componentOf(child, facts, resolver)?.component.fields.find((f) => f.name === name);
+}
+
 /** The builder a pass gives the value to, the parameter that receives it, where the builder's own uses resolve, and a
  *  key that names the builder across files. */
 function passTarget(

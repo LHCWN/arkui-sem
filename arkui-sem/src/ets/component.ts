@@ -27,6 +27,8 @@ import {
   expressionName,
   hasModifier,
   isAssignment,
+  isDollarThis,
+  isDoubleBang,
   isFunction,
   isNullish,
   isZero,
@@ -214,8 +216,11 @@ function initializerAccesses(
     }
     const visit = (n: ts.Node) => {
       const field = fields.get(thisMember(n) ?? '');
-      if (field) {
+      if (field && ts.isPropertyAccessExpression(n)) {
         field.reads.push({ line: scan.line(n), method: owner });
+        if (accessShape(n, scan.sf).writes) {
+          field.initializerWrites.push(scan.line(n));
+        }
       }
       escapes ||= thisEscapes(n);
       ts.forEachChild(n, visit);
@@ -321,6 +326,8 @@ function fieldFact(m: ts.PropertyDeclaration, name: string, scan: FileScan): Fie
     buildReads: [],
     reads: [],
     writes: [],
+    boundTwoWay: [],
+    initializerWrites: [],
     calls: [],
     timeValue: timeValue(m.initializer),
     // The disable comment may sit above the decorators or directly above the field name.
@@ -529,15 +536,15 @@ interface AccessContext {
   initCalls: Map<string, string>;
 }
 
-/** One `this.<field>…` access: the path below the field, then whether it writes (assignment, update, mutating call). */
-function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: AccessContext) {
-  const { top, path: segments } = pathBelow(base, ctx.scan.sf, ts.isNonNullExpression);
+/** A `this.<field>…` access: the path below the field, and the assignment, update or mutating call that writes
+ *  through it, if any. */
+function accessShape(base: ts.PropertyAccessExpression, sf: ts.SourceFile) {
+  const { top, path: segments } = pathBelow(base, sf, ts.isNonNullExpression);
   const parent = top.parent;
   const last = segments.at(-1);
   const called = ts.isCallExpression(parent) && parent.expression === top;
   const callName =
     called && last !== undefined && 'prop' in last && MUTATING_CALLS.has(last.prop) ? last.prop : undefined;
-  const mutatingCall = callName !== undefined;
   const assignment =
     ts.isBinaryExpression(parent) && parent.left === top && isAssignment(parent.operatorToken.kind)
       ? parent
@@ -545,8 +552,16 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
   const updated =
     (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
     (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken);
+  const writes = callName !== undefined || assignment !== undefined || updated;
+  return { top, segments, parent, called, callName, assignment, updated, writes };
+}
+
+/** One `this.<field>…` access: a read, or a write (assignment, update, mutating call). */
+function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: AccessContext) {
+  const { top, segments, parent, called, callName, assignment, updated } = accessShape(base, ctx.scan.sf);
+  const mutatingCall = callName !== undefined;
   const line = ctx.scan.line(base);
-  if (segments.length === 0 && called) {
+  if (segments.length === 0 && called && ts.isCallExpression(parent)) {
     ctx.calls.push({ field, call: { line, checked: parent.questionDotToken !== undefined } });
   } else if (segments.length === 0 && !assignment) {
     ctx.tested.add(field);
@@ -557,6 +572,9 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
   }
   const where = climb(base, ctx.method.body, ctx.builders);
   if (!mutatingCall && !assignment && !updated) {
+    if (isDollarThis(base.expression) || isDoubleBang(top)) {
+      field.boundTwoWay.push(line);
+    }
     field.reads.push({ line, method: ctx.method.name });
     if (ctx.drawn) {
       field.buildReads.push({

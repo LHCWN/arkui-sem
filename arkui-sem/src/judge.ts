@@ -374,6 +374,7 @@ const FIELD_SLICE: Record<CandidateKind, 'intent' | 'state' | null> = {
   'unreleased-resource': null,
   'input-unbound': null, // decided by the facts
   'input-never-read': null, // decided by the facts
+  'selection-never-written': null, // decided by the facts
 };
 
 /** extras: harness-supplied facts merged into the slice (for example an R2 parent call site). */

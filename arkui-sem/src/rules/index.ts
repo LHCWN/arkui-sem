@@ -22,6 +22,6 @@ export function candidates(facts: FileFacts, resolver?: ClassResolver): Candidat
   return facts.components.flatMap((c) => [
     ...r1Candidates(c, facts, resolver),
     ...r3Candidates(c, facts),
-    ...r4Candidates(c, facts),
+    ...r4Candidates(c, facts, resolver),
   ]);
 }

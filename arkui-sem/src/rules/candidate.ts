@@ -4,6 +4,7 @@ import type {
   ComponentFact,
   FieldFact,
   InputFact,
+  LoopComparison,
   LoopFact,
   RebuiltElement,
   ResourceFact,
@@ -24,7 +25,8 @@ export type Candidate =
   | EventUnwiredCandidate
   | ResourceCandidate
   | InputUnboundCandidate
-  | InputNeverReadCandidate;
+  | InputNeverReadCandidate
+  | SelectionNeverWrittenCandidate;
 
 export type CandidateKind = Candidate['kind'];
 export type CandidateOf<K extends CandidateKind> = Extract<Candidate, { kind: K }>;
@@ -134,6 +136,13 @@ export interface InputUnboundCandidate extends FieldCandidateBase<'R4', 'input-u
 export interface InputNeverReadCandidate extends FieldCandidateBase<'R4', 'input-never-read'> {
   /** The inputs whose onChange writes the field. */
   inputs: InputFact[];
+}
+
+/** R4: rows compare a field with their item or index, and nothing sets it: no row is ever selected, or always the
+ *  first. */
+export interface SelectionNeverWrittenCandidate extends FieldCandidateBase<'R4', 'selection-never-written'> {
+  /** The rows' comparisons of the field, in source order. */
+  comparisons: LoopComparison[];
 }
 
 /** Why V2 misses a write: its owner is a plain class, a plain object type (interface or object type alias), an object

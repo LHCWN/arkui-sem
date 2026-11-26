@@ -1,12 +1,16 @@
 // R4, state that doesn't do its job: a text input wired to its field in one direction only (input-unbound,
-// input-never-read).
-import type { ComponentFact, FieldFact, FileFacts, InputFact, WriteFact } from '../facts.js';
-import { renderingReads } from '../queries.js';
+// input-never-read), a selection the rows compare against that nothing sets (selection-never-written).
+import type { ClassResolver, ComponentFact, FieldFact, FileFacts, InputFact, WriteFact } from '../facts.js';
+import { childField, renderingReads } from '../queries.js';
 import { type Candidate, fingerprint } from './candidate.js';
+
+export function r4Candidates(c: ComponentFact, facts: FileFacts, resolver?: ClassResolver): Candidate[] {
+  return [...inputCandidates(c, facts), ...selectionCandidates(c, facts, resolver)];
+}
 
 /** Inputs write the field on each change while no input shows it. Owned V1 state only: a @Link or @Prop field is
  *  shown or read by its parent, and a @Watch callback runs on every write. */
-export function r4Candidates(c: ComponentFact, facts: FileFacts): Candidate[] {
+function inputCandidates(c: ComponentFact, facts: FileFacts): Candidate[] {
   if (c.version !== 'V1') {
     return [];
   }
@@ -48,6 +52,64 @@ export function r4Candidates(c: ComponentFact, facts: FileFacts): Candidate[] {
   });
 }
 
+/** Rows compare the field with their item or index, and nothing ever sets it: no write in any method, hook or
+ *  handler, no two-way binding, no child that may write it, no `this` the code hands on. Owned V1 state only. */
+function selectionCandidates(c: ComponentFact, facts: FileFacts, resolver: ClassResolver | undefined): Candidate[] {
+  if (c.version !== 'V1' || c.thisEscapes) {
+    return [];
+  }
+  return c.fields.flatMap((field): Candidate[] => {
+    const comparisons = c.loops.flatMap((loop) => loop.comparisons.filter((cmp) => cmp.field === field.name));
+    if (
+      comparisons.length === 0 ||
+      !isOwnedState(field) ||
+      field.disabledRules.includes('R4') ||
+      field.writes.length > 0 ||
+      field.initializerWrites.length > 0 ||
+      field.boundTwoWay.length > 0 ||
+      childMayWrite(field, c, facts, resolver)
+    ) {
+      return [];
+    }
+    return [
+      {
+        rule: 'R4',
+        kind: 'selection-never-written',
+        file: facts.file,
+        component: c,
+        field,
+        line: field.line,
+        comparisons,
+        fingerprint: fingerprint(facts.file, `${c.name}.${field.name}`, 'R4-selection-never-written'),
+      },
+    ];
+  });
+}
+
+/** The component passes the field to a child that may write it: `$f`, or `this.f` to a @Link; a child that can't be
+ *  found counts as one. `this.f!!` is in boundTwoWay. */
+function childMayWrite(
+  field: FieldFact,
+  c: ComponentFact,
+  facts: FileFacts,
+  resolver: ClassResolver | undefined,
+): boolean {
+  return facts.componentUses.some(
+    (use) =>
+      use.parent === c.name &&
+      use.args.some((arg) => {
+        if (arg.source !== field.name) {
+          return false;
+        }
+        if (arg.form !== 'this.x') {
+          return arg.form === '$x';
+        }
+        const target = childField(use.child, arg.field, facts, resolver);
+        return target === undefined || target.decorators.includes('@Link');
+      }),
+  );
+}
+
 function isOwnedState(field: FieldFact): boolean {
   return field.decorators.includes('@State') && !field.decorators.includes('@Watch');
 }
@@ -84,7 +146,7 @@ function hasNoEffect(input: InputFact, c: ComponentFact, facts: FileFacts): bool
 /** No read in the component's code, no `$f` to a child, and no `this` the code hands on. */
 function neverRead(field: FieldFact, c: ComponentFact, facts: FileFacts): boolean {
   const passed = facts.componentUses.some(
-    (use) => use.parent === c.name && use.args.some((arg) => arg.form === '$x' && arg.text === `$${field.name}`),
+    (use) => use.parent === c.name && use.args.some((arg) => arg.form === '$x' && arg.source === field.name),
   );
   return field.reads.length === 0 && !passed && !c.thisEscapes;
 }

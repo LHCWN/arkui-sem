@@ -109,6 +109,12 @@ export interface FieldFact {
    *  bindings (`$$this.f`). */
   reads: FieldRead[];
   writes: WriteFact[];
+  /** Lines where a component or child is bound two-way to the field or a path below it (`$$this.f`, `this.f!!`): it
+   *  may write the field, though no code here does. */
+  boundTwoWay: number[];
+  /** Lines of writes in callbacks another field's initializer sets up (`new Options().onChange((i) => { this.f = i })`),
+   *  which `writes` leaves out; `reads` lists them too. */
+  initializerWrites: number[];
   /** Where the component calls the field as a function (`this.f(…)`): a callback it invokes. */
   calls: CallbackCall[];
   /** timer: the initializer or an assigned value is a timer id (`setTimeout(…)`, `setInterval(…)`); clock: one reads a
@@ -221,10 +227,23 @@ export interface LoopFact {
   row: ValueUses;
   /** The components the row creates outside handlers (`TextInput`, `Child`), by name. */
   creates: string[];
+  /** Equality tests in the row, outside handlers, of a field against the item, a path below it or the index. */
+  comparisons: LoopComparison[];
   /** The `if` arms of build() the loop runs in, through the @Builders that reach it, outermost first: switching arms
    *  recreates the loop. */
   branches: Branch[];
   disabledRules: string[];
+}
+
+/** `this.F === index`, `item.id !== this.F` (any of `===`, `!==`, `==`, `!=`). */
+export interface LoopComparison {
+  field: string;
+  line: number;
+  against: 'item' | 'index';
+  /** The item or index side, without parentheses or casts (`index`, `item.id`), on one line. */
+  operand: string;
+  /** The comparison as written, on one line. */
+  text: string;
 }
 
 /** One arm of an `if` statement; `at` is the statement's offset in the file. */
@@ -408,6 +427,8 @@ export interface ComponentArgument {
   form: ArgumentForm;
   /** The expression as written, on one line. */
   text: string;
+  /** The parent's field passed as a whole (`F` in `$F`, `this.F`, `this.F!!`). */
+  source?: string;
 }
 
 /** `Child({ … })` in a build(), @Builder or @LocalBuilder body or a field initializer, and a dialog controller's

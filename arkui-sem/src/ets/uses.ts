@@ -4,7 +4,16 @@ import type { ArgumentForm, ComponentArgument, ComponentUse } from '../facts.js'
 import { methodsOf, rendersUi } from './component.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
-import { decoratorNames, isFunction, isThis, isWrapper, memberName, thisMember, unwrap } from './syntax.js';
+import {
+  decoratorNames,
+  isDoubleBang,
+  isFunction,
+  isThis,
+  isWrapper,
+  memberName,
+  thisMember,
+  unwrap,
+} from './syntax.js';
 
 const DIALOG_BUILDER = 'builder';
 
@@ -89,14 +98,23 @@ function argumentValue(
   p: ts.ObjectLiteralElementLike,
   methods: Set<string>,
   scan: FileScan,
-): Pick<ComponentArgument, 'form' | 'text'> {
-  if (ts.isPropertyAssignment(p)) {
-    return { form: formOf(p.initializer, methods), text: scan.text(p.initializer) };
-  }
-  if (ts.isShorthandPropertyAssignment(p)) {
-    return { form: formOf(p.name, methods), text: scan.text(p.name) };
+): Pick<ComponentArgument, 'form' | 'text' | 'source'> {
+  const value = ts.isPropertyAssignment(p) ? p.initializer : ts.isShorthandPropertyAssignment(p) ? p.name : undefined;
+  if (value !== undefined) {
+    const form = formOf(value, methods);
+    const source = sourceField(value, form);
+    return { form, text: scan.text(value), ...(source === undefined ? {} : { source }) };
   }
   return { form: ts.isMethodDeclaration(p) ? 'callback' : 'other', text: scan.text(p) };
+}
+
+/** The parent's field an argument passes as a whole: `F` in `$F`, `this.F`, `this.F!!`. */
+function sourceField(value: ts.Expression, form: ArgumentForm): string | undefined {
+  const e = unwrap(value);
+  if (form === '$x' && ts.isIdentifier(e)) {
+    return e.text.slice(1);
+  }
+  return form === 'this.x' || form === 'this.x!!' ? thisMember(e) : undefined;
 }
 
 function formOf(value: ts.Expression, methods: Set<string>): ArgumentForm {
@@ -118,17 +136,9 @@ function formOf(value: ts.Expression, methods: Set<string>): ArgumentForm {
     if (methods.has(member)) {
       return 'callback';
     }
-    return isTwoWay(value) ? 'this.x!!' : 'this.x';
+    return isDoubleBang(value) ? 'this.x!!' : 'this.x';
   }
   return isPathBelowThis(e) ? 'this.x.y' : 'other';
-}
-
-/** `x!!`, under any parentheses: V2 two-way binding sugar. */
-function isTwoWay(value: ts.Expression): boolean {
-  const skipParens = (e: ts.Expression): ts.Expression =>
-    ts.isParenthesizedExpression(e) ? skipParens(e.expression) : e;
-  const outer = skipParens(value);
-  return ts.isNonNullExpression(outer) && ts.isNonNullExpression(skipParens(outer.expression));
 }
 
 function isLiteral(e: ts.Expression): boolean {

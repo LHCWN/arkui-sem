@@ -94,7 +94,22 @@ export function isWrapper(
 
 export function isThis(e: ts.Expression): boolean {
   // `$$this.x` is ArkTS two-way binding syntax for `this.x`.
-  return e.kind === ts.SyntaxKind.ThisKeyword || (ts.isIdentifier(e) && e.text === '$$this');
+  return e.kind === ts.SyntaxKind.ThisKeyword || isDollarThis(e);
+}
+
+/** `x!!`, under any parentheses: V2 two-way binding sugar. */
+export function isDoubleBang(value: ts.Expression): boolean {
+  const outer = skipParentheses(value);
+  return ts.isNonNullExpression(outer) && ts.isNonNullExpression(skipParentheses(outer.expression));
+}
+
+/** `$$this.x`: two-way binding of a component's state to a built-in component. */
+export function isDollarThis(e: ts.Expression): boolean {
+  return ts.isIdentifier(e) && e.text === '$$this';
+}
+
+export function skipParentheses(e: ts.Expression): ts.Expression {
+  return ts.isParenthesizedExpression(e) ? skipParentheses(e.expression) : e;
 }
 
 /** `this.<name>` with name an identifier: the member it accesses. */

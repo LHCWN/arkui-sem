@@ -62,6 +62,13 @@
   onChange that isn't the text (`value.slice(0, -1) + '*'`) counts as code setting it, so the finding says another
   handler sets the field. A constant set by code (`this.title = 'Untitled'`) counts as a reset, so an input that never
   shows it is not asked about; a field rendered anywhere is not asked about either.
+- `selection-never-written` (R4) is V1 only and sees comparisons written in the ForEach/LazyForEach row itself: rows
+  drawn by a `@Builder` (`this.Cell(item, index)`) and comparisons with a converted index (`index.toString()`,
+  `String(index)`) are not followed. A write in a `set` accessor is not recorded, so a field set only through a setter
+  fires. `(this.f)!!` is not recorded as a two-way binding.
+- Writes in callbacks another field's initializer registers (`new Options().onChange((i) => { this.f = i })`) are
+  kept apart (`FieldFact.initializerWrites`) and also listed as reads; only `selection-never-written` reads them, so
+  the other kinds miss these writes.
 - The judge fallback chain is decided but not implemented (`docs/design-docs/decisions.md`).
 - The fact extractor reads one file's syntax tree, with no type checker: types come from annotations and `new X(…)` initializers, and writes through an alias (`const self = this; self.x = …`) are missed. Typed values from the ohos-typescript checker are planned (`docs/exec-plans/completed/cross-file-facts.md`, PR 2b); aliasing needs dataflow.
 - The project index caches facts by mtime only (an edit within the same mtime tick, or a tool that keeps mtimes, serves

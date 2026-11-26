@@ -54,7 +54,11 @@ evaluates each PR on its committed tree (regression over recorded agent sessions
   state change redraws the source, else a question); loop sources gain the field a getter returns as is, write facts
   mark a reassignment that repeats the initializer's call. The empty-`registerDataChangeListener` evidence clause was
   left out (tech-debt tracker).
-- Steps 6–7: not started.
+- Step 6: done (branch `selection-never-written`, stacked on #38): `selection-never-written` (a question); loop facts
+  gain the row's comparisons of a field with the item or index, field facts gain two-way bindings (`$$this.f`,
+  `this.f!!`) and writes in callbacks another field's initializer registers, component arguments gain the parent field
+  they pass.
+- Step 7: not started.
 
 ## Open decisions
 

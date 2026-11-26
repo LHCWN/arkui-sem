@@ -1,15 +1,5 @@
 // ForEach and LazyForEach calls, and what rows and builders do with the values they are given.
-import type {
-  Branch,
-  BuilderFact,
-  LoopComparison,
-  LoopFact,
-  LoopKey,
-  LoopSource,
-  PathSegment,
-  ShownArray,
-  ValueUses,
-} from '../facts.js';
+import type { Branch, BuilderFact, LoopComparison, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
 import { type BuilderNames, climb, isBuilderCall } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
@@ -46,8 +36,6 @@ export interface Members {
 const COMPONENT_NAME = /^[A-Z]/;
 /** Array calls whose result holds elements of the array itself. */
 const KEEPS_ELEMENTS = new Set(['filter', 'slice', 'sort', 'reverse', 'concat', 'toSorted', 'toReversed']);
-/** Array calls after which an item that comes before another still does. */
-const KEEPS_PLACES = new Set(['filter', 'map', 'slice']);
 /** Array calls that put the elements in another order. */
 const REORDERS = new Set(['sort', 'reverse', 'toSorted', 'toReversed']);
 const EQUALITY = new Set([
@@ -65,8 +53,6 @@ export function loopsIn(
   body: ts.Node,
   /** The `if` arms of build() the method runs in. */
   arms: Branch[],
-  /** The arms in the method's own body count too: false when it may run several times at once. */
-  ownArms: boolean,
   scan: FileScan,
   names: BuilderNames,
   members: Members,
@@ -76,7 +62,7 @@ export function loopsIn(
     if ((ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) && ts.isIdentifier(node.expression)) {
       const callee = node.expression.text;
       if (isKeyedLoop(callee) && !climb(node, body, names).inHandler) {
-        const branches = [...arms, ...(ownArms ? branchesOf(node, body, scan.sf) : [])];
+        const branches = [...arms, ...branchesOf(node, body, scan.sf)];
         out.push(loopFact(node, callee, method, branches, scan, names, members));
       }
     }
@@ -134,18 +120,14 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const body = helper === undefined ? undefined : members.body(helper);
   if (helper !== undefined && body && members.isHelper(helper, ts.isCallExpression(value))) {
     const returns = members.returnsField(helper);
-    const shown = shownArrays(members.returned(helper), body, members, scan);
+    const shown = shownArrays(members.returned(helper), body, members);
     return {
       text,
       shape: 'call',
       helper,
       ...(returns === undefined ? {} : { returns }),
       ...(shown.from === undefined ? {} : { returnsFrom: shown.from }),
-      ...(shown.arrays.length ? { shows: shown.arrays } : {}),
       ...(shown.reorders ? { reorders: true as const } : {}),
-      ...(shown.appends ? { appends: true as const } : {}),
-      ...(shown.tail === undefined ? {} : { tail: shown.tail }),
-      ...(shown.fallbacks.length ? { fallbacks: shown.fallbacks } : {}),
       ...(shown.windowEnds.length ? { windowEnds: shown.windowEnds } : {}),
       fields,
     };
@@ -154,7 +136,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     return { text, shape: 'other', fields };
   }
   const arms = armsOf(value);
-  const shown = shownArrays(arms, value, members, scan);
+  const shown = shownArrays(arms, value, members);
   // Only a source without arms shows the field's own elements.
   const root = arms.length === 1 ? rootField(value, members) : shown.from;
   const filteredBy = root === undefined || arms.length > 1 ? undefined : elementFilters(value);
@@ -163,52 +145,25 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     text,
     shape: 'derived',
     ...(root === undefined ? {} : { root }),
-    ...(shown.arrays.length ? { shows: shown.arrays } : {}),
     ...items,
     ...(shown.reorders ? { reorders: true as const } : {}),
-    ...(shown.appends ? { appends: true as const } : {}),
-    ...(shown.tail === undefined ? {} : { tail: shown.tail }),
-    ...(shown.fallbacks.length ? { fallbacks: shown.fallbacks } : {}),
     ...(shown.windowEnds.length ? { windowEnds: shown.windowEnds } : {}),
     fields,
   };
 }
 
 /** What the arrays a source may show (`values`: the arms of a conditional, or what a method or getter returns) have in
- *  common. from: the field every one starts from; a value that shows nothing (`[]`, `null`) or no field's array
- *  (`DEFAULTS`) shows no other one. arrays: the arrays of fields the values show. reorders: one sorts, reverses or cuts
- *  from the end. appends: one shows other items after an array's (`.concat(x)`). tail: the field whose array ends
- *  every one. fallbacks: see `fallbackFields`. windowEnds: the fields read only as
- *  the end of a `.slice(0, n)` that keeps the items in place, nowhere else in `around` (the conditional or the
- *  method's body), whose other reads may pick another array; when every value shows nothing or the start of that
- *  field's array (`this.showAll ? this.F : this.F.slice(0, 3)`), every field `around` reads but that one: a change
- *  can only show more or fewer items at the end. */
+ *  common. from: the field every one starts from; a value that shows nothing (`[]`) or no field's array (`DEFAULTS`)
+ *  shows no other one. reorders: one sorts, reverses or cuts from the end. windowEnds: the fields read only as the end
+ *  of a `.slice(0, n)`, nowhere else in `around` (the conditional or the method's body); when every value shows
+ *  nothing or the start of from's array (`this.showAll ? this.F : this.F.slice(0, 3)`), every field `around` reads
+ *  but that one: a change can only show more or fewer items at the end. */
 function shownArrays(
   values: ts.Expression[],
   around: ts.Node,
   members: Members,
-  scan: FileScan,
-): {
-  from?: string;
-  arrays: ShownArray[];
-  reorders: boolean;
-  appends: boolean;
-  tail?: string;
-  fallbacks: string[];
-  windowEnds: string[];
-} {
-  const arrays = new Map<string, ShownArray>();
-  for (const e of values) {
-    const field = isEmptyValue(e) ? undefined : rootField(e, members);
-    if (field !== undefined) {
-      const array = { field, path: pathToArray(e, scan) };
-      arrays.set(JSON.stringify(array), array);
-    }
-  }
-  const roots = new Set([...arrays.values()].map((a) => a.field));
-  const shown = values.filter((e) => !isEmptyValue(e));
-  const tails = new Set(shown.map((e) => tailField(e, members)));
-  const [tail] = tails.size === 1 && shown.length ? tails : [];
+): { from?: string; reorders: boolean; windowEnds: string[] } {
+  const roots = new Set(values.flatMap((e) => (isEmptyValue(e) ? [] : (rootField(e, members) ?? []))));
   const [from] = roots.size === 1 ? roots : [];
   const ends = new Set(values.flatMap(prefixEnds));
   const elsewhere = new Set(fieldsRead(around, members, ends));
@@ -218,24 +173,18 @@ function shownArrays(
       : [...new Set([...ends].flatMap((end) => fieldsRead(end, members)))].filter((f) => !elsewhere.has(f));
   return {
     ...(from === undefined ? {} : { from }),
-    arrays: [...arrays.values()],
-    reorders: values.some((e) => inChain(e, reordersCall)),
-    appends: values.some((e) => inChain(e, appendsCall)),
-    ...(tail === undefined ? {} : { tail }),
-    fallbacks: fallbackFields(around, members),
+    reorders: values.some(reordersArray),
     windowEnds,
   };
 }
 
-/** The value is the start of this.field's array, or all of it: `this.F`, `this.F.slice(0, n)`, `[...this.F]`. */
+/** The value is the start of this.field's array, or all of it: `this.F`, `this.F.slice(0, n)`. */
 function startsOf(expr: ts.Expression, field: string): boolean {
   for (let value = unwrap(expr); ; ) {
     if (thisMember(value) === field) {
       return true;
     }
-    if (isSpreadCopy(value)) {
-      value = unwrap(value.elements[0].expression);
-    } else if (
+    if (
       ts.isCallExpression(value) &&
       ts.isPropertyAccessExpression(value.expression) &&
       value.expression.name.text === 'slice' &&
@@ -248,25 +197,13 @@ function startsOf(expr: ts.Expression, field: string): boolean {
   }
 }
 
-/** The ends of each `.slice(0, n)` in the chain followed only by calls that keep the items in place (`filter`, `map`,
- *  `slice` from the start): a change shows more or fewer items at the end, and the same ones at each position. A
- *  `concat` after it would move what it appends; a sort, everything. A copy (`[...x]`) keeps the items in place. */
+/** The ends of each `.slice(0, n)` in the chain: a change shows more or fewer items at the end, the same ones at each
+ *  position. */
 function prefixEnds(expr: ts.Expression): ts.Expression[] {
   const ends: ts.Expression[] = [];
-  for (let value = unwrap(expr); ; ) {
-    if (isSpreadCopy(value)) {
-      value = unwrap(value.elements[0].expression);
-      continue;
-    }
-    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
-      break;
-    }
-    const method = value.expression.name.text;
+  for (let value = unwrap(expr); ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression); ) {
     const [start, end] = value.arguments;
-    if (!KEEPS_PLACES.has(method) || (method === 'slice' && start && fromEnd(start))) {
-      break;
-    }
-    if (method === 'slice' && end && start && isZero(start)) {
+    if (value.expression.name.text === 'slice' && end && start && isZero(start)) {
       ends.push(end);
     }
     value = unwrap(value.expression.expression);
@@ -274,88 +211,24 @@ function prefixEnds(expr: ts.Expression): ts.Expression[] {
   return ends;
 }
 
-/** `[]`, `null` or `undefined`. */
+/** `[]`. */
 function isEmptyValue(expr: ts.Expression): boolean {
   const value = unwrap(expr);
-  return (ts.isArrayLiteralExpression(value) && value.elements.length === 0) || isNullish(value);
+  return ts.isArrayLiteralExpression(value) && value.elements.length === 0;
 }
 
-/** A call of the chain passes the test, also through a copy (`[...this.F.slice(-5)]`). */
-function inChain(expr: ts.Expression, test: (call: ts.CallExpression, method: string) => boolean): boolean {
-  for (let value = unwrap(expr); ; ) {
-    if (isSpreadCopy(value)) {
-      value = unwrap(value.elements[0].expression);
-      continue;
-    }
-    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
-      return false;
-    }
-    if (test(value, value.expression.name.text)) {
+/** The chain sorts or reverses the array, or cuts it from the end (`.slice(-5)`, `.slice(a.length - 5)`), so an item
+ *  appended to the array moves the others. */
+function reordersArray(expr: ts.Expression): boolean {
+  for (let value = unwrap(expr); ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression); ) {
+    const method = value.expression.name.text;
+    const [start] = value.arguments;
+    if (REORDERS.has(method) || (method === 'slice' && start !== undefined && fromEnd(start))) {
       return true;
     }
     value = unwrap(value.expression.expression);
   }
-}
-
-/** The field whose array ends the value, after other items: the last argument of the outermost `.concat(…)` in the
- *  chain (`this.F.concat(this.more)`), or the last spread of an array literal (`[...this.F, ...this.more]`). */
-function tailField(expr: ts.Expression, members: Members): string | undefined {
-  const field = (e: ts.Expression | undefined) => {
-    const name = e === undefined ? undefined : thisMember(unwrap(e));
-    return name !== undefined && members.fields.has(name) ? name : undefined;
-  };
-  for (let value = unwrap(expr); ; ) {
-    if (ts.isArrayLiteralExpression(value) && value.elements.length > 1) {
-      const last = value.elements[value.elements.length - 1];
-      return ts.isSpreadElement(last) ? field(last.expression) : undefined;
-    }
-    if (isSpreadCopy(value)) {
-      value = unwrap(value.elements[0].expression);
-      continue;
-    }
-    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
-      return undefined;
-    }
-    if (appendsCall(value, value.expression.name.text)) {
-      return field(value.arguments[value.arguments.length - 1]);
-    }
-    value = unwrap(value.expression.expression);
-  }
-}
-
-/** The fields on the left of a `??` or `||` under `around` whose right side may show something (`this.F ?? this.other`,
- *  not `this.F ?? []`): when one is `null` or `undefined`, the source shows the right side instead. */
-function fallbackFields(around: ts.Node, members: Members): string[] {
-  const out = new Set<string>();
-  const visit = (n: ts.Node) => {
-    if (
-      ts.isBinaryExpression(n) &&
-      (n.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
-        n.operatorToken.kind === ts.SyntaxKind.BarBarToken) &&
-      armsOf(n.right).some((e) => !isEmptyValue(e))
-    ) {
-      for (const e of armsOf(n.left)) {
-        const field = rootField(e, members);
-        if (field !== undefined) {
-          out.add(field);
-        }
-      }
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(around);
-  return [...out];
-}
-
-/** Sorts or reverses an array, or cuts it from the end (`.slice(-5)`, `.slice(a.length - 5)`), so an item appended to
- *  the array moves the others. */
-function reordersCall(call: ts.CallExpression, method: string): boolean {
-  return REORDERS.has(method) || (method === 'slice' && call.arguments[0] !== undefined && fromEnd(call.arguments[0]));
-}
-
-/** Shows other items after the array (`.concat(this.more)`), so any change to its length moves them. */
-function appendsCall(call: ts.CallExpression, method: string): boolean {
-  return method === 'concat' && call.arguments.length > 0;
+  return false;
 }
 
 /** A negative number, or a value computed from a length. */
@@ -470,30 +343,6 @@ function rootField(expr: ts.Expression, members: Members): string | undefined {
       return undefined;
     }
   }
-}
-
-/** The property and element accesses on the field the chain starts from, before any call or copy: `.tags` in
- *  `this.F.tags.filter(…)`, `[i].tags` in `this.F[i].tags`. */
-function pathToArray(expr: ts.Expression, scan: FileScan): PathSegment[] {
-  let path: PathSegment[] = [];
-  for (let value = unwrap(expr); thisMember(value) === undefined; ) {
-    if (ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)) {
-      path = [];
-      value = unwrap(value.expression.expression);
-    } else if (ts.isPropertyAccessExpression(value)) {
-      path.unshift({ prop: value.name.text });
-      value = unwrap(value.expression);
-    } else if (ts.isElementAccessExpression(value)) {
-      path.unshift({ index: scan.text(value.argumentExpression) });
-      value = unwrap(value.expression);
-    } else if (isSpreadCopy(value)) {
-      path = [];
-      value = unwrap(value.elements[0].expression);
-    } else {
-      return [];
-    }
-  }
-  return path;
 }
 
 /** `[...x]`: a copy of one array. */

@@ -119,7 +119,6 @@ describe('foreach-index-key fires', () => {
       [lastFive, 'this.lastFive()'],
       ['', 'this.names.slice(-5)'],
       ['', '[...this.names].reverse()'],
-      ['', '[...this.names.slice(-5)]'],
     ]) {
       const [c, ...rest] = indexKeyed(page(members, `${push}\n${loop(source)}`));
       assert.equal(rest.length, 0, source);
@@ -129,176 +128,6 @@ describe('foreach-index-key fires', () => {
         source,
       );
     }
-  });
-
-  test('a change to the length of an array other items follow (`.concat(x)`), a clear too', () => {
-    const more = '  @State more: string[] = []';
-    const visible = `${more}\n  get visible(): string[] {\n    return this.names.concat(this.more)\n  }`;
-    for (const write of [
-      "this.names.push('x')",
-      'this.names.pop()',
-      "this.names = [...this.names, 'x']",
-      'this.names = this.names.slice(0, 2)',
-      'this.names = []',
-    ]) {
-      for (const [members, source] of [
-        [more, 'this.names.concat(this.more)'],
-        ['', "this.names.concat(['footer'])"],
-        [visible, 'this.visible'],
-      ]) {
-        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-      }
-    }
-    // Control: a copy keeps every item at its position.
-    for (const write of ['this.names = [...this.names]', 'this.names = this.names.slice()']) {
-      const src = page('', `      Button('a').onClick(() => { ${write} })\n${loop("this.names.concat(['footer'])")}`);
-      assert.deepEqual(indexKeyed(src), [], write);
-    }
-  });
-
-  test('a write that moves an array below the field the source starts from', () => {
-    const trip = "  @State trip: Trip = { id: 0, name: '', tags: [] }";
-    for (const [source, write] of [
-      ['this.trip.tags', 'this.trip.tags = this.trip.tags.filter((t: string) => t.length > 0)'],
-      ['this.trip.tags', 'this.trip.tags.sort()'],
-      ['this.trip.tags.slice()', "this.trip.tags[0] = 'x'"],
-      ['this.trips[this.sel].tags', 'this.trips[this.sel].tags = []\n        this.trips[this.sel].tags.reverse()'],
-      ['this.trips[this.sel].tags', 'this.trips.sort()'],
-    ]) {
-      const src = page(trip, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-      assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-    }
-    // Control: a write beside the array, an append, a clear.
-    for (const [source, write] of [
-      ['this.trip.tags', "this.trip.name = 'x'"],
-      ['this.trip.tags', "this.trip.tags.push('x')"],
-      ['this.trip.tags', "this.trip.tags = [...this.trip.tags, 'x']"],
-      ['this.trip.tags', 'this.trip.tags = []'],
-      ['this.trips[this.sel].tags', "this.trips[this.sel].name = 'x'"],
-      ['this.trips[this.sel].tags', 'this.trips.push(this.trip)'],
-    ]) {
-      const src = page(trip, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-      assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
-    }
-  });
-
-  test('a write of a holder above the array the source shows', () => {
-    const members =
-      "  @State trip: Trip = { id: 0, name: '', tags: [] }\n  @State state: { trip: Trip } = { trip: { id: 0, name: '', tags: [] } }\n  @State more: string[] = []";
-    const fires = [
-      ['this.state.trip.tags', "this.state.trip = { id: 1, name: 'b', tags: ['x'] }"],
-      ['this.trips[this.sel].tags', 'this.trips[0] = this.trip'],
-      ['this.trip.tags', 'this.trip = { ...this.trip, tags: this.trip.tags.slice().reverse() }'],
-    ];
-    for (const [source, write] of fires) {
-      const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-      assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-    }
-    // Control: a holder array that keeps its positions, an object spread that leaves the array alone.
-    const quiet = [
-      ['this.trips[this.sel].tags.slice().reverse()', 'this.trips.push(this.trip)'],
-      ['this.trips[this.sel].tags.concat(this.more)', 'this.trips = [...this.trips, this.trip]'],
-      ['this.trip.tags', "this.trip = { ...this.trip, name: 'x' }"],
-      [
-        'this.state.trip.tags',
-        'this.state = { ...this.state }\n        this.state.trip = { ...this.state.trip, id: 2 }',
-      ],
-    ];
-    for (const [source, write] of quiet) {
-      const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-      assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
-    }
-  });
-
-  test('a nested array under a fallback, a conditional, a getter, or one of two holders', () => {
-    const members = `  @State trip: Trip = { id: 0, name: '', tags: [] }
-  @State other: Trip = { id: 0, name: '', tags: [] }
-  get tags(): string[] {
-    return this.trip.tags
-  }`;
-    for (const source of [
-      'this.trip?.tags ?? []',
-      'this.sel > 0 ? this.trip.tags : []',
-      'this.tags',
-      'this.sel > 0 ? this.trip.tags : this.other.tags',
-    ]) {
-      for (const write of [
-        'this.trip.tags = this.trip.tags.filter((t: string) => t.length > 0)',
-        'this.trip.tags.sort()',
-      ]) {
-        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-      }
-      // Control: a write beside the array.
-      const src = page(members, `      Button('a').onClick(() => { this.trip.name = 'x' })\n${loop(source)}`);
-      assert.deepEqual(indexKeyed(src), [], `a write beside the array under ${source}`);
-    }
-  });
-
-  test('an append to the array that ends the source, after the others', () => {
-    const members = `  @State more: string[] = []
-  @State last: string[] = []
-  get all(): string[] {
-    return this.names.concat(this.more)
-  }`;
-    const append = (field: string) => [`this.${field}.push('x')`, `this.${field} = [...this.${field}, 'x']`];
-    for (const source of ['this.names.concat(this.more)', '[...this.names, ...this.more]', 'this.all']) {
-      for (const write of append('more')) {
-        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
-      }
-    }
-    // Control: an array with others after it, a source that reverses the whole list.
-    for (const source of ['this.names.concat(this.more, this.last)', 'this.names.concat(this.more).reverse()']) {
-      for (const write of append('more')) {
-        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-      }
-    }
-  });
-
-  test('a write in the other arm of an if inside an outer loop row: other rows take that arm', () => {
-    const rows = (inner: string) => `      ForEach(this.trips, (g: Trip) => {
-        if (g.id > 0) {
-  ${inner}
-        } else {
-          Button('sort').onClick(() => { this.names.sort() })
-        }
-      }, (g: Trip) => \`\${g.id}\`)`;
-    assert.equal(indexKeyed(page('', rows(loop('this.names')))).length, 1);
-    const repeat = `      Repeat<Trip>(this.trips).each((r: RepeatItem<Trip>) => {
-        if (r.item.id > 0) {
-  ${loop('this.names')}
-        } else {
-          Button('sort').onClick(() => { this.names.sort() })
-        }
-      })`;
-    assert.equal(indexKeyed(page('', repeat)).length, 1);
-  });
-
-  test('a write in the other arm of an if inside a @Builder that runs several times at once', () => {
-    const panel = `  @Builder Panel(on: boolean) {
-    if (on) {
-${loop('this.names')}
-    } else {
-      Button('sort').onClick(() => { this.names.sort() })
-    }
-  }`;
-    // Each row calls it; build() calls it twice; the else arm hands the write to another @Builder.
-    const rowCalls = '      ForEach(this.trips, (g: Trip) => { this.Panel(g.id > 0) }, (g: Trip) => `${g.id}`)';
-    assert.equal(indexKeyed(page(panel, rowCalls)).length, 1);
-    const repeatRows = '      Repeat<Trip>(this.trips).each((r: RepeatItem<Trip>) => { this.Panel(r.item.id > 0) })';
-    assert.equal(indexKeyed(page(panel, repeatRows)).length, 1);
-    assert.equal(indexKeyed(page(panel, '      this.Panel(true)\n      this.Panel(false)')).length, 1);
-    const sorter = "  @Builder Sorter() {\n    Button('sort').onClick(() => { this.names.sort() })\n  }";
-    const handsOn = panel.replace("Button('sort').onClick(() => { this.names.sort() })", 'this.Sorter()');
-    assert.equal(indexKeyed(page(`${handsOn}\n${sorter}`, rowCalls)).length, 1);
-    // Control: called once, or once in each arm of an if, it takes one arm at a time.
-    assert.deepEqual(indexKeyed(page(panel, '      this.Panel(this.sel > 0)')), []);
-    const eachArm =
-      '      if (this.sel > 0) {\n        this.Panel(true)\n      } else {\n        this.Panel(false)\n      }';
-    assert.deepEqual(indexKeyed(page(panel, eachArm)), []);
   });
 });
 
@@ -359,7 +188,6 @@ describe('foreach-index-key does not fire', () => {
     for (const source of [
       'this.names.slice(0, this.sel)',
       'this.names.filter((n: string) => n !== "").slice(0, this.sel)',
-      '[...this.names.slice(0, this.sel)]',
     ]) {
       assert.deepEqual(indexKeyed(page('', `${more}\n${loop(source)}`)), [], source);
     }
@@ -367,14 +195,8 @@ describe('foreach-index-key does not fire', () => {
     assert.deepEqual(indexKeyed(page(firstSel, `${more}\n${loop('this.firstSel')}`)), []);
     const guarded = 'this.trips.length > 0 ? this.names.slice(0, this.sel) : []';
     assert.deepEqual(indexKeyed(page('', `${more}\n${loop(guarded)}`)), []);
-    // Controls: a window that starts at the bound, one reversed after the cut, one followed by other items.
-    for (const source of [
-      'this.names.slice(this.sel)',
-      'this.names.slice(0, this.sel).reverse()',
-      'this.names.slice(0, this.sel).concat(this.trips[0].tags)',
-    ]) {
-      assert.equal(indexKeyed(page('', `${more}\n${loop(source)}`)).length, 1, source);
-    }
+    // Control: a window that starts at the bound.
+    assert.equal(indexKeyed(page('', `${more}\n${loop('this.names.slice(this.sel)')}`)).length, 1);
     // Nor a bound that also picks which array shows, in a condition or a guard.
     const picks = 'this.sel > 0 ? this.names.slice(0, this.sel) : this.names.slice().reverse()';
     assert.equal(indexKeyed(page('', `${more}\n${loop(picks)}`)).length, 1);
@@ -393,48 +215,12 @@ describe('foreach-index-key does not fire', () => {
     );
   });
 
-  test('a null or undefined clear of a nullable source, unless a fallback shows another array', () => {
-    const maybe = `  @State maybe: string[] | null | undefined = null
-  get shown(): string[] {
-    return this.maybe ?? this.names
-  }`;
-    for (const write of ['this.maybe = null', 'this.maybe = undefined']) {
-      for (const source of ['this.maybe ?? []', 'this.maybe || []']) {
-        const src = page(maybe, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
-      }
-      // Control: the fallback shows another array at the same positions.
-      for (const source of ['this.maybe ?? this.names', 'this.maybe || DEFAULTS', 'this.shown']) {
-        const src = page(maybe, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-      }
-    }
-  });
-
-  test('an append to one of the arrays a conditional or a fallback may show', () => {
-    const more = '  @State more: string[] = []\n  @State maybe: string[] | null = null';
-    for (const source of ['this.sel > 0 ? this.names : this.more', 'this.maybe ?? []', 'this.maybe || this.names']) {
-      for (const field of ['names', 'more', 'maybe']) {
-        const write = `if (this.${field}) { this.${field}.push('x') }`;
-        const src = page(more, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
-      }
-    }
-    // Control: the toggle switches arrays; appending to the first of two arrays shown one after the other moves the
-    // second's items.
-    const toggle = page(more, `${tabs}\n${loop('this.sel > 0 ? this.names : this.more')}`);
-    assert.equal(indexKeyed(toggle).length, 1);
-    const push = "      Button('a').onClick(() => { this.names.push('x') })";
-    assert.equal(indexKeyed(page(more, `${push}\n${loop('[...this.names, ...this.more]')}`)).length, 1);
-  });
-
   test('a toggle between the list, its first items or nothing: only rows at the end come and go', () => {
     const more = "      Button('more').onClick(() => { this.sel += 5 })";
     const getter =
       '  get shown(): string[] {\n    if (this.sel > 0) {\n      return this.names\n    }\n    return this.names.slice(0, 3)\n  }';
     for (const [members, source] of [
       ['', 'this.sel > 0 ? this.names : this.names.slice(0, 3)'],
-      ['', 'this.sel > 0 ? [...this.names] : []'],
       [getter, 'this.shown'],
     ]) {
       assert.deepEqual(indexKeyed(page(members, `${more}\n${loop(source)}`)), [], source);
@@ -451,7 +237,6 @@ describe('foreach-index-key does not fire', () => {
       'this.names = this.names.slice()',
       'this.names = this.names.concat()',
       'this.names = []',
-      'this.names = this.names.slice(0, 0)',
     ]) {
       for (const [members, source] of [
         [recent, 'this.recent'],

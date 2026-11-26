@@ -30,7 +30,6 @@ import {
   isDollarThis,
   isDoubleBang,
   isFunction,
-  isNullish,
   isZero,
   memberName,
   pathBelow,
@@ -112,14 +111,13 @@ export function component(
   const drawing = drawingMethods(scans);
   const renderOnly = renderOnlyMethods(scans, drawing);
   const loads = new Set<WriteFact>();
-  const { arms, repeated } = methodArms(scans);
+  const arms = methodArms(scans);
   const initCalls = initializerCalls(s, scan);
   for (const s of scans) {
     recordAccesses(s, byName, scan, builderNames, {
       drawn: drawing.get(s.method),
       renderOnly: renderOnly.has(s.method),
       arms: arms.get(s.method.name),
-      ownArms: !repeated.has(s.method.name),
       loads,
       initCalls,
     });
@@ -153,9 +151,7 @@ export function component(
     resources: resources(scans, scan),
     loops: methods
       .filter((m) => drawing.has(m))
-      .flatMap((m) =>
-        loopsIn(m.name, m.body, arms.get(m.name) ?? [], !repeated.has(m.name), scan, builderNames, members),
-      ),
+      .flatMap((m) => loopsIn(m.name, m.body, arms.get(m.name) ?? [], scan, builderNames, members)),
     builders: builderMethods.flatMap((m) => {
       const name = memberName(m.name);
       return name === undefined ? [] : [builderFact(name, m, scan, builderNames)];
@@ -195,7 +191,6 @@ function inputFacts(
         fact.effects ||
         joined.some((t) => t.effects || t.calls.length > 0) ||
         handlers.some((name) => !typingOf.has(name)),
-      normalizes: fact.normalizes || joined.some((t) => t.normalizes),
     };
   });
 }
@@ -469,14 +464,12 @@ function recordAccesses(
     drawn,
     renderOnly,
     arms,
-    ownArms,
     loads,
     initCalls,
   }: {
     drawn: DrawSite | undefined;
     renderOnly: boolean;
     arms: Branch[] | undefined;
-    ownArms: boolean;
     loads: Set<WriteFact>;
     initCalls: Map<string, string>;
   },
@@ -494,7 +487,6 @@ function recordAccesses(
     calls: [],
     tested: new Set(),
     arms,
-    ownArms,
     loads,
     initCalls,
   };
@@ -528,8 +520,6 @@ interface AccessContext {
   tested: Set<FieldFact>;
   /** The `if` arms of build() the method runs in (methodArms); undefined when not known. */
   arms: Branch[] | undefined;
-  /** The `if` arms in the method's own body count too: false when it may run several times at once (methodArms). */
-  ownArms: boolean;
   /** Writes outside callbacks or in promise continuations only (`.then`): run once if their method is. */
   loads: Set<WriteFact>;
   /** Each field whose initializer is a call, with that call's text. */
@@ -612,12 +602,9 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     value: mutatingCall ? undefined : assignedValue(assignment),
     ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
     ...(callName === undefined ? {} : { call: callName }),
-    ...(assignment && keepsPositions(assignment) ? { keepsPositions: true } : {}),
-    ...(assignment ? keptItems(assignment) : {}),
-    ...(assignment ? spreadSets(assignment) : {}),
-    ...(ctx.arms
-      ? { branches: [...ctx.arms, ...(ctx.ownArms ? branchesOf(base, ctx.method.body, ctx.scan.sf) : [])] }
-      : {}),
+    ...(assignment && segments.length === 0 && keepsPositions(assignment, field.name) ? { keepsPositions: true } : {}),
+    ...(assignment && segments.length === 0 ? keptItems(assignment, field.name) : {}),
+    ...(ctx.arms ? { branches: [...ctx.arms, ...branchesOf(base, ctx.method.body, ctx.scan.sf)] } : {}),
     ...(rebuilt.length ? { rebuilt } : {}),
     ...(assignment && segments.length === 0 && repeatsInitializer(assignment, ctx.initCalls.get(field.name), ctx.scan)
       ? { repeatsInitializer: true }
@@ -639,19 +626,16 @@ function accumulates(assignment: ts.BinaryExpression, field: string): boolean {
   return reads(assignment.right);
 }
 
-/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]`, `null`, `this.F.slice()` or `this.F.slice(0, n)`, also of an array
- *  below the field (`this.F.tags = [...this.F.tags, x]`): no other item at an old position. */
-function keepsPositions(assignment: ts.BinaryExpression): boolean {
+/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]`, `this.F.slice()` or `this.F.slice(0, n)`: no other
+ *  item at an old position. */
+function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return false;
   }
   const value = unwrap(assignment.right);
-  if (isNullish(value)) {
-    return true;
-  }
   if (ts.isArrayLiteralExpression(value)) {
     const [first] = value.elements;
-    return first === undefined || (ts.isSpreadElement(first) && sameTarget(first.expression, assignment.left));
+    return first === undefined || (ts.isSpreadElement(first) && thisMember(unwrap(first.expression)) === field);
   }
   if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
     return false;
@@ -659,64 +643,31 @@ function keepsPositions(assignment: ts.BinaryExpression): boolean {
   const method = value.expression.name.text;
   const [start] = value.arguments;
   const fromStart = method === 'slice' && (start === undefined || isZero(start));
-  return (method === 'concat' || fromStart) && sameTarget(value.expression.expression, assignment.left);
+  return (method === 'concat' || fromStart) && thisMember(unwrap(value.expression.expression)) === field;
 }
 
-/** `this.F = { ...this.F, name: x }`: the properties set next to a spread of the old value. None when another spread
- *  or a computed name may set any. */
-function spreadSets(assignment: ts.BinaryExpression): Pick<WriteFact, 'sets'> {
-  const value = unwrap(assignment.right);
-  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isObjectLiteralExpression(value)) {
-    return {};
-  }
-  let self = false;
-  const sets: string[] = [];
-  for (const p of value.properties) {
-    if (ts.isSpreadAssignment(p) && sameTarget(p.expression, assignment.left)) {
-      self = true;
-    } else if (p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && !ts.isSpreadAssignment(p)) {
-      sets.push(p.name.text);
-    } else {
-      return {};
-    }
-  }
-  return self ? { sets } : {};
-}
-
-/** Both name the same place: `this.F.tags` and `(this.F.tags)`. */
-function sameTarget(a: ts.Expression, b: ts.Expression): boolean {
-  return unwrap(a).getText() === unwrap(b).getText();
-}
-
-/** The same items (`[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.concat()`) or none (`[]`, `null`,
- *  `this.F.slice(0, 0)`), also of an array below the field. */
-function keptItems(assignment: ts.BinaryExpression): Pick<WriteFact, 'keepsItems'> {
+/** The same items (`[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.concat()`) or none (`[]`). */
+function keptItems(assignment: ts.BinaryExpression, field: string): Pick<WriteFact, 'keepsItems'> {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return {};
   }
   const value = unwrap(assignment.right);
-  if (isNullish(value)) {
-    return { keepsItems: 'clear' };
-  }
   if (ts.isArrayLiteralExpression(value)) {
     const [first, ...rest] = value.elements;
     if (first === undefined) {
       return { keepsItems: 'clear' };
     }
-    const copy = rest.length === 0 && ts.isSpreadElement(first) && sameTarget(first.expression, assignment.left);
+    const copy = rest.length === 0 && ts.isSpreadElement(first) && thisMember(unwrap(first.expression)) === field;
     return copy ? { keepsItems: 'copy' } : {};
   }
   if (
     !(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)) ||
-    !sameTarget(value.expression.expression, assignment.left)
+    thisMember(unwrap(value.expression.expression)) !== field
   ) {
     return {};
   }
   const method = value.expression.name.text;
   const args = value.arguments;
-  if (method === 'slice' && args.length === 2 && isZero(args[0]) && isZero(args[1])) {
-    return { keepsItems: 'clear' };
-  }
   const copy =
     (method === 'concat' && args.length === 0) ||
     (method === 'slice' && (args.length === 0 || (args.length === 1 && isZero(args[0]))));
@@ -857,46 +808,22 @@ function setupMethods(scans: MethodWalk[], afterAwait: boolean): Set<string> {
  * shares, each use's arms in its own body after those of the method holding it. A @Builder that only one arm calls, or
  * a method only a handler in that arm calls, runs only while the arm is shown. A method with a use in a lifecycle hook,
  * or with no use in the component (other code calls it), has none known.
- *
- * repeated: the methods that may run several times at once, whose own `if` arms then don't exclude each other (one
- * run may take one arm, another the other): a use in a loop row or in a repeated method, or uses not all in exclusive
- * arms of one method. They keep only the arms they inherit.
  */
-function methodArms(scans: MethodScan[]): { arms: Map<string, Branch[]>; repeated: Set<string> } {
+function methodArms(scans: MethodScan[]): Map<string, Branch[]> {
   const arms = new Map<string, Branch[]>([['build', []]]);
-  const uses = new Map<string, { caller: string; branches: Branch[]; inForEach: boolean }[]>();
+  const uses = new Map<string, { caller: string; branches: Branch[] }[]>();
   for (const scan of scans) {
     for (const use of scan.uses) {
-      const site = { caller: scan.method.name, branches: use.branches, inForEach: use.inForEach };
-      uses.set(use.name, [...(uses.get(use.name) ?? []), site]);
+      uses.set(use.name, [...(uses.get(use.name) ?? []), { caller: scan.method.name, branches: use.branches }]);
     }
   }
-  const repeated = new Set<string>();
-  // Two uses in different arms of one `if` of the same method (queries.exclusiveArms) never run at once.
-  const apart = (a: { caller: string; branches: Branch[] }, b: { caller: string; branches: Branch[] }) =>
-    a.caller === b.caller && a.branches.some((x) => b.branches.some((y) => x.at === y.at && x.arm !== y.arm));
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const [name, sites] of uses) {
-      const several = sites.some((a, i) => sites.slice(0, i).some((b) => !apart(a, b)));
-      if (
-        !repeated.has(name) &&
-        name !== 'build' &&
-        (several || sites.some((site) => site.inForEach || repeated.has(site.caller)))
-      ) {
-        repeated.add(name);
-        changed = true;
-      }
-    }
-  }
-  const own = (site: { caller: string; branches: Branch[] }) => (repeated.has(site.caller) ? [] : site.branches);
   for (let changed = true; changed; ) {
     changed = false;
     for (const [name, sites] of uses) {
       if (arms.has(name) || name === 'build' || !sites.every((site) => arms.has(site.caller))) {
         continue;
       }
-      const [first, ...rest] = sites.map((site) => [...(arms.get(site.caller) ?? []), ...own(site)]);
+      const [first, ...rest] = sites.map((site) => [...(arms.get(site.caller) ?? []), ...site.branches]);
       arms.set(
         name,
         first.filter((arm) => rest.every((other) => other.some((b) => b.at === arm.at && b.arm === arm.arm))),
@@ -904,7 +831,7 @@ function methodArms(scans: MethodScan[]): { arms: Map<string, Branch[]>; repeate
       changed = true;
     }
   }
-  return { arms, repeated };
+  return arms;
 }
 
 /**

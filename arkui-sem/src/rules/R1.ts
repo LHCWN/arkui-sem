@@ -28,7 +28,6 @@ import {
   isOwnedV2,
   isReactive,
   isReactiveV1,
-  keepsPositionsCall,
   linkTypesOf,
   memberOf,
   moves,
@@ -467,45 +466,26 @@ function indexKeyCandidates(
 
 /** The writes of a state field the loop's source reads that change which item sits at a position after the first
  *  render. Of the source's own array only writes that move items count, and through a method or getter none that
- *  keeps the positions of an array it may return (an append), unless the source reorders that array or shows other
- *  items after it (`.concat(x)`) and the write adds or removes items; none in the other arm of an `if` that holds the
- *  loop, which runs while the loop is not shown, and switching back recreates it. The array a method or getter
- *  returns moves like the source's own. */
+ *  keeps the positions of an array it may return (an append), unless the source reorders that array and the write
+ *  adds or removes items; none in the other arm of an `if` that holds the loop, which runs while the loop is not
+ *  shown, and switching back recreates it. The array a method or getter returns moves like the source's own. */
 function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): IndexShift[] {
   const field = observedField(component, name);
   if (!field || loop.source.windowEnds?.includes(name)) {
     return [];
   }
-  const arrays = (loop.source.shows ?? []).filter((a) => a.field === name);
-  const how = arrays.length || name === (loop.source.root ?? loop.source.returnsFrom) ? 'move' : 'select';
-  const paths = arrays.length ? arrays.map((a) => a.path) : [[]];
+  const how = name === (loop.source.root ?? loop.source.returnsFrom) ? 'move' : 'select';
   // An array write that keeps positions: an append, a clear, a cut from the end. Under a source that reorders the
   // array (`.reverse()`, `.slice(-n)`) one that adds or removes items moves those shown at a position all the same; a
   // copy or a clear does not.
   const keepsArray = (write: WriteFact) =>
     !moves(write) && (write.path?.length ?? 0) <= 1 && (write.path === undefined || isIndex(write.path[0]));
-  // A source that shows other items after the array (`.concat(x)`) moves them on any change to its length, a clear too.
-  // The array that ends the source (`.concat(this.more)`) has no other items after it.
-  const tail = name === loop.source.tail;
-  const slides = (write: WriteFact) =>
-    keepsArray(write) &&
-    write.keepsItems !== 'copy' &&
-    ((loop.source.appends === true && !tail) || (loop.source.reorders === true && write.keepsItems === undefined));
+  const slides = (write: WriteFact) => keepsArray(write) && loop.source.reorders === true && !write.keepsItems;
   const changes = (write: WriteFact) => {
     if (how === 'select') {
-      const shown = loop.source.shape === 'call' || tail;
-      return (write.path?.length ?? 0) <= 1 && !(shown && keepsArray(write) && !slides(write));
+      return (write.path?.length ?? 0) <= 1 && !(loop.source.shape === 'call' && keepsArray(write) && !slides(write));
     }
-    // `null` or `undefined` under a fallback (`this.F ?? this.other`) shows the other array at the same positions.
-    const revealsFallback = (own: WriteFact) =>
-      own.path === undefined && own.value === 'constant' && loop.source.fallbacks?.includes(name) === true;
-    return paths.some((path) => {
-      const own = belowArray(write, path);
-      if (own === 'above') {
-        return replacesHolder(write, path);
-      }
-      return own !== undefined && (moves(own) || slides(own) || revealsFallback(own));
-    });
+    return moves(write) || slides(write);
   };
   const writes = field.writes.filter(
     (write) =>
@@ -600,35 +580,6 @@ function redraws(component: ComponentFact, loop: LoopFact, name: string): FieldW
 function observedField(component: ComponentFact, name: string): FieldFact | undefined {
   const field = component.fields.find((f) => f.name === name);
   return field && !isNonState(field) && isReactive(field) && !field.disabledRules.includes('R1') ? field : undefined;
-}
-
-/** A write of the root field as a write of the array at `path` below it: the rest of its path when it writes there or
- *  below, `above` when it writes a holder above (`this.F = …`, `this.F.sort()`), none when it writes beside it
- *  (`this.F.name`). Indexes match whatever their text. */
-function belowArray(write: WriteFact, path: PathSegment[]): WriteFact | 'above' | undefined {
-  const segments = write.path ?? [];
-  const same = (a: PathSegment, b: PathSegment) => ('prop' in a ? 'prop' in b && a.prop === b.prop : isIndex(b));
-  const n = Math.min(segments.length, path.length);
-  if (!segments.slice(0, n).every((s, i) => same(s, path[i]))) {
-    return undefined;
-  }
-  if (segments.length < path.length) {
-    return 'above';
-  }
-  const rest = segments.slice(path.length);
-  return { ...write, path: rest.length ? rest : undefined };
-}
-
-/** A write of a holder above the array at `path` (`this.F = …`, `this.F[i] = …`, `this.F.trip = …`, `this.F.sort()`)
- *  puts another array there, unless it keeps the positions of the holder array it writes (`push`, an append, a clear)
- *  or spreads the old object and leaves the next property on the path alone (`this.F = { ...this.F, name: x }`). */
-function replacesHolder(write: WriteFact, path: PathSegment[]): boolean {
-  if (write.call !== undefined) {
-    return !keepsPositionsCall(write.call);
-  }
-  const next = path[write.path?.length ?? 0];
-  const kept = write.sets !== undefined && next !== undefined && 'prop' in next && !write.sets.includes(next.prop);
-  return !write.keepsPositions && !kept;
 }
 
 /** The ForEach loops over the field's own elements whose key stays with an element: item properties or the index. */

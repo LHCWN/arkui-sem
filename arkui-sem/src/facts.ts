@@ -47,12 +47,8 @@ export interface WriteFact {
    *  clear (`[]`) or a cut from the start (`this.F.slice(0, n)`). */
   keepsPositions?: true;
   /** Of those, one that keeps the same items (`copy`: `[...this.F]`, `this.F.slice()`, `this.F.concat()`) or none
-   *  (`clear`: `[]`, `this.F.slice(0, 0)`). Even a sorted or reversed view of the array shows the same item at each
-   *  position, or no rows. */
+   *  (`clear`: `[]`). Even a sorted or reversed view of the array shows the same item at each position, or no rows. */
   keepsItems?: 'copy' | 'clear';
-  /** An object literal that spreads the old value (`this.F = { ...this.F, name: x }`): the properties it sets; the
-   *  others keep their values. */
-  sets?: string[];
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
   /** The write loads what the component starts with: in aboutToAppear or a helper only it calls, outside callbacks
@@ -203,8 +199,6 @@ export interface InputFact {
    *  to a handler method and `console` calls; a handler method that does more, hands the text on again or that other
    *  code uses; a handler that can't be read. */
   effects: boolean;
-  /** A typed write stores the text normalized (`value.trim()`), here or in a handler method it joins. */
-  normalizes: boolean;
   disabledRules: string[];
 }
 
@@ -252,14 +246,6 @@ export interface Branch {
   arm: 'then' | 'else';
 }
 
-/** An array a loop's source may show: the field it starts from and the accesses on that field before any call (`.tags`
- *  in `this.F.tags.filter(…)`, `[i].tags` in `this.F[this.sel].tags`). A write of the field at or below that array may
- *  move it; one beside it (`this.F.name`) does not. */
-export interface ShownArray {
-  field: string;
-  path: PathSegment[];
-}
-
 /**
  * The loop's data source. field: `this.F`. derived: an expression over fields (`this.F.filter(…)`, `this.F[i].p`,
  * `X[this.S].p`). call: a method call or a getter of the component (`this.visible()`, `this.visible`). new: a `new`
@@ -271,9 +257,6 @@ export interface LoopSource {
   /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`); for a conditional, the
    *  field each arm that shows an array starts from (`this.ready ? this.F : []`). */
   root?: string;
-  /** Every array the source may show: of each arm of a conditional or fallback, or each value a method or getter it
-   *  calls returns, that starts from a field. */
-  shows?: ShownArray[];
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
    *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
   itemsOf?: string;
@@ -287,22 +270,13 @@ export interface LoopSource {
   /** The source, or what the method or getter it calls returns, sorts or reverses an array or cuts it from the end
    *  (`.reverse()`, `.slice(-n)`): an append moves the items at a position too. */
   reorders?: true;
-  /** The source, or what the method or getter it calls returns, shows other items after an array's
-   *  (`this.F.concat(this.more)`): any change to that array's length, a clear too, moves them. */
-  appends?: true;
-  /** The field whose array ends every array the source shows, after others (`this.more` in `this.F.concat(this.more)`,
-   *  `[...this.F, ...this.more]`): a write that keeps its positions only adds or removes rows at the end. */
-  tail?: string;
-  /** Fields on the left of a `??` or `||` in the source, or in the method or getter it calls, whose right side shows
-   *  something (`this.F ?? this.other`): a `null` or `undefined` write of one shows that at the same positions. */
-  fallbacks?: string[];
   /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
    *  own array it shows. */
   returnsFrom?: string;
-  /** Fields the source, or the method or getter it calls, reads only as the end of a `.slice(0, n)` followed by
-   *  calls that keep the items in place (`this.F.slice(0, this.n)`), not in a condition or guard; or any field but
-   *  F when every array it may show is F or its start (`this.showAll ? this.F : this.F.slice(0, 3)`): a change shows
-   *  more or fewer items at the end, the same ones at each position. */
+  /** Fields the source, or the method or getter it calls, reads only as the end of a `.slice(0, n)`
+   *  (`this.F.slice(0, this.n)`), not in a condition or guard; or any field but F when every array it may show is F
+   *  or its start (`this.showAll ? this.F : this.F.slice(0, 3)`): a change shows more or fewer items at the end, the
+   *  same ones at each position. */
   windowEnds?: string[];
   /** The component's fields the source accesses, through the methods and getters it calls (outside their handlers),
    *  transitively. */

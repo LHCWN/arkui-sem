@@ -9,6 +9,7 @@ import {
   branchesOf,
   isFunction,
   isKeyedLoop,
+  isNullish,
   isWrapper,
   isZero,
   memberName,
@@ -227,11 +228,7 @@ function prefixEnds(expr: ts.Expression): ts.Expression[] {
 /** `[]`, `null` or `undefined`. */
 function isEmptyValue(expr: ts.Expression): boolean {
   const value = unwrap(expr);
-  return (
-    (ts.isArrayLiteralExpression(value) && value.elements.length === 0) ||
-    value.kind === ts.SyntaxKind.NullKeyword ||
-    (ts.isIdentifier(value) && value.text === 'undefined')
-  );
+  return (ts.isArrayLiteralExpression(value) && value.elements.length === 0) || isNullish(value);
 }
 
 /** A call of the chain passes the test, also through a copy (`[...this.F.slice(-5)]`). */
@@ -579,10 +576,6 @@ function shadows(fn: ts.Node, name: string): boolean {
 function paramName(fn: ts.SignatureDeclarationBase, index: number): string | undefined {
   const param = fn.parameters[index];
   return param && ts.isIdentifier(param.name) ? param.name.text : undefined;
-}
-
-function isNullish(expr: ts.Expression): boolean {
-  return expr.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(expr) && expr.text === 'undefined');
 }
 
 function noUses(): ValueUses {

@@ -28,6 +28,7 @@ import {
   hasModifier,
   isAssignment,
   isFunction,
+  isNullish,
   isZero,
   memberName,
   pathBelow,
@@ -604,13 +605,16 @@ function accumulates(assignment: ts.BinaryExpression, field: string): boolean {
   return reads(assignment.right);
 }
 
-/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]`, `this.F.slice()` or `this.F.slice(0, n)`, also of an array
+/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]`, `null`, `this.F.slice()` or `this.F.slice(0, n)`, also of an array
  *  below the field (`this.F.tags = [...this.F.tags, x]`): no other item at an old position. */
 function keepsPositions(assignment: ts.BinaryExpression): boolean {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return false;
   }
   const value = unwrap(assignment.right);
+  if (isNullish(value)) {
+    return true;
+  }
   if (ts.isArrayLiteralExpression(value)) {
     const [first] = value.elements;
     return first === undefined || (ts.isSpreadElement(first) && sameTarget(first.expression, assignment.left));
@@ -629,13 +633,16 @@ function sameTarget(a: ts.Expression, b: ts.Expression): boolean {
   return unwrap(a).getText() === unwrap(b).getText();
 }
 
-/** The same items (`[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.concat()`) or none (`[]`,
+/** The same items (`[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.concat()`) or none (`[]`, `null`,
  *  `this.F.slice(0, 0)`), also of an array below the field. */
 function keptItems(assignment: ts.BinaryExpression): Pick<WriteFact, 'keepsItems'> {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return {};
   }
   const value = unwrap(assignment.right);
+  if (isNullish(value)) {
+    return { keepsItems: 'clear' };
+  }
   if (ts.isArrayLiteralExpression(value)) {
     const [first, ...rest] = value.elements;
     if (first === undefined) {

@@ -318,6 +318,14 @@ describe('foreach-index-key does not fire', () => {
     );
   });
 
+  test('a null or undefined clear of a nullable source', () => {
+    const maybe = '  @State maybe: string[] | null | undefined = null';
+    for (const write of ['this.maybe = null', 'this.maybe = undefined']) {
+      const src = page(maybe, `      Button('a').onClick(() => { ${write} })\n${loop('this.maybe ?? []')}`);
+      assert.deepEqual(indexKeyed(src), [], write);
+    }
+  });
+
   test('an append to one of the arrays a conditional or a fallback may show', () => {
     const more = '  @State more: string[] = []\n  @State maybe: string[] | null = null';
     for (const source of ['this.sel > 0 ? this.names : this.more', 'this.maybe ?? []', 'this.maybe || this.names']) {

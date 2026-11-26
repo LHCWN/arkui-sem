@@ -456,7 +456,8 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
     (loop.source.appends === true || (loop.source.reorders === true && write.keepsItems === undefined));
   const changes = (write: WriteFact) => {
     if (how === 'select') {
-      return (write.path?.length ?? 0) <= 1 && !(loop.source.shape === 'call' && keepsArray(write) && !slides(write));
+      const shown = loop.source.shape === 'call' || loop.source.shows?.includes(name) === true;
+      return (write.path?.length ?? 0) <= 1 && !(shown && keepsArray(write) && !slides(write));
     }
     const own = belowArray(write, loop.source.rootPath ?? []);
     return own !== undefined && (moves(own) || slides(own));

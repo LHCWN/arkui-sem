@@ -240,6 +240,9 @@ export interface LoopSource {
    *  (`.tags` in `this.F.tags.filter(…)`, `[i].tags` in `this.F[this.sel].tags`): writes below it move the array,
    *  others beside it (`this.F.name`) don't. */
   rootPath?: PathSegment[];
+  /** The fields whose arrays the arms of a conditional or fallback show when they start from several
+   *  (`this.show ? this.A : this.B`): a write that keeps the positions of one keeps those of the rows. */
+  shows?: string[];
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
    *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
   itemsOf?: string;

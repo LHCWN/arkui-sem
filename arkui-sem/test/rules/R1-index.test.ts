@@ -318,6 +318,23 @@ describe('foreach-index-key does not fire', () => {
     );
   });
 
+  test('an append to one of the arrays a conditional or a fallback may show', () => {
+    const more = '  @State more: string[] = []\n  @State maybe: string[] | null = null';
+    for (const source of ['this.sel > 0 ? this.names : this.more', 'this.maybe ?? []', 'this.maybe || this.names']) {
+      for (const field of ['names', 'more', 'maybe']) {
+        const write = `if (this.${field}) { this.${field}.push('x') }`;
+        const src = page(more, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
+      }
+    }
+    // Control: the toggle switches arrays; appending to the first of two arrays shown one after the other moves the
+    // second's items.
+    const toggle = page(more, `${tabs}\n${loop('this.sel > 0 ? this.names : this.more')}`);
+    assert.equal(indexKeyed(toggle).length, 1);
+    const push = "      Button('a').onClick(() => { this.names.push('x') })";
+    assert.equal(indexKeyed(page(more, `${push}\n${loop('[...this.names, ...this.more]')}`)).length, 1);
+  });
+
   test('a toggle between the list, its first items or nothing: only rows at the end come and go', () => {
     const more = "      Button('more').onClick(() => { this.sel += 5 })";
     const getter =

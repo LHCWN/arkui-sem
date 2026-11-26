@@ -50,9 +50,6 @@ export interface WriteFact {
    *  (`clear`: `[]`, `this.F.slice(0, 0)`). Even a sorted or reversed view of the array shows the same item at each
    *  position, or no rows. */
   keepsItems?: 'copy' | 'clear';
-  /** An object literal that spreads the old value (`this.F = { ...this.F, name: x }`): the properties it sets; the
-   *  others keep their values. */
-  sets?: string[];
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
   /** The write loads what the component starts with: in aboutToAppear or a helper only it calls, outside callbacks
@@ -250,14 +247,6 @@ export interface Branch {
   arm: 'then' | 'else';
 }
 
-/** An array a loop's source may show: the field it starts from and the accesses on that field before any call (`.tags`
- *  in `this.F.tags.filter(…)`, `[i].tags` in `this.F[this.sel].tags`). A write of the field at or below that array may
- *  move it; one beside it (`this.F.name`) does not. */
-export interface ShownArray {
-  field: string;
-  path: PathSegment[];
-}
-
 /**
  * The loop's data source. field: `this.F`. derived: an expression over fields (`this.F.filter(…)`, `this.F[i].p`,
  * `X[this.S].p`). call: a method call or a getter of the component (`this.visible()`, `this.visible`). new: a `new`
@@ -269,9 +258,6 @@ export interface LoopSource {
   /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`); for a conditional, the
    *  field each arm that shows an array starts from (`this.ready ? this.F : []`). */
   root?: string;
-  /** Every array the source may show: of each arm of a conditional, or each value a method or getter it
-   *  calls returns, that starts from a field. */
-  shows?: ShownArray[];
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
    *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
   itemsOf?: string;

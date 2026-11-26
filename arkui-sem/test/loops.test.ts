@@ -90,18 +90,8 @@ describe('loop source', () => {
       helper: 'all',
       returns: 'songs',
       returnsFrom: 'songs',
-      shows: [{ field: 'songs', path: [] }],
       fields: ['songs'],
     });
-  });
-
-  test('the arrays a source may show: the field each starts from and the accesses on it before any call', () => {
-    const at = [{ index: 'this.shelf' }, { prop: 'artist' }];
-    assert.deepEqual(source('this.songs[this.shelf].artist.slice().reverse()').shows, [{ field: 'songs', path: at }]);
-    assert.deepEqual(source('this.songs.slice(0, 2)[0].artist').shows, [{ field: 'songs', path: [] }]);
-    assert.deepEqual(source('this.shelf > 0 ? this.songs[this.shelf].artist : []').shows, [
-      { field: 'songs', path: at },
-    ]);
   });
 
   test("a helper's accesses in its handlers are left out", () => {

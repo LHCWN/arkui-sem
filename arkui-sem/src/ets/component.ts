@@ -602,9 +602,8 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     value: mutatingCall ? undefined : assignedValue(assignment),
     ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
     ...(callName === undefined ? {} : { call: callName }),
-    ...(assignment && keepsPositions(assignment) ? { keepsPositions: true } : {}),
-    ...(assignment ? keptItems(assignment) : {}),
-    ...(assignment ? spreadSets(assignment) : {}),
+    ...(assignment && segments.length === 0 && keepsPositions(assignment, field.name) ? { keepsPositions: true } : {}),
+    ...(assignment && segments.length === 0 ? keptItems(assignment, field.name) : {}),
     ...(ctx.arms ? { branches: [...ctx.arms, ...branchesOf(base, ctx.method.body, ctx.scan.sf)] } : {}),
     ...(rebuilt.length ? { rebuilt } : {}),
     ...(assignment && segments.length === 0 && repeatsInitializer(assignment, ctx.initCalls.get(field.name), ctx.scan)
@@ -627,16 +626,16 @@ function accumulates(assignment: ts.BinaryExpression, field: string): boolean {
   return reads(assignment.right);
 }
 
-/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]`, `this.F.slice()` or `this.F.slice(0, n)`, also of an array
- *  below the field (`this.F.tags = [...this.F.tags, x]`): no other item at an old position. */
-function keepsPositions(assignment: ts.BinaryExpression): boolean {
+/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]`, `this.F.slice()` or `this.F.slice(0, n)`: no other
+ *  item at an old position. */
+function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return false;
   }
   const value = unwrap(assignment.right);
   if (ts.isArrayLiteralExpression(value)) {
     const [first] = value.elements;
-    return first === undefined || (ts.isSpreadElement(first) && sameTarget(first.expression, assignment.left));
+    return first === undefined || (ts.isSpreadElement(first) && thisMember(unwrap(first.expression)) === field);
   }
   if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
     return false;
@@ -644,38 +643,12 @@ function keepsPositions(assignment: ts.BinaryExpression): boolean {
   const method = value.expression.name.text;
   const [start] = value.arguments;
   const fromStart = method === 'slice' && (start === undefined || isZero(start));
-  return (method === 'concat' || fromStart) && sameTarget(value.expression.expression, assignment.left);
-}
-
-/** `this.F = { ...this.F, name: x }`: the properties set next to a spread of the old value. None when another spread
- *  or a computed name may set any. */
-function spreadSets(assignment: ts.BinaryExpression): Pick<WriteFact, 'sets'> {
-  const value = unwrap(assignment.right);
-  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isObjectLiteralExpression(value)) {
-    return {};
-  }
-  let self = false;
-  const sets: string[] = [];
-  for (const p of value.properties) {
-    if (ts.isSpreadAssignment(p) && sameTarget(p.expression, assignment.left)) {
-      self = true;
-    } else if (p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && !ts.isSpreadAssignment(p)) {
-      sets.push(p.name.text);
-    } else {
-      return {};
-    }
-  }
-  return self ? { sets } : {};
-}
-
-/** Both name the same place: `this.F.tags` and `(this.F.tags)`. */
-function sameTarget(a: ts.Expression, b: ts.Expression): boolean {
-  return unwrap(a).getText() === unwrap(b).getText();
+  return (method === 'concat' || fromStart) && thisMember(unwrap(value.expression.expression)) === field;
 }
 
 /** The same items (`[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.concat()`) or none (`[]`,
- *  `this.F.slice(0, 0)`), also of an array below the field. */
-function keptItems(assignment: ts.BinaryExpression): Pick<WriteFact, 'keepsItems'> {
+ *  `this.F.slice(0, 0)`). */
+function keptItems(assignment: ts.BinaryExpression, field: string): Pick<WriteFact, 'keepsItems'> {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return {};
   }
@@ -685,12 +658,12 @@ function keptItems(assignment: ts.BinaryExpression): Pick<WriteFact, 'keepsItems
     if (first === undefined) {
       return { keepsItems: 'clear' };
     }
-    const copy = rest.length === 0 && ts.isSpreadElement(first) && sameTarget(first.expression, assignment.left);
+    const copy = rest.length === 0 && ts.isSpreadElement(first) && thisMember(unwrap(first.expression)) === field;
     return copy ? { keepsItems: 'copy' } : {};
   }
   if (
     !(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)) ||
-    !sameTarget(value.expression.expression, assignment.left)
+    thisMember(unwrap(value.expression.expression)) !== field
   ) {
     return {};
   }

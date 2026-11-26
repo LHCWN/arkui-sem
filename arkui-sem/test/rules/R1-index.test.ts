@@ -130,84 +130,6 @@ describe('foreach-index-key fires', () => {
       );
     }
   });
-
-  test('a write that moves an array below the field the source starts from', () => {
-    const trip = "  @State trip: Trip = { id: 0, name: '', tags: [] }";
-    for (const [source, write] of [
-      ['this.trip.tags', 'this.trip.tags = this.trip.tags.filter((t: string) => t.length > 0)'],
-      ['this.trip.tags', 'this.trip.tags.sort()'],
-      ['this.trip.tags.slice()', "this.trip.tags[0] = 'x'"],
-      ['this.trips[this.sel].tags', 'this.trips[this.sel].tags = []\n        this.trips[this.sel].tags.reverse()'],
-      ['this.trips[this.sel].tags', 'this.trips.sort()'],
-    ]) {
-      const src = page(trip, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-      assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-    }
-    // Control: a write beside the array, an append, a clear.
-    for (const [source, write] of [
-      ['this.trip.tags', "this.trip.name = 'x'"],
-      ['this.trip.tags', "this.trip.tags.push('x')"],
-      ['this.trip.tags', "this.trip.tags = [...this.trip.tags, 'x']"],
-      ['this.trip.tags', 'this.trip.tags = []'],
-      ['this.trips[this.sel].tags', "this.trips[this.sel].name = 'x'"],
-      ['this.trips[this.sel].tags', 'this.trips.push(this.trip)'],
-    ]) {
-      const src = page(trip, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-      assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
-    }
-  });
-
-  test('a write of a holder above the array the source shows', () => {
-    const members =
-      "  @State trip: Trip = { id: 0, name: '', tags: [] }\n  @State state: { trip: Trip } = { trip: { id: 0, name: '', tags: [] } }\n  @State more: string[] = []";
-    const fires = [
-      ['this.state.trip.tags', "this.state.trip = { id: 1, name: 'b', tags: ['x'] }"],
-      ['this.trips[this.sel].tags', 'this.trips[0] = this.trip'],
-      ['this.trip.tags', 'this.trip = { ...this.trip, tags: this.trip.tags.slice().reverse() }'],
-    ];
-    for (const [source, write] of fires) {
-      const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-      assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-    }
-    // Control: a holder array that keeps its positions, an object spread that leaves the array alone.
-    const quiet = [
-      ['this.trips[this.sel].tags.slice().reverse()', 'this.trips.push(this.trip)'],
-      ['this.trips[this.sel].tags.concat(this.more)', 'this.trips = [...this.trips, this.trip]'],
-      ['this.trip.tags', "this.trip = { ...this.trip, name: 'x' }"],
-      [
-        'this.state.trip.tags',
-        'this.state = { ...this.state }\n        this.state.trip = { ...this.state.trip, id: 2 }',
-      ],
-    ];
-    for (const [source, write] of quiet) {
-      const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-      assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
-    }
-  });
-
-  test('a nested array under a conditional, a getter, or one of two holders', () => {
-    const members = `  @State trip: Trip = { id: 0, name: '', tags: [] }
-  @State other: Trip = { id: 0, name: '', tags: [] }
-  get tags(): string[] {
-    return this.trip.tags
-  }`;
-    for (const source of [
-      'this.sel > 0 ? this.trip.tags : []',
-      'this.tags',
-      'this.sel > 0 ? this.trip.tags : this.other.tags',
-    ]) {
-      for (const write of [
-        'this.trip.tags = this.trip.tags.filter((t: string) => t.length > 0)',
-        'this.trip.tags.sort()',
-      ]) {
-        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
-      }
-      // Control: a write beside the array.
-      const src = page(members, `      Button('a').onClick(() => { this.trip.name = 'x' })\n${loop(source)}`);
-      assert.deepEqual(indexKeyed(src), [], `a write beside the array under ${source}`);
-    }
-  });
 });
 
 describe('foreach-index-key does not fire', () => {
@@ -299,23 +221,6 @@ describe('foreach-index-key does not fire', () => {
       c?.shifts.map((s) => [s.field.name, s.how]),
       [['names', 'move']],
     );
-  });
-
-  test('an append to one of the arrays a conditional may show', () => {
-    const more = '  @State more: string[] = []';
-    for (const source of ['this.sel > 0 ? this.names : this.more']) {
-      for (const field of ['names', 'more']) {
-        const write = `if (this.${field}) { this.${field}.push('x') }`;
-        const src = page(more, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
-        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
-      }
-    }
-    // Control: the toggle switches arrays; appending to the first of two arrays shown one after the other moves the
-    // second's items.
-    const toggle = page(more, `${tabs}\n${loop('this.sel > 0 ? this.names : this.more')}`);
-    assert.equal(indexKeyed(toggle).length, 1);
-    const push = "      Button('a').onClick(() => { this.names.push('x') })";
-    assert.equal(indexKeyed(page(more, `${push}\n${loop('[...this.names, ...this.more]')}`)).length, 1);
   });
 
   test('a toggle between the list, its first items or nothing: only rows at the end come and go', () => {

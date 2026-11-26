@@ -1,15 +1,5 @@
 // ForEach and LazyForEach calls, and what rows and builders do with the values they are given.
-import type {
-  Branch,
-  BuilderFact,
-  LoopComparison,
-  LoopFact,
-  LoopKey,
-  LoopSource,
-  PathSegment,
-  ShownArray,
-  ValueUses,
-} from '../facts.js';
+import type { Branch, BuilderFact, LoopComparison, LoopFact, LoopKey, LoopSource, ValueUses } from '../facts.js';
 import { type BuilderNames, climb, isBuilderCall } from './callbacks.js';
 import { ts } from './parse.js';
 import type { FileScan } from './scan.js';
@@ -132,14 +122,13 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const body = helper === undefined ? undefined : members.body(helper);
   if (helper !== undefined && body && members.isHelper(helper, ts.isCallExpression(value))) {
     const returns = members.returnsField(helper);
-    const shown = shownArrays(members.returned(helper), body, members, scan);
+    const shown = shownArrays(members.returned(helper), body, members);
     return {
       text,
       shape: 'call',
       helper,
       ...(returns === undefined ? {} : { returns }),
       ...(shown.from === undefined ? {} : { returnsFrom: shown.from }),
-      ...(shown.arrays.length ? { shows: shown.arrays } : {}),
       ...(shown.reorders ? { reorders: true as const } : {}),
       ...(shown.windowEnds.length ? { windowEnds: shown.windowEnds } : {}),
       fields,
@@ -149,7 +138,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     return { text, shape: 'other', fields };
   }
   const arms = armsOf(value);
-  const shown = shownArrays(arms, value, members, scan);
+  const shown = shownArrays(arms, value, members);
   // Only a source without arms shows the field's own elements.
   const root = arms.length === 1 ? rootField(value, members) : shown.from;
   const filteredBy = root === undefined || arms.length > 1 ? undefined : elementFilters(value);
@@ -158,7 +147,6 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
     text,
     shape: 'derived',
     ...(root === undefined ? {} : { root }),
-    ...(shown.arrays.length ? { shows: shown.arrays } : {}),
     ...items,
     ...(shown.reorders ? { reorders: true as const } : {}),
     ...(shown.windowEnds.length ? { windowEnds: shown.windowEnds } : {}),
@@ -168,9 +156,8 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
 
 /** What the arrays a source may show (`values`: the arms of a conditional, or what a method or getter returns) have in
  *  common. from: the field every one starts from; a value that shows nothing (`[]`) or no field's array
- *  (`DEFAULTS`) shows no other one. arrays: the arrays of fields the values show. reorders: one sorts, reverses or cuts
- *  from the end. windowEnds: the fields read only as the end
- *  of of a `.slice(0, n)` that keeps the items in place, nowhere else in `around` (the conditional or the
+ *  (`DEFAULTS`) shows no other one. reorders: one sorts, reverses or cuts from the end. windowEnds: the fields read
+ *  only as the end of a `.slice(0, n)` that keeps the items in place, nowhere else in `around` (the conditional or the
  *  method's body), whose other reads may pick another array; when every value shows nothing or the start of that
  *  field's array (`this.showAll ? this.F : this.F.slice(0, 3)`), every field `around` reads but that one: a change
  *  can only show more or fewer items at the end. */
@@ -178,22 +165,12 @@ function shownArrays(
   values: ts.Expression[],
   around: ts.Node,
   members: Members,
-  scan: FileScan,
 ): {
   from?: string;
-  arrays: ShownArray[];
   reorders: boolean;
   windowEnds: string[];
 } {
-  const arrays = new Map<string, ShownArray>();
-  for (const e of values) {
-    const field = isEmptyValue(e) ? undefined : rootField(e, members);
-    if (field !== undefined) {
-      const array = { field, path: pathToArray(e, scan) };
-      arrays.set(JSON.stringify(array), array);
-    }
-  }
-  const roots = new Set([...arrays.values()].map((a) => a.field));
+  const roots = new Set(values.flatMap((e) => (isEmptyValue(e) ? [] : (rootField(e, members) ?? []))));
   const [from] = roots.size === 1 ? roots : [];
   const ends = new Set(values.flatMap(prefixEnds));
   const elsewhere = new Set(fieldsRead(around, members, ends));
@@ -203,7 +180,6 @@ function shownArrays(
       : [...new Set([...ends].flatMap((end) => fieldsRead(end, members)))].filter((f) => !elsewhere.has(f));
   return {
     ...(from === undefined ? {} : { from }),
-    arrays: [...arrays.values()],
     reorders: values.some((e) => inChain(e, reordersCall)),
     windowEnds,
   };
@@ -397,30 +373,6 @@ function rootField(expr: ts.Expression, members: Members): string | undefined {
       return undefined;
     }
   }
-}
-
-/** The property and element accesses on the field the chain starts from, before any call or copy: `.tags` in
- *  `this.F.tags.filter(…)`, `[i].tags` in `this.F[i].tags`. */
-function pathToArray(expr: ts.Expression, scan: FileScan): PathSegment[] {
-  let path: PathSegment[] = [];
-  for (let value = unwrap(expr); thisMember(value) === undefined; ) {
-    if (ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)) {
-      path = [];
-      value = unwrap(value.expression.expression);
-    } else if (ts.isPropertyAccessExpression(value)) {
-      path.unshift({ prop: value.name.text });
-      value = unwrap(value.expression);
-    } else if (ts.isElementAccessExpression(value)) {
-      path.unshift({ index: scan.text(value.argumentExpression) });
-      value = unwrap(value.expression);
-    } else if (isSpreadCopy(value)) {
-      path = [];
-      value = unwrap(value.elements[0].expression);
-    } else {
-      return [];
-    }
-  }
-  return path;
 }
 
 /** `[...x]`: a copy of one array. */

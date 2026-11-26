@@ -33,8 +33,9 @@
     reassignment of the holder fires, an object spread that keeps the array too (`{ ...this.trip, name: x }`); a write
     below it (`this.trip.tags.sort()`, `this.trips[0].tags = …`) goes quiet.
   - A conditional between two fields (`c ? this.a : this.b`, `this.a.length > 0 ? this.a : this.b`) and a fallback
-    (`this.F ?? []`, `this.F || []`) have no root: any whole-array write of a field fires, an append too. A `null` or
-    `undefined` write counts as a reassignment and fires.
+    (`this.F ?? []`, `this.F || []`) have no root. Written in place, any whole-array or index write of a field fires,
+    an append too; returned by a method or getter, an append or a clear goes quiet. A `null` or `undefined` write
+    counts as a reassignment and fires.
   - Other items after the array: under `this.a.concat(this.b)` written in place, an append or a clear of `a` goes
     quiet though it moves the items of `b`, and an append to `b` fires. An array literal (`[...this.a, ...this.b]`) has
     no root: any whole-array write of either fires, an append too. Returned by a method or getter, an append to either

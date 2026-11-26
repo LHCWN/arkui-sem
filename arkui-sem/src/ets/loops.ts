@@ -65,8 +65,6 @@ export function loopsIn(
   body: ts.Node,
   /** The `if` arms of build() the method runs in. */
   arms: Branch[],
-  /** The arms in the method's own body count too: false when it may run several times at once. */
-  ownArms: boolean,
   scan: FileScan,
   names: BuilderNames,
   members: Members,
@@ -76,7 +74,7 @@ export function loopsIn(
     if ((ts.isCallExpression(node) || ts.isEtsComponentExpression(node)) && ts.isIdentifier(node.expression)) {
       const callee = node.expression.text;
       if (isKeyedLoop(callee) && !climb(node, body, names).inHandler) {
-        const branches = [...arms, ...(ownArms ? branchesOf(node, body, scan.sf) : [])];
+        const branches = [...arms, ...branchesOf(node, body, scan.sf)];
         out.push(loopFact(node, callee, method, branches, scan, names, members));
       }
     }

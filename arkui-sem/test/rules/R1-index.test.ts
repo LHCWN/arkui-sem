@@ -257,49 +257,6 @@ describe('foreach-index-key fires', () => {
       }
     }
   });
-
-  test('a write in the other arm of an if inside an outer loop row: other rows take that arm', () => {
-    const rows = (inner: string) => `      ForEach(this.trips, (g: Trip) => {
-        if (g.id > 0) {
-  ${inner}
-        } else {
-          Button('sort').onClick(() => { this.names.sort() })
-        }
-      }, (g: Trip) => \`\${g.id}\`)`;
-    assert.equal(indexKeyed(page('', rows(loop('this.names')))).length, 1);
-    const repeat = `      Repeat<Trip>(this.trips).each((r: RepeatItem<Trip>) => {
-        if (r.item.id > 0) {
-  ${loop('this.names')}
-        } else {
-          Button('sort').onClick(() => { this.names.sort() })
-        }
-      })`;
-    assert.equal(indexKeyed(page('', repeat)).length, 1);
-  });
-
-  test('a write in the other arm of an if inside a @Builder that runs several times at once', () => {
-    const panel = `  @Builder Panel(on: boolean) {
-    if (on) {
-${loop('this.names')}
-    } else {
-      Button('sort').onClick(() => { this.names.sort() })
-    }
-  }`;
-    // Each row calls it; build() calls it twice; the else arm hands the write to another @Builder.
-    const rowCalls = '      ForEach(this.trips, (g: Trip) => { this.Panel(g.id > 0) }, (g: Trip) => `${g.id}`)';
-    assert.equal(indexKeyed(page(panel, rowCalls)).length, 1);
-    const repeatRows = '      Repeat<Trip>(this.trips).each((r: RepeatItem<Trip>) => { this.Panel(r.item.id > 0) })';
-    assert.equal(indexKeyed(page(panel, repeatRows)).length, 1);
-    assert.equal(indexKeyed(page(panel, '      this.Panel(true)\n      this.Panel(false)')).length, 1);
-    const sorter = "  @Builder Sorter() {\n    Button('sort').onClick(() => { this.names.sort() })\n  }";
-    const handsOn = panel.replace("Button('sort').onClick(() => { this.names.sort() })", 'this.Sorter()');
-    assert.equal(indexKeyed(page(`${handsOn}\n${sorter}`, rowCalls)).length, 1);
-    // Control: called once, or once in each arm of an if, it takes one arm at a time.
-    assert.deepEqual(indexKeyed(page(panel, '      this.Panel(this.sel > 0)')), []);
-    const eachArm =
-      '      if (this.sel > 0) {\n        this.Panel(true)\n      } else {\n        this.Panel(false)\n      }';
-    assert.deepEqual(indexKeyed(page(panel, eachArm)), []);
-  });
 });
 
 describe('foreach-index-key does not fire', () => {

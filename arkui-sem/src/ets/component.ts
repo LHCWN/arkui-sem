@@ -111,6 +111,7 @@ export function component(
   const renderOnly = renderOnlyMethods(scans, drawing);
   const loads = new Set<WriteFact>();
   const { arms, repeated } = methodArms(scans);
+  const initCalls = initializerCalls(s, scan);
   for (const s of scans) {
     recordAccesses(s, byName, scan, builderNames, {
       drawn: drawing.get(s.method),
@@ -118,6 +119,7 @@ export function component(
       arms: arms.get(s.method.name),
       ownArms: !repeated.has(s.method.name),
       loads,
+      initCalls,
     });
   }
   const external = externalMethods(scans);
@@ -276,8 +278,13 @@ function membersOf(scans: MethodWalk[], fields: Map<string, FieldFact>, builders
     }
     return out;
   };
+  const returnsField = (name: string): string | undefined => {
+    const values = new Set(returned(name).map((e) => thisMember(unwrap(e))));
+    const [value] = values.size === 1 ? values : [];
+    return value !== undefined && fields.has(value) ? value : undefined;
+  };
   const body = (name: string) => byName.get(name)?.method.body;
-  return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned, body };
+  return { fields: new Set(fields.keys()), isHelper, fieldsOf, returned, returnsField, body };
 }
 
 export function methodsOf(s: ts.StructDeclaration): Method[] {
@@ -457,12 +464,14 @@ function recordAccesses(
     arms,
     ownArms,
     loads,
+    initCalls,
   }: {
     drawn: DrawSite | undefined;
     renderOnly: boolean;
     arms: Branch[] | undefined;
     ownArms: boolean;
     loads: Set<WriteFact>;
+    initCalls: Map<string, string>;
   },
 ) {
   const m = walk.method;
@@ -480,6 +489,7 @@ function recordAccesses(
     arms,
     ownArms,
     loads,
+    initCalls,
   };
   for (const base of walk.accesses) {
     const field = fields.get(base.name.text);
@@ -515,6 +525,8 @@ interface AccessContext {
   ownArms: boolean;
   /** Writes outside callbacks or in promise continuations only (`.then`): run once if their method is. */
   loads: Set<WriteFact>;
+  /** Each field whose initializer is a call, with that call's text. */
+  initCalls: Map<string, string>;
 }
 
 /** One `this.<field>…` access: the path below the field, then whether it writes (assignment, update, mutating call). */
@@ -589,6 +601,9 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
       ? { branches: [...ctx.arms, ...(ctx.ownArms ? branchesOf(base, ctx.method.body, ctx.scan.sf) : [])] }
       : {}),
     ...(rebuilt.length ? { rebuilt } : {}),
+    ...(assignment && segments.length === 0 && repeatsInitializer(assignment, ctx.initCalls.get(field.name), ctx.scan)
+      ? { repeatsInitializer: true }
+      : {}),
     disabledRules: ctx.scan.disabledAt(line),
   };
   field.writes.push(write);
@@ -688,6 +703,45 @@ function keptItems(assignment: ts.BinaryExpression): Pick<WriteFact, 'keepsItems
     (method === 'concat' && args.length === 0) ||
     (method === 'slice' && (args.length === 0 || (args.length === 1 && isZero(args[0]))));
   return copy ? { keepsItems: 'copy' } : {};
+}
+
+/** The fields whose initializer is a call, with its tokens, so that formatting doesn't tell two calls apart; a `new`
+ *  expression is no call, so it never matches. */
+function initializerCalls(s: ts.StructDeclaration, scan: FileScan): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of s.members) {
+    const name = memberName(m.name);
+    const init = ts.isPropertyDeclaration(m) && m.initializer ? unwrap(m.initializer) : undefined;
+    if (name !== undefined && init && ts.isCallExpression(init)) {
+      out.set(name, tokens(init, scan.sf));
+    }
+  }
+  return out;
+}
+
+function repeatsInitializer(assignment: ts.BinaryExpression, init: string | undefined, scan: FileScan): boolean {
+  const value = unwrap(assignment.right);
+  return (
+    init !== undefined &&
+    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isCallExpression(value) &&
+    tokens(value, scan.sf) === init
+  );
+}
+
+/** The tokens of an expression, one space apart: the leaves of its syntax tree, so whitespace and comments between them
+ *  drop out while a string, template part or regex keeps its text as written. */
+function tokens(node: ts.Node, sf: ts.SourceFile): string {
+  const out: string[] = [];
+  const visit = (n: ts.Node) => {
+    const children = n.getChildren(sf).filter((child) => !ts.isJSDoc(child));
+    if (children.length === 0) {
+      out.push(n.getText(sf));
+    }
+    children.forEach(visit);
+  };
+  visit(node);
+  return out.join(' ');
 }
 
 /** What an assignment assigns: an object literal, a `new` instance, a constant, or anything else (compound and update

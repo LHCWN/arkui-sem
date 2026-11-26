@@ -34,6 +34,8 @@ export interface Members {
   isHelper(name: string, called: boolean): boolean;
   /** The fields a method or getter accesses outside handlers, through the helpers it uses there, transitively. */
   fieldsOf(name: string): string[];
+  /** The field every value a method or getter returns is, as is (`return this.F`, after any other statements). */
+  returnsField(name: string): string | undefined;
   /** The expressions a method or getter returns, outside the functions it holds; each arm of a conditional apart. */
   returned(name: string): ts.Expression[];
   /** The body of a method or getter. */
@@ -95,6 +97,7 @@ function loopFact(
   return {
     kind,
     line: scan.line(call),
+    sourceLine: scan.line(source ? unwrap(source) : call),
     method,
     ...(itemParam === undefined ? {} : { itemParam }),
     ...(indexParam === undefined ? {} : { indexParam }),
@@ -122,10 +125,13 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
   const helper = ts.isCallExpression(value) ? thisMember(value.expression) : member;
   const body = helper === undefined ? undefined : members.body(helper);
   if (helper !== undefined && body && members.isHelper(helper, ts.isCallExpression(value))) {
+    const returns = members.returnsField(helper);
     const shown = shownArrays(members.returned(helper), body, members, scan);
     return {
       text,
       shape: 'call',
+      helper,
+      ...(returns === undefined ? {} : { returns }),
       ...(shown.from === undefined ? {} : { returnsFrom: shown.from }),
       ...(shown.arrays.length ? { shows: shown.arrays } : {}),
       ...(shown.reorders ? { reorders: true as const } : {}),

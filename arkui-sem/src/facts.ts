@@ -64,6 +64,9 @@ export interface WriteFact {
   branches?: Branch[];
   /** The write runs before the first build(): in aboutToAppear before any await, or in a helper only that calls. */
   beforeFirstRender?: true;
+  /** The write assigns the same call as the field's initializer (`this.c = Store.getInstance()`): for a singleton or a
+   *  shared lookup, the same object. */
+  repeatsInitializer?: true;
   /** The new objects the write puts where elements of the field were (absent when none). */
   rebuilt?: RebuiltElement[];
   disabledRules: string[];
@@ -203,6 +206,8 @@ export interface InputFact {
 export interface LoopFact {
   kind: 'ForEach' | 'LazyForEach';
   line: number;
+  /** The line the source argument starts on: the call's line unless the call spans lines. */
+  sourceLine: number;
   method: string;
   /** Absent when the item generator is not a function written in place or its parameter is destructured. */
   itemParam?: string;
@@ -256,6 +261,10 @@ export interface LoopSource {
   /** The item properties the filters in that chain test as flags (`s.liked`, `!s.hidden`): a change to one moves the
    *  element into the items or out of them. */
   filteredBy?: string[];
+  /** For a call: the method or getter (`shown` in `this.shown`, `(this.shown)!`, `this.shown(true)`). */
+  helper?: string;
+  /** For a call: the field every value the method or getter returns is, as is (`return this.F`). */
+  returns?: string;
   /** The source, or what the method or getter it calls returns, sorts or reverses an array or cuts it from the end
    *  (`.reverse()`, `.slice(-n)`): an append moves the items at a position too. */
   reorders?: true;

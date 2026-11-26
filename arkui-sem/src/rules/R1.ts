@@ -14,6 +14,7 @@ import type {
   WriteFact,
 } from '../facts.js';
 import {
+  afterFirstLoad,
   className,
   declarationOf,
   elementType,
@@ -42,7 +43,15 @@ import {
   segmentText,
   typeFact,
 } from '../queries.js';
-import { type Candidate, fingerprint, type IndexShift, type KeyStaleRebuild, type V2Gap } from './candidate.js';
+import {
+  type Candidate,
+  type FieldWrite,
+  fingerprint,
+  type IndexShift,
+  type KeyStaleRebuild,
+  type LazySourceRebuiltCandidate,
+  type V2Gap,
+} from './candidate.js';
 
 /** Types whose index writes and API calls V2 observes on an observed property, besides arrays. */
 const V2_CONTAINERS = new Set(['Map', 'Set', 'Date', 'WeakMap', 'WeakSet']);
@@ -368,6 +377,36 @@ export function r1Candidates(c: ComponentFact, facts: FileFacts, resolver?: Clas
   if (c.version === 'V1') {
     const stale = new Set(out.flatMap((candidate) => (candidate.kind === 'foreach-key-stale' ? [candidate.loop] : [])));
     out.push(...indexKeyCandidates(c, facts, stale, resolver));
+    const lazy = lazySourceCandidates(c, facts);
+    // Declaring a reassigned source @State doesn't make LazyForEach follow it: the lazy kind replaces that advice, or
+    // the reassignment needs none (a singleton fetched again, a first load the loop waits for, a disable comment),
+    // unless build() also draws the field outside the loop's source (`Text(this.source.totalCount())`), which it does
+    // redraw.
+    const sourceOnly = (field: FieldFact) => {
+      const loops = c.loops.filter(
+        (loop) =>
+          loop.kind === 'LazyForEach' &&
+          (loop.source.shape === 'field' ? loop.source.root : loop.source.returns) === field.name,
+      );
+      return (
+        loops.length > 0 &&
+        field.writes.some((write) => write.path === undefined) &&
+        renderingReads(field).every(
+          (read) =>
+            read.inForEach &&
+            loops.some((loop) =>
+              // Through a getter or method, `via` names it: `this.shown`, or `this.load()` whatever the arguments.
+              read.via === undefined
+                ? loop.sourceLine === read.line
+                : read.via === `this.${loop.source.helper}` || read.via === `this.${loop.source.helper}()`,
+            ),
+        )
+      );
+    };
+    const kept = out.filter(
+      (candidate) => !(candidate.kind === 'undecorated-mutated-rendered' && sourceOnly(candidate.field)),
+    );
+    return [...kept, ...lazy];
   }
   return out;
 }
@@ -388,9 +427,7 @@ function indexKeyCandidates(
     if (loop.kind !== 'ForEach' || loop.key.kind !== 'index') {
       continue;
     }
-    const source = loop.source.text.replace(/\s+/g, ' ');
-    const count = (seen.get(source) ?? 0) + 1;
-    seen.set(source, count);
+    const source = sourceTag(loop, seen);
     if (loop.disabledRules.includes('R1') || stale.has(loop)) {
       continue;
     }
@@ -421,7 +458,7 @@ function indexKeyCandidates(
       fingerprint: fingerprint(
         facts.file,
         `${component.name}.${loop.source.root ?? loop.source.returnsFrom ?? loop.source.fields[0]}`,
-        `R1-foreach-index@${source}${count > 1 ? `~${count}` : ''}`,
+        `R1-foreach-index@${source}`,
       ),
     });
   }
@@ -435,14 +472,8 @@ function indexKeyCandidates(
  *  loop, which runs while the loop is not shown, and switching back recreates it. The array a method or getter
  *  returns moves like the source's own. */
 function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): IndexShift[] {
-  const field = component.fields.find((f) => f.name === name);
-  if (
-    !field ||
-    isNonState(field) ||
-    !isReactive(field) ||
-    field.disabledRules.includes('R1') ||
-    loop.source.windowEnds?.includes(name)
-  ) {
+  const field = observedField(component, name);
+  if (!field || loop.source.windowEnds?.includes(name)) {
     return [];
   }
   const arrays = (loop.source.shows ?? []).filter((a) => a.field === name);
@@ -479,13 +510,96 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
   const writes = field.writes.filter(
     (write) =>
       write.context !== 'render' &&
-      !write.initialLoad &&
-      !write.beforeFirstRender &&
+      afterFirstLoad(write) &&
       !write.disabledRules.includes('R1') &&
       !exclusiveArms(write.branches ?? [], loop.branches) &&
       changes(write),
   );
   return writes.map((write) => ({ field, write, how }));
+}
+
+/** The loop's source as written, for a fingerprint, plus a counter when an earlier loop in `seen` shares it. */
+function sourceTag(loop: LoopFact, seen: Map<string, number>): string {
+  const source = loop.source.text.replace(/\s+/g, ' ');
+  const count = (seen.get(source) ?? 0) + 1;
+  seen.set(source, count);
+  return count > 1 ? `${source}~${count}` : source;
+}
+
+/** One candidate per LazyForEach whose source is created while drawing (a `new` expression, a method or a getter) or is
+ *  a field reassigned after the first render to another object (not the initializer's call again); a method or getter
+ *  that returns a field as is counts as that field. */
+function lazySourceCandidates(component: ComponentFact, facts: FileFacts): LazySourceRebuiltCandidate[] {
+  const out: LazySourceRebuiltCandidate[] = [];
+  const seen = new Map<string, number>();
+  for (const loop of component.loops) {
+    if (loop.kind !== 'LazyForEach') {
+      continue;
+    }
+    const source = sourceTag(loop, seen);
+    if (loop.disabledRules.includes('R1')) {
+      continue;
+    }
+    const { shape, root, returns, fields } = loop.source;
+    const name = shape === 'field' ? root : returns;
+    const holder = component.fields.find((f) => f.name === name);
+    if (holder === undefined && shape !== 'new' && shape !== 'call') {
+      continue;
+    }
+    const reassigns =
+      holder === undefined || holder.disabledRules.includes('R1')
+        ? []
+        : holder.writes.filter(
+            (write) => write.path === undefined && !write.repeatsInitializer && laterWrite(write, loop),
+          );
+    if (holder !== undefined && reassigns.length === 0) {
+      continue;
+    }
+    out.push({
+      rule: 'R1',
+      kind: 'lazyforeach-source-rebuilt',
+      file: facts.file,
+      component,
+      line: loop.line,
+      loop,
+      holder,
+      reassigns,
+      changes: fields.filter((f) => f !== name).flatMap((f) => redraws(component, loop, f)),
+      fingerprint: fingerprint(
+        facts.file,
+        `${component.name}.${holder?.name ?? fields[0] ?? 'LazyForEach'}`,
+        `R1-lazy-source@${source}`,
+      ),
+    });
+  }
+  return out;
+}
+
+/** After the first render, R1 not disabled, and not only in the other arm of an `if` that holds the loop (switching
+ *  arms recreates it). A first load after an await or in a promise continuation lands after the first build, so
+ *  LazyForEach keeps the source it had; it counts only for a loop outside any `if`, whose arm may open only once the
+ *  load is done (a loading flag). */
+function laterWrite(write: WriteFact, loop: LoopFact): boolean {
+  return (
+    !write.beforeFirstRender &&
+    !(write.initialLoad && loop.branches.length > 0) &&
+    !write.disabledRules.includes('R1') &&
+    !exclusiveArms(write.branches ?? [], loop.branches)
+  );
+}
+
+/** The writes of a state field V1 observes, so redraw what reads it. */
+function redraws(component: ComponentFact, loop: LoopFact, name: string): FieldWrite[] {
+  const field = observedField(component, name);
+  return (field?.writes ?? [])
+    .filter((write) => write.context !== 'render' && (write.path?.length ?? 0) <= 1 && laterWrite(write, loop))
+    .flatMap((write) => (field ? [{ field, write }] : []));
+}
+
+/** A V1 state field of the component, R1 not disabled. */
+function observedField(component: ComponentFact, name: string): FieldFact | undefined {
+  const field = component.fields.find((f) => f.name === name);
+  return field && !isNonState(field) && isReactive(field) && !field.disabledRules.includes('R1') ? field : undefined;
 }
 
 /** A write of the root field as a write of the array at `path` below it: the rest of its path when it writes there or

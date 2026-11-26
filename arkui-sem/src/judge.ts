@@ -370,6 +370,7 @@ const FIELD_SLICE: Record<CandidateKind, 'intent' | 'state' | null> = {
   'event-unwired': null, // decided by the facts, never judged
   'foreach-key-stale': null, // decided by the facts; a `new T(…)` makes a question without a judge call
   'foreach-index-key': null, // decided by the facts
+  'lazyforeach-source-rebuilt': null, // decided by the facts
   'unreleased-resource': null,
   'input-unbound': null, // decided by the facts
   'input-never-read': null, // decided by the facts
@@ -384,9 +385,10 @@ export function buildSlice(
 ): { [key: string]: JsonValue } {
   const comp = c.component;
   const lines = new Set<number>([comp.line]);
-  let candidate: { [key: string]: JsonValue };
+  // Kinds decided by the facts without a field are never judged, so keep only their kind.
+  let candidate: { [key: string]: JsonValue } = { kind: c.kind };
 
-  if (c.kind !== 'unreleased-resource') {
+  if ('field' in c) {
     const f = c.field;
     const nested = c.kind === 'nested-write-unobserved' ? c : undefined;
     const shown = nested?.writes ?? f.writes; // a nested-write candidate shows the writes it flags
@@ -447,7 +449,7 @@ export function buildSlice(
             }),
       };
     }
-  } else {
+  } else if (c.kind === 'unreleased-resource') {
     const r = c.resource;
     lines.add(r.acquireLine);
     candidate = {

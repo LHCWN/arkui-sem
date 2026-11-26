@@ -546,6 +546,12 @@ ${calls}`,
     const src = page('', `${tabs}\n      // arkui-sem-disable-next-line R1\n${loop('this.trips[this.sel].tags')}`);
     assert.deepEqual(indexKeyed(src), []);
   });
+
+  test('a disable comment above the only write that moves items', () => {
+    const sort =
+      "      Button('s').onClick(() => {\n        // arkui-sem-disable-next-line R1\n        this.names.sort()\n      })";
+    assert.deepEqual(indexKeyed(page('', `${sort}\n${loop('this.names')}`)), []);
+  });
 });
 
 async function findingsOf(src: string): Promise<Finding[]> {

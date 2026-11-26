@@ -19,6 +19,7 @@ export type Candidate =
   | NestedWriteCandidate
   | ForEachKeyStaleCandidate
   | ForEachIndexKeyCandidate
+  | LazySourceRebuiltCandidate
   | FieldCandidateBase<'R2', 'ownership-intent'> // passed-in field; candidates() does not emit it (callers build it)
   | EventUnwiredCandidate
   | ResourceCandidate
@@ -82,9 +83,7 @@ export interface ForEachIndexKeyCandidate extends FieldCandidateBase<'R1', 'fore
 
 /** select: a write of a field the source reads besides its array (`this.sel` in `this.items[this.sel].tags`).
  *  move: a write of that array that puts other items at existing positions (a reassignment, sort, splice). */
-export interface IndexShift {
-  field: FieldFact;
-  write: WriteFact;
+export interface IndexShift extends FieldWrite {
   how: 'select' | 'move';
 }
 
@@ -98,6 +97,24 @@ export interface KeyStaleRebuild {
 /** R2: a callback the component calls and its call sites don't pass (unwiredCallbacks). */
 export interface EventUnwiredCandidate extends FieldCandidateBase<'R2', 'event-unwired'> {
   unwired: Unwired;
+}
+
+/** R1: a LazyForEach whose data source is created while drawing or reassigned: LazyForEach updates only through the
+ *  source's DataChangeListener. Not about one field: the source may read none. */
+export interface LazySourceRebuiltCandidate extends CandidateBase<'R1', 'lazyforeach-source-rebuilt'> {
+  loop: LoopFact;
+  /** The field that holds the source (`this.D`, or a getter returning it); absent when the source is created while
+   *  drawing. */
+  holder?: FieldFact;
+  /** The writes that reassign the holder after the first render, in source order. */
+  reassigns: WriteFact[];
+  /** Writes after the first render of the other state fields the source reads, which redraw it, in source order. */
+  changes: FieldWrite[];
+}
+
+export interface FieldWrite {
+  field: FieldFact;
+  write: WriteFact;
 }
 
 /** R3: acquired in a lifecycle hook, no matching release. */

@@ -7,7 +7,7 @@ The one forward plan: plugin status and roadmap, rule coverage and phases. Desig
 The linter lives in `arkui-sem/` (package `arkui-sem` 0.2.0); see `ARCHITECTURE.md` for the layout and `arkui-sem/README.md` for install and usage. Coverage by rule, and what is still missing, is tracked under Rule coverage below.
 
 **Status:**
-- Rules: R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware, V1/V2), R1 foreach-key-stale and foreach-index-key (V1, from facts alone), R3 unreleased-resource, R2 event-unwired (shape d, from facts alone, no judge call). The other R2 shapes have a judge slice (used by the bench) but are not emitted yet.
+- Rules: R1 undecorated-mutated-rendered, R1 nested-write-unobserved (depth-aware, V1/V2), R1 foreach-key-stale, foreach-index-key and lazyforeach-source-rebuilt (V1, from facts alone), R3 unreleased-resource, R2 event-unwired (shape d, from facts alone, no judge call). The other R2 shapes have a judge slice (used by the bench) but are not emitted yet.
 - Backends: Jev, Clef, Clef-flash (also through OpenRouter: `or-clef`, `or-clef-flash`), DeepSeek flash (structured output), heuristic, Laya. The fallback chain is not implemented.
 - Tests: `npm test` (offline). The plugin and its `arkui_check` tool load in opencode 1.18.30 and in DevEco Code 0.1.12 (an opencode fork; plugin under `.deveco/`; 0.2.x refuses to run outside Mainland China).
 - DevEco demo (2026-10-08, `sandbox/demo/DEMO.md`): Clef flagged the agent's nested write, the idle gate re-sent it for the old button, and the agent fixed both. The DevEco TUI hides tool output, so the demo prompt asks the agent to quote findings verbatim.
@@ -83,7 +83,7 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | R1 undecorated field, mutated and rendered (V1/V2) | ✅ Facts + Q_R1; MDP runs in the bench | – | Intent verdict (judge/agent) |
 | R1 ForEach: elements replaced under an unchanged key (`foreach-key-stale`) | ✅ V1, single file plus child components and builders across files; facts alone | – | Aliases beyond one local, V2 |
 | R1 ForEach keyed by index over changing items (`foreach-index-key`) | ✅ V1, single file; facts alone (a question when only methods move the list) | – | Sources written by a parent (`@Prop`, `@Link`), V2 |
-| R1 LazyForEach source rebuilt or reassigned (`lazyforeach-source-rebuilt`) | ❌ Planned | – | The rule (loop facts in place) |
+| R1 LazyForEach source rebuilt or reassigned (`lazyforeach-source-rebuilt`) | ✅ V1, single file; facts alone (a finding when a state change redraws the source) | – | Cached or switched sources, nested holders, parent writes, V2 |
 | R4 wiring: `input-unbound`, `input-never-read` | ✅ V1, single file; facts alone (`input-unbound` a finding, `input-never-read` a question) | – | Path writes (`this.form.name = value`), V2 |
 | R4 wiring: `selection-never-written` | ❌ Planned (question) | – | Comparisons in the row (loop fact) |
 | R1 nested write, V1 (depth ≥ 2) | ✅ Across files (project index) | – | Aliasing (`const it = this.list[i]; it.x = …`): dataflow in the fact extractor |

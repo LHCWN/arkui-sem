@@ -43,6 +43,11 @@ export function moves(w: WriteFact): boolean {
   return isIndex(first) && below.length === 0 && !(w.call !== undefined && keepsPositionsCall(w.call));
 }
 
+/** The write runs after the component's first load: not in aboutToAppear or a helper only it calls. */
+export function afterFirstLoad(w: WriteFact): boolean {
+  return !w.initialLoad && !w.beforeFirstRender;
+}
+
 /** Two places sit in different arms of one `if`, so they never exist at once. */
 export function exclusiveArms(a: Branch[], b: Branch[]): boolean {
   return a.some((x) => b.some((y) => x.at === y.at && x.arm !== y.arm));

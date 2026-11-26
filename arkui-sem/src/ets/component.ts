@@ -195,7 +195,6 @@ function inputFacts(
         fact.effects ||
         joined.some((t) => t.effects || t.calls.length > 0) ||
         handlers.some((name) => !typingOf.has(name)),
-      normalizes: fact.normalizes || joined.some((t) => t.normalizes),
     };
   });
 }

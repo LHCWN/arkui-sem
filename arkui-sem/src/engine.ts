@@ -380,8 +380,8 @@ function describeInputUnbound(c: CandidateOf<'input-unbound'>): Description {
   const name = c.field.name;
   const [input] = c.inputs;
   const option = input.kind === 'Search' ? 'value' : 'text';
-  // `$` replaces the onChange: offered only when the onChange does nothing but store the text, as typed, in this field.
-  const twoWay = c.inputs.every((i) => !i.effects && !i.normalizes && i.writes.every((w) => w.field === name));
+  // `$$` replaces the onChange: offered only when the onChange does nothing but store the text in this field.
+  const twoWay = c.inputs.every((i) => !i.effects && i.writes.every((w) => w.field === name));
   const setters = [
     ...new Set(
       c.sets.map((write) =>

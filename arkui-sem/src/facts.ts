@@ -203,8 +203,6 @@ export interface InputFact {
    *  to a handler method and `console` calls; a handler method that does more, hands the text on again or that other
    *  code uses; a handler that can't be read. */
   effects: boolean;
-  /** A typed write stores the text normalized (`value.trim()`), here or in a handler method it joins. */
-  normalizes: boolean;
   disabledRules: string[];
 }
 

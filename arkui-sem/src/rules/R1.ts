@@ -454,13 +454,15 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
   const keepsArray = (write: WriteFact) =>
     !moves(write) && (write.path?.length ?? 0) <= 1 && (write.path === undefined || isIndex(write.path[0]));
   // A source that shows other items after the array (`.concat(x)`) moves them on any change to its length, a clear too.
+  // The array that ends the source (`.concat(this.more)`) has no other items after it.
+  const tail = name === loop.source.tail;
   const slides = (write: WriteFact) =>
     keepsArray(write) &&
     write.keepsItems !== 'copy' &&
-    (loop.source.appends === true || (loop.source.reorders === true && write.keepsItems === undefined));
+    ((loop.source.appends === true && !tail) || (loop.source.reorders === true && write.keepsItems === undefined));
   const changes = (write: WriteFact) => {
     if (how === 'select') {
-      const shown = loop.source.shape === 'call';
+      const shown = loop.source.shape === 'call' || tail;
       return (write.path?.length ?? 0) <= 1 && !(shown && keepsArray(write) && !slides(write));
     }
     return paths.some((path) => {

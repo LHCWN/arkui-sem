@@ -262,6 +262,9 @@ export interface LoopSource {
   /** The source, or what the method or getter it calls returns, shows other items after an array's
    *  (`this.F.concat(this.more)`): any change to that array's length, a clear too, moves them. */
   appends?: true;
+  /** The field whose array ends every array the source shows, after others (`this.more` in `this.F.concat(this.more)`,
+   *  `[...this.F, ...this.more]`): a write that keeps its positions only adds or removes rows at the end. */
+  tail?: string;
   /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
    *  own array it shows. */
   returnsFrom?: string;

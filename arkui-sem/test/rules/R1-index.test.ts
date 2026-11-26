@@ -236,6 +236,28 @@ describe('foreach-index-key fires', () => {
     }
   });
 
+  test('an append to the array that ends the source, after the others', () => {
+    const members = `  @State more: string[] = []
+  @State last: string[] = []
+  get all(): string[] {
+    return this.names.concat(this.more)
+  }`;
+    const append = (field: string) => [`this.${field}.push('x')`, `this.${field} = [...this.${field}, 'x']`];
+    for (const source of ['this.names.concat(this.more)', '[...this.names, ...this.more]', 'this.all']) {
+      for (const write of append('more')) {
+        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
+      }
+    }
+    // Control: an array with others after it, a source that reverses the whole list.
+    for (const source of ['this.names.concat(this.more, this.last)', 'this.names.concat(this.more).reverse()']) {
+      for (const write of append('more')) {
+        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
+      }
+    }
+  });
+
   test('a write in the other arm of an if inside an outer loop row: other rows take that arm', () => {
     const rows = (inner: string) => `      ForEach(this.trips, (g: Trip) => {
         if (g.id > 0) {

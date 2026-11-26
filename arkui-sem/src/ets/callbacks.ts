@@ -2,7 +2,7 @@
 // access sits (climb). A denylist: a function no rule here names counts as running while the UI is described.
 import type { BuildRead } from '../facts.js';
 import { ts } from './parse.js';
-import { argumentOf, calleeName, isFunction, memberName, onComponent, thisMember } from './syntax.js';
+import { argumentOf, calleeName, drawsRows, isFunction, memberName, onComponent, thisMember } from './syntax.js';
 
 /** The names a component's code can call as builders: its builder methods (`this.B(…)`), the file's builder functions,
  *  and imported names, which may be builders (`B(…)`). */
@@ -153,7 +153,7 @@ export function climb(
     ) {
       attribute = callee.name.text;
     }
-    if (ts.isIdentifier(callee) && LOOPS.has(callee.text)) {
+    if ((ts.isIdentifier(callee) && LOOPS.has(callee.text)) || drawsRows(n)) {
       inForEach = true;
     }
   }

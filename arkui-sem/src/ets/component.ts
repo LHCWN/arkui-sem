@@ -611,8 +611,8 @@ function access(base: ts.PropertyAccessExpression, field: FieldFact, ctx: Access
     value: mutatingCall ? undefined : assignedValue(assignment),
     ...(mutatingCall || updated || (assignment && accumulates(assignment, field.name)) ? { accumulates: true } : {}),
     ...(callName === undefined ? {} : { call: callName }),
-    ...(assignment && segments.length === 0 && keepsPositions(assignment, field.name) ? { keepsPositions: true } : {}),
-    ...(assignment && segments.length === 0 && keepsItems(assignment, field.name) ? { keepsItems: true } : {}),
+    ...(assignment && keepsPositions(assignment) ? { keepsPositions: true } : {}),
+    ...(assignment ? keptItems(assignment) : {}),
     ...(ctx.arms
       ? { branches: [...ctx.arms, ...(ctx.ownArms ? branchesOf(base, ctx.method.body, ctx.scan.sf) : [])] }
       : {}),
@@ -637,16 +637,16 @@ function accumulates(assignment: ts.BinaryExpression, field: string): boolean {
   return reads(assignment.right);
 }
 
-/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]`, `this.F.slice()` or `this.F.slice(0, n)`: no other item at an
- *  old position. */
-function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean {
+/** `this.F = [...this.F, x]`, `this.F.concat(x)`, `[]`, `this.F.slice()` or `this.F.slice(0, n)`, also of an array
+ *  below the field (`this.F.tags = [...this.F.tags, x]`): no other item at an old position. */
+function keepsPositions(assignment: ts.BinaryExpression): boolean {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
     return false;
   }
   const value = unwrap(assignment.right);
   if (ts.isArrayLiteralExpression(value)) {
     const [first] = value.elements;
-    return first === undefined || (ts.isSpreadElement(first) && thisMember(unwrap(first.expression)) === field);
+    return first === undefined || (ts.isSpreadElement(first) && sameTarget(first.expression, assignment.left));
   }
   if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
     return false;
@@ -654,32 +654,44 @@ function keepsPositions(assignment: ts.BinaryExpression, field: string): boolean
   const method = value.expression.name.text;
   const [start] = value.arguments;
   const fromStart = method === 'slice' && (start === undefined || isZero(start));
-  return (method === 'concat' || fromStart) && thisMember(unwrap(value.expression.expression)) === field;
+  return (method === 'concat' || fromStart) && sameTarget(value.expression.expression, assignment.left);
 }
 
-/** `this.F = []`, `[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.slice(0, 0)` or `this.F.concat()`: the
- *  same items or none. */
-function keepsItems(assignment: ts.BinaryExpression, field: string): boolean {
+/** Both name the same place: `this.F.tags` and `(this.F.tags)`. */
+function sameTarget(a: ts.Expression, b: ts.Expression): boolean {
+  return unwrap(a).getText() === unwrap(b).getText();
+}
+
+/** The same items (`[...this.F]`, `this.F.slice()`, `this.F.slice(0)`, `this.F.concat()`) or none (`[]`,
+ *  `this.F.slice(0, 0)`), also of an array below the field. */
+function keptItems(assignment: ts.BinaryExpression): Pick<WriteFact, 'keepsItems'> {
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
-    return false;
+    return {};
   }
   const value = unwrap(assignment.right);
   if (ts.isArrayLiteralExpression(value)) {
     const [first, ...rest] = value.elements;
-    return (
-      first === undefined ||
-      (rest.length === 0 && ts.isSpreadElement(first) && thisMember(unwrap(first.expression)) === field)
-    );
+    if (first === undefined) {
+      return { keepsItems: 'clear' };
+    }
+    const copy = rest.length === 0 && ts.isSpreadElement(first) && sameTarget(first.expression, assignment.left);
+    return copy ? { keepsItems: 'copy' } : {};
   }
-  if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
-    return false;
+  if (
+    !(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression)) ||
+    !sameTarget(value.expression.expression, assignment.left)
+  ) {
+    return {};
   }
   const method = value.expression.name.text;
   const args = value.arguments;
+  if (method === 'slice' && args.length === 2 && isZero(args[0]) && isZero(args[1])) {
+    return { keepsItems: 'clear' };
+  }
   const copy =
     (method === 'concat' && args.length === 0) ||
-    (method === 'slice' && (args.length === 0 || (isZero(args[0]) && (args.length === 1 || isZero(args[1])))));
-  return copy && thisMember(unwrap(value.expression.expression)) === field;
+    (method === 'slice' && (args.length === 0 || (args.length === 1 && isZero(args[0]))));
+  return copy ? { keepsItems: 'copy' } : {};
 }
 
 /** The fields whose initializer is a call, with its tokens, so that formatting doesn't tell two calls apart; a `new`

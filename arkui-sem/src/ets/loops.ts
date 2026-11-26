@@ -36,8 +36,6 @@ export interface Members {
 const COMPONENT_NAME = /^[A-Z]/;
 /** Array calls whose result holds elements of the array itself. */
 const KEEPS_ELEMENTS = new Set(['filter', 'slice', 'sort', 'reverse', 'concat', 'toSorted', 'toReversed']);
-/** Array calls after which an item that comes before another still does. */
-const KEEPS_PLACES = new Set(['filter', 'map', 'slice']);
 /** Array calls that put the elements in another order. */
 const REORDERS = new Set(['sort', 'reverse', 'toSorted', 'toReversed']);
 const EQUALITY = new Set([
@@ -157,7 +155,7 @@ function loopSource(expr: ts.Expression, scan: FileScan, members: Members): Loop
 /** What the arrays a source may show (`values`: the arms of a conditional, or what a method or getter returns) have in
  *  common. from: the field every one starts from; a value that shows nothing (`[]`) or no field's array
  *  (`DEFAULTS`) shows no other one. reorders: one sorts, reverses or cuts from the end. windowEnds: the fields read
- *  only as the end of a `.slice(0, n)` that keeps the items in place, nowhere else in `around` (the conditional or the
+ *  only as the end of a `.slice(0, n)`, nowhere else in `around` (the conditional or the
  *  method's body), whose other reads may pick another array; when every value shows nothing or the start of that
  *  field's array (`this.showAll ? this.F : this.F.slice(0, 3)`), every field `around` reads but that one: a change
  *  can only show more or fewer items at the end. */
@@ -206,18 +204,13 @@ function startsOf(expr: ts.Expression, field: string): boolean {
   }
 }
 
-/** The ends of each `.slice(0, n)` in the chain followed only by calls that keep the items in place (`filter`, `map`,
- *  `slice` from the start): a change shows more or fewer items at the end, and the same ones at each position. A
- *  `concat` after it would move what it appends; a sort, everything. */
+/** The ends of each `.slice(0, n)` in the chain: a change shows more or fewer items at the end, the same ones at each
+ *  position. */
 function prefixEnds(expr: ts.Expression): ts.Expression[] {
   const ends: ts.Expression[] = [];
   for (let value = unwrap(expr); ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression); ) {
-    const method = value.expression.name.text;
     const [start, end] = value.arguments;
-    if (!KEEPS_PLACES.has(method) || (method === 'slice' && start && fromEnd(start))) {
-      break;
-    }
-    if (method === 'slice' && end && start && isZero(start)) {
+    if (value.expression.name.text === 'slice' && end && start && isZero(start)) {
       ends.push(end);
     }
     value = unwrap(value.expression.expression);

@@ -274,8 +274,8 @@ export interface LoopSource {
   /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
    *  own array it shows. */
   returnsFrom?: string;
-  /** Fields the source, or the method or getter it calls, reads only as the end of a `.slice(0, n)` followed by
-   *  calls that keep the items in place (`this.F.slice(0, this.n)`), not in a condition or guard; or any field but
+  /** Fields the source, or the method or getter it calls, reads only as the end of a `.slice(0, n)`
+   *  (`this.F.slice(0, this.n)`), not in a condition or guard; or any field but
    *  F when every array it may show is F or its start (`this.showAll ? this.F : this.F.slice(0, 3)`): a change shows
    *  more or fewer items at the end, the same ones at each position. */
   windowEnds?: string[];

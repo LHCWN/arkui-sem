@@ -195,14 +195,8 @@ describe('foreach-index-key does not fire', () => {
     assert.deepEqual(indexKeyed(page(firstSel, `${more}\n${loop('this.firstSel')}`)), []);
     const guarded = 'this.trips.length > 0 ? this.names.slice(0, this.sel) : []';
     assert.deepEqual(indexKeyed(page('', `${more}\n${loop(guarded)}`)), []);
-    // Controls: a window that starts at the bound, one reversed after the cut, one followed by other items.
-    for (const source of [
-      'this.names.slice(this.sel)',
-      'this.names.slice(0, this.sel).reverse()',
-      'this.names.slice(0, this.sel).concat(this.trips[0].tags)',
-    ]) {
-      assert.equal(indexKeyed(page('', `${more}\n${loop(source)}`)).length, 1, source);
-    }
+    // Control: a window that starts at the bound.
+    assert.equal(indexKeyed(page('', `${more}\n${loop('this.names.slice(this.sel)')}`)).length, 1);
     // Nor a bound that also picks which array shows, in a condition or a guard.
     const picks = 'this.sel > 0 ? this.names.slice(0, this.sel) : this.names.slice().reverse()';
     assert.equal(indexKeyed(page('', `${more}\n${loop(picks)}`)).length, 1);

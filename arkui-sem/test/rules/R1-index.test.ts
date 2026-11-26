@@ -183,6 +183,81 @@ describe('foreach-index-key fires', () => {
     }
   });
 
+  test('a write of a holder above the array the source shows', () => {
+    const members =
+      "  @State trip: Trip = { id: 0, name: '', tags: [] }\n  @State state: { trip: Trip } = { trip: { id: 0, name: '', tags: [] } }\n  @State more: string[] = []";
+    const fires = [
+      ['this.state.trip.tags', "this.state.trip = { id: 1, name: 'b', tags: ['x'] }"],
+      ['this.trips[this.sel].tags', 'this.trips[0] = this.trip'],
+      ['this.trip.tags', 'this.trip = { ...this.trip, tags: this.trip.tags.slice().reverse() }'],
+    ];
+    for (const [source, write] of fires) {
+      const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+      assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
+    }
+    // Control: a holder array that keeps its positions, an object spread that leaves the array alone.
+    const quiet = [
+      ['this.trips[this.sel].tags.slice().reverse()', 'this.trips.push(this.trip)'],
+      ['this.trips[this.sel].tags.concat(this.more)', 'this.trips = [...this.trips, this.trip]'],
+      ['this.trip.tags', "this.trip = { ...this.trip, name: 'x' }"],
+      [
+        'this.state.trip.tags',
+        'this.state = { ...this.state }\n        this.state.trip = { ...this.state.trip, id: 2 }',
+      ],
+    ];
+    for (const [source, write] of quiet) {
+      const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+      assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
+    }
+  });
+
+  test('a nested array under a fallback, a conditional, a getter, or one of two holders', () => {
+    const members = `  @State trip: Trip = { id: 0, name: '', tags: [] }
+  @State other: Trip = { id: 0, name: '', tags: [] }
+  get tags(): string[] {
+    return this.trip.tags
+  }`;
+    for (const source of [
+      'this.trip?.tags ?? []',
+      'this.sel > 0 ? this.trip.tags : []',
+      'this.tags',
+      'this.sel > 0 ? this.trip.tags : this.other.tags',
+    ]) {
+      for (const write of [
+        'this.trip.tags = this.trip.tags.filter((t: string) => t.length > 0)',
+        'this.trip.tags.sort()',
+      ]) {
+        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
+      }
+      // Control: a write beside the array.
+      const src = page(members, `      Button('a').onClick(() => { this.trip.name = 'x' })\n${loop(source)}`);
+      assert.deepEqual(indexKeyed(src), [], `a write beside the array under ${source}`);
+    }
+  });
+
+  test('an append to the array that ends the source, after the others', () => {
+    const members = `  @State more: string[] = []
+  @State last: string[] = []
+  get all(): string[] {
+    return this.names.concat(this.more)
+  }`;
+    const append = (field: string) => [`this.${field}.push('x')`, `this.${field} = [...this.${field}, 'x']`];
+    for (const source of ['this.names.concat(this.more)', '[...this.names, ...this.more]', 'this.all']) {
+      for (const write of append('more')) {
+        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.deepEqual(indexKeyed(src), [], `${write} under ${source}`);
+      }
+    }
+    // Control: an array with others after it, a source that reverses the whole list.
+    for (const source of ['this.names.concat(this.more, this.last)', 'this.names.concat(this.more).reverse()']) {
+      for (const write of append('more')) {
+        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
+      }
+    }
+  });
+
   test('a write in the other arm of an if inside an outer loop row: other rows take that arm', () => {
     const rows = (inner: string) => `      ForEach(this.trips, (g: Trip) => {
         if (g.id > 0) {
@@ -316,6 +391,14 @@ describe('foreach-index-key does not fire', () => {
       c?.shifts.map((s) => [s.field.name, s.how]),
       [['names', 'move']],
     );
+  });
+
+  test('a null or undefined clear of a nullable source', () => {
+    const maybe = '  @State maybe: string[] | null | undefined = null';
+    for (const write of ['this.maybe = null', 'this.maybe = undefined']) {
+      const src = page(maybe, `      Button('a').onClick(() => { ${write} })\n${loop('this.maybe ?? []')}`);
+      assert.deepEqual(indexKeyed(src), [], write);
+    }
   });
 
   test('an append to one of the arrays a conditional or a fallback may show', () => {

@@ -63,6 +63,11 @@ export function armsOf(e: ts.Expression): ts.Expression[] {
   return fallback ? [...armsOf(value.left), ...armsOf(value.right)] : [e];
 }
 
+/** `null` or `undefined`. */
+export function isNullish(expr: ts.Expression): boolean {
+  return expr.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(expr) && expr.text === 'undefined');
+}
+
 /** The literal `0`, possibly wrapped: `(0)`, `0 as number`. */
 export function isZero(e: ts.Expression): boolean {
   const value = unwrap(e);

@@ -50,6 +50,9 @@ export interface WriteFact {
    *  (`clear`: `[]`, `this.F.slice(0, 0)`). Even a sorted or reversed view of the array shows the same item at each
    *  position, or no rows. */
   keepsItems?: 'copy' | 'clear';
+  /** An object literal that spreads the old value (`this.F = { ...this.F, name: x }`): the properties it sets; the
+   *  others keep their values. */
+  sets?: string[];
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */
   external?: boolean;
   /** The write loads what the component starts with: in aboutToAppear or a helper only it calls, outside callbacks
@@ -249,6 +252,14 @@ export interface Branch {
   arm: 'then' | 'else';
 }
 
+/** An array a loop's source may show: the field it starts from and the accesses on that field before any call (`.tags`
+ *  in `this.F.tags.filter(…)`, `[i].tags` in `this.F[this.sel].tags`). A write of the field at or below that array may
+ *  move it; one beside it (`this.F.name`) does not. */
+export interface ShownArray {
+  field: string;
+  path: PathSegment[];
+}
+
 /**
  * The loop's data source. field: `this.F`. derived: an expression over fields (`this.F.filter(…)`, `this.F[i].p`,
  * `X[this.S].p`). call: a method call or a getter of the component (`this.visible()`, `this.visible`). new: a `new`
@@ -260,13 +271,9 @@ export interface LoopSource {
   /** The field the source starts from (`F` in `this.F`, `this.F.filter(…)`, `this.F[i].p`); for a conditional, the
    *  field each arm that shows an array starts from (`this.ready ? this.F : []`). */
   root?: string;
-  /** The path from root to the array the source shows, when the accesses sit on the field before any call
-   *  (`.tags` in `this.F.tags.filter(…)`, `[i].tags` in `this.F[this.sel].tags`): writes below it move the array,
-   *  others beside it (`this.F.name`) don't. */
-  rootPath?: PathSegment[];
-  /** The fields whose arrays the arms of a conditional or fallback show when they start from several
-   *  (`this.show ? this.A : this.B`): a write that keeps the positions of one keeps those of the rows. */
-  shows?: string[];
+  /** Every array the source may show: of each arm of a conditional or fallback, or each value a method or getter it
+   *  calls returns, that starts from a field. */
+  shows?: ShownArray[];
   /** The field whose own elements are the items: `this.F`, or this.F through calls that keep its elements
    *  (`this.F.filter(…)`, `.slice(…)`, `.sort(…)`). */
   itemsOf?: string;
@@ -283,6 +290,9 @@ export interface LoopSource {
   /** The source, or what the method or getter it calls returns, shows other items after an array's
    *  (`this.F.concat(this.more)`): any change to that array's length, a clear too, moves them. */
   appends?: true;
+  /** The field whose array ends every array the source shows, after others (`this.more` in `this.F.concat(this.more)`,
+   *  `[...this.F, ...this.more]`): a write that keeps its positions only adds or removes rows at the end. */
+  tail?: string;
   /** For a call: the field every value the method or getter returns starts from (`return this.F.filter(…)`), whose
    *  own array it shows. */
   returnsFrom?: string;

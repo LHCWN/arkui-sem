@@ -47,7 +47,7 @@ export interface WriteFact {
    *  clear (`[]`) or a cut from the start (`this.F.slice(0, n)`). */
   keepsPositions?: true;
   /** Of those, one that keeps the same items (`copy`: `[...this.F]`, `this.F.slice()`, `this.F.concat()`) or none
-   *  (`clear`: `[]`, `this.F.slice(0, 0)`). Even a sorted or reversed view of the array shows the same item at each
+   *  (`clear`: `[]`). Even a sorted or reversed view of the array shows the same item at each
    *  position, or no rows. */
   keepsItems?: 'copy' | 'clear';
   /** The writing method is reached neither from build()/@Builder nor from lifecycle hooks: other code calls it. */

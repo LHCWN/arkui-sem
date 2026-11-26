@@ -119,7 +119,6 @@ describe('foreach-index-key fires', () => {
       [lastFive, 'this.lastFive()'],
       ['', 'this.names.slice(-5)'],
       ['', '[...this.names].reverse()'],
-      ['', '[...this.names.slice(-5)]'],
     ]) {
       const [c, ...rest] = indexKeyed(page(members, `${push}\n${loop(source)}`));
       assert.equal(rest.length, 0, source);
@@ -189,7 +188,6 @@ describe('foreach-index-key does not fire', () => {
     for (const source of [
       'this.names.slice(0, this.sel)',
       'this.names.filter((n: string) => n !== "").slice(0, this.sel)',
-      '[...this.names.slice(0, this.sel)]',
     ]) {
       assert.deepEqual(indexKeyed(page('', `${more}\n${loop(source)}`)), [], source);
     }
@@ -246,7 +244,6 @@ describe('foreach-index-key does not fire', () => {
       'this.names = this.names.slice()',
       'this.names = this.names.concat()',
       'this.names = []',
-      'this.names = this.names.slice(0, 0)',
     ]) {
       for (const [members, source] of [
         [recent, 'this.recent'],

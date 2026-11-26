@@ -180,7 +180,7 @@ function shownArrays(
       : [...new Set([...ends].flatMap((end) => fieldsRead(end, members)))].filter((f) => !elsewhere.has(f));
   return {
     ...(from === undefined ? {} : { from }),
-    reorders: values.some((e) => inChain(e, reordersCall)),
+    reorders: values.some(reordersArray),
     windowEnds,
   };
 }
@@ -208,17 +208,10 @@ function startsOf(expr: ts.Expression, field: string): boolean {
 
 /** The ends of each `.slice(0, n)` in the chain followed only by calls that keep the items in place (`filter`, `map`,
  *  `slice` from the start): a change shows more or fewer items at the end, and the same ones at each position. A
- *  `concat` after it would move what it appends; a sort, everything. A copy (`[...x]`) keeps the items in place. */
+ *  `concat` after it would move what it appends; a sort, everything. */
 function prefixEnds(expr: ts.Expression): ts.Expression[] {
   const ends: ts.Expression[] = [];
-  for (let value = unwrap(expr); ; ) {
-    if (isSpreadCopy(value)) {
-      value = unwrap(value.elements[0].expression);
-      continue;
-    }
-    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
-      break;
-    }
+  for (let value = unwrap(expr); ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression); ) {
     const method = value.expression.name.text;
     const [start, end] = value.arguments;
     if (!KEEPS_PLACES.has(method) || (method === 'slice' && start && fromEnd(start))) {
@@ -238,27 +231,18 @@ function isEmptyValue(expr: ts.Expression): boolean {
   return ts.isArrayLiteralExpression(value) && value.elements.length === 0;
 }
 
-/** A call of the chain passes the test, also through a copy (`[...this.F.slice(-5)]`). */
-function inChain(expr: ts.Expression, test: (call: ts.CallExpression, method: string) => boolean): boolean {
-  for (let value = unwrap(expr); ; ) {
-    if (isSpreadCopy(value)) {
-      value = unwrap(value.elements[0].expression);
-      continue;
-    }
-    if (!(ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression))) {
-      return false;
-    }
-    if (test(value, value.expression.name.text)) {
+/** The chain sorts or reverses the array, or cuts it from the end (`.slice(-5)`, `.slice(a.length - 5)`), so an item
+ *  appended to the array moves the others. */
+function reordersArray(expr: ts.Expression): boolean {
+  for (let value = unwrap(expr); ts.isCallExpression(value) && ts.isPropertyAccessExpression(value.expression); ) {
+    const method = value.expression.name.text;
+    const [start] = value.arguments;
+    if (REORDERS.has(method) || (method === 'slice' && start !== undefined && fromEnd(start))) {
       return true;
     }
     value = unwrap(value.expression.expression);
   }
-}
-
-/** Sorts or reverses an array, or cuts it from the end (`.slice(-5)`, `.slice(a.length - 5)`), so an item appended to
- *  the array moves the others. */
-function reordersCall(call: ts.CallExpression, method: string): boolean {
-  return REORDERS.has(method) || (method === 'slice' && call.arguments[0] !== undefined && fromEnd(call.arguments[0]));
+  return false;
 }
 
 /** A negative number, or a value computed from a length. */

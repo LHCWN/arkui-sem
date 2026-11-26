@@ -49,7 +49,8 @@ evaluates each PR on its committed tree (regression over recorded agent sessions
   (a finding) and `input-never-read` (a question); R4 widened in the roadmap and design docs; demo page `Notes.ets`.
 - Step 5a: done (branch `foreach-index-lazy`, stacked on #36): `foreach-index-key` (finding; a question when only
   methods move the list); write facts gain the array call, reassignments that keep positions, initial loads and the `if`
-  arms in build(); loop facts gain their `if` arms.
+  arms in build(); loop facts gain their `if` arms. Compacted afterwards (branch `compact-foreach-index-key`): the
+  source shapes review fixes added for rare code were cut and are listed in the tech-debt tracker.
 - Step 5b: done (branch `lazyforeach-source-rebuilt`, stacked on #37): `lazyforeach-source-rebuilt` (a finding when a
   state change redraws the source, else a question); loop sources gain the field a getter returns as is, write facts
   mark a reassignment that repeats the initializer's call. The empty-`registerDataChangeListener` evidence clause was

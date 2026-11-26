@@ -161,6 +161,8 @@ ${loop('this.names')}
     // Each row calls it; build() calls it twice; the else arm hands the write to another @Builder.
     const rowCalls = '      ForEach(this.trips, (g: Trip) => { this.Panel(g.id > 0) }, (g: Trip) => `${g.id}`)';
     assert.equal(indexKeyed(page(panel, rowCalls)).length, 1);
+    const repeatRows = '      Repeat<Trip>(this.trips).each((r: RepeatItem<Trip>) => { this.Panel(r.item.id > 0) })';
+    assert.equal(indexKeyed(page(panel, repeatRows)).length, 1);
     assert.equal(indexKeyed(page(panel, '      this.Panel(true)\n      this.Panel(false)')).length, 1);
     const sorter = "  @Builder Sorter() {\n    Button('sort').onClick(() => { this.names.sort() })\n  }";
     const handsOn = panel.replace("Button('sort').onClick(() => { this.names.sort() })", 'this.Sorter()');

@@ -445,7 +445,9 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
   ) {
     return [];
   }
-  const how = name === (loop.source.root ?? loop.source.returnsFrom) ? 'move' : 'select';
+  const arrays = (loop.source.shows ?? []).filter((a) => a.field === name);
+  const how = arrays.length || name === (loop.source.root ?? loop.source.returnsFrom) ? 'move' : 'select';
+  const paths = arrays.length ? arrays.map((a) => a.path) : [[]];
   // An array write that keeps positions: an append, a clear, a cut from the end. Under a source that reorders the
   // array (`.reverse()`, `.slice(-n)`) one that adds or removes items moves those shown at a position all the same; a
   // copy or a clear does not.
@@ -458,12 +460,13 @@ function shiftsOf(component: ComponentFact, loop: LoopFact, name: string): Index
     (loop.source.appends === true || (loop.source.reorders === true && write.keepsItems === undefined));
   const changes = (write: WriteFact) => {
     if (how === 'select') {
-      const shown = loop.source.shape === 'call' || loop.source.shows?.includes(name) === true;
+      const shown = loop.source.shape === 'call';
       return (write.path?.length ?? 0) <= 1 && !(shown && keepsArray(write) && !slides(write));
     }
-    const path = loop.source.rootPath ?? [];
-    const own = belowArray(write, path);
-    return own === 'above' ? replacesHolder(write, path) : own !== undefined && (moves(own) || slides(own));
+    return paths.some((path) => {
+      const own = belowArray(write, path);
+      return own === 'above' ? replacesHolder(write, path) : own !== undefined && (moves(own) || slides(own));
+    });
   };
   const writes = field.writes.filter(
     (write) =>

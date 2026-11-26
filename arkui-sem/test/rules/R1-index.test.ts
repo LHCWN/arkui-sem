@@ -211,6 +211,31 @@ describe('foreach-index-key fires', () => {
     }
   });
 
+  test('a nested array under a fallback, a conditional, a getter, or one of two holders', () => {
+    const members = `  @State trip: Trip = { id: 0, name: '', tags: [] }
+  @State other: Trip = { id: 0, name: '', tags: [] }
+  get tags(): string[] {
+    return this.trip.tags
+  }`;
+    for (const source of [
+      'this.trip?.tags ?? []',
+      'this.sel > 0 ? this.trip.tags : []',
+      'this.tags',
+      'this.sel > 0 ? this.trip.tags : this.other.tags',
+    ]) {
+      for (const write of [
+        'this.trip.tags = this.trip.tags.filter((t: string) => t.length > 0)',
+        'this.trip.tags.sort()',
+      ]) {
+        const src = page(members, `      Button('a').onClick(() => { ${write} })\n${loop(source)}`);
+        assert.equal(indexKeyed(src).length, 1, `${write} under ${source}`);
+      }
+      // Control: a write beside the array.
+      const src = page(members, `      Button('a').onClick(() => { this.trip.name = 'x' })\n${loop(source)}`);
+      assert.deepEqual(indexKeyed(src), [], `a write beside the array under ${source}`);
+    }
+  });
+
   test('a write in the other arm of an if inside an outer loop row: other rows take that arm', () => {
     const rows = (inner: string) => `      ForEach(this.trips, (g: Trip) => {
         if (g.id > 0) {

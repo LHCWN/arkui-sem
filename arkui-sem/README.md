@@ -56,3 +56,5 @@ Any backend can be tried on your own files: `node dist/cli.js check <file.ets> -
 Settings merge in this order: defaults < `~/.config/arkui-sem/config.json` < `.opencode/arkui-sem.json`
 (or `.deveco/arkui-sem.json` when only that one exists) < environment (`ARKUI_SEM_*`; `ARKUI_SEM_CONFIG` points at another config file) < plugin options.
 API keys belong in the user config file only; `node dist/cli.js config --init` writes a starter file.
+The parser takes its ArkTS options from the HarmonyOS SDK: `ARKUI_SEM_SDK`, else DevEco Studio's (default install, or
+`DEVECO_STUDIO`); without one it uses the options bundled with the linter.

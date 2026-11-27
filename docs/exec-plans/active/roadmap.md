@@ -21,7 +21,7 @@ The linter lives in `arkui-sem/` (package `arkui-sem` 0.2.0); see `ARCHITECTURE.
 
 ## Prototype roadmap
 
-P-A2…P-A4 (intent tool, cross-file facts, LSP) are broken down further under Rule coverage below.
+P-A2 and P-A3 (intent tool, cross-file facts) are broken down further under Rule coverage below.
 
 | Step | Deliverable | Effort | Exit criterion |
 |---|---|---|---|
@@ -86,8 +86,8 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 | R4 wiring: `input-unbound`, `input-never-read` | ✅ V1, single file; facts alone (`input-unbound` a finding, `input-never-read` a question) | Path writes (`this.form.name = value`), V2 |
 | R4 wiring: `selection-never-written` | ✅ V1, single file; facts alone (a question) | Rows in a `@Builder`, comparisons with a converted index (`index.toString()`) |
 | R1 nested write, V1 (depth ≥ 2) | ✅ Across files (project index) | Aliasing (`const it = this.list[i]; it.x = …`): dataflow in the fact extractor |
-| R1 nested write, V2 (class not `@ObservedV2`) | ⚠️ Same file; cross-file through the project index (follow-up) | Cross-file class lookup |
-| `@Trace` per property | ⚠️ Same file (mutated + rendered property, inherited `@Trace` included); cross-file through the project index (follow-up) | Cross-file class lookup; eval |
+| R1 nested write, V2 (class not `@ObservedV2`) | ⚠️ Same file | Cross-file class lookup through the project index |
+| `@Trace` per property | ⚠️ Same file (mutated + rendered property, inherited `@Trace` included) | Cross-file class lookup through the project index; eval |
 | `@Observed` / `@ObjectLink` children | ✅ Across files: imported children the parent calls (project index) | – |
 | `@Track` | ❌ | Class lookup; rule design |
 | R2 facts: call-site edges | ✅ Project index: a scan of the project, or a text search for one struct | – |
@@ -115,7 +115,7 @@ Each phase starts only after an explicit go.
 - [ ] Judge fallback chain Jev → Clef-flash → Clef → DeepSeek flash (`backend` as a list)
 
 #### Phase 1: LSP spike (dropped)
-Dropped with the LSP client (decisions.md, "LSP client removed"). The probes run showed `references` and `definition` work on struct call sites, but call sites come from the project index and no rule needed the server. The open questions (who writes or reads a child field across files, write kinds, types across files) move to phase 2, against the index or the checker.
+Dropped with the LSP client (decisions.md, "LSP client removed"). The probes run showed `references` and `definition` work on struct call sites, but call sites come from the project index and no rule needed the server. The open questions (who writes or reads a child field across files, write kinds, types across files) move to phases 2–3, against the index or the checker.
 
 #### Phase 2: cross-file facts
 - [x] Cross-file class resolution: a project index (`src/project.ts`) passed to the rules, in the plugin and the bench alike

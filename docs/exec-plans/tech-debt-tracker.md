@@ -1,7 +1,7 @@
 # Tech debt and known gaps
 
 - Cross-file lookups (project index) follow relative imports, project packages and `Index.ets` re-exports; not `oh_modules` packages or namespace imports (`import * as m`), so a class or `@ObjectLink` child reached that way is missed and a correct parent write is flagged. An imported child counts only when the parent file calls it.
-- V2 nested writes are judged only when the owner of the written property (and each class it extends) is declared in the file; owners from other files or of unknown type are skipped, so a missing `@ObservedV2` or `@Trace` there goes unreported. Cross-file owners are planned through ace-server `definition` on the written property.
+- V2 nested writes are judged only when the owner of the written property (and each class it extends) is declared in the file; owners from other files or of unknown type are skipped, so a missing `@ObservedV2` or `@Trace` there goes unreported. Cross-file owners are a follow-up through the project index.
 - V1 nested writes don't use the V2 owner logic: no inherited `@Observed`, and an owner of unknown type, or from another file the project index cannot resolve, is flagged, where V2 skips it.
 - Plain objects are known only from initializers: arrays of literals (`User[] = [{…}]`) and literals assigned later are not detected, and an interface-typed value from a factory call is skipped (it may be a class instance).
 - Type inference covers `new X(…)` and object-literal initializers only (not factory calls or `as` casts); an inline object type is followed one level deep; a type alias of a class (`type U = User`) is not resolved, so writes through it are skipped.
@@ -46,7 +46,7 @@
   - The `if` arms around the loop exclude a write in the other arm also inside an outer loop row, a @Builder called
     more than once or a `Repeat` row, where another row or call takes that arm at the same time: it goes quiet. The
     same holds for `lazyforeach-source-rebuilt`, which shares the arms. Reads in a `Repeat(…).each` or `.template` row
-    are not marked as inside a loop (`inForEach`), as before #37.
+    are not marked as inside a loop (`inForEach`).
   - `&&` is not split into arms (`this.ready && this.a`).
 - R4 input kinds are V1 only and see whole-field writes of the typed text (`this.f = value`), in the onChange or one
   method only inputs use and the onChange hands the text to: a path write (`this.form.name = value`) is not followed,
@@ -68,28 +68,12 @@
 - The project index caches facts by mtime only (an edit within the same mtime tick, or a tool that keeps mtimes, serves
   stale facts), and cached `FileFacts` are mutable and shared across checks; size + mtime keys and
   `readonly` fact types would close both.
-- The parser reads the SDK once per process (`defaultParser()`) and ignores the SDK passed to the LSP client. The plugin
-  passes none, so both use the same lookup there; only `arkui-sem lsp --sdk` can differ.
 - Struct getters and setters are not scanned: a write in `set v(x) { this.a = x }` and reads through a getter used in
   `build()` are not recorded.
   - `v2Gap` handles index writes (unknown container, nested container, container in a plain object, other calls) as separate branches; one rule (walk up to the nearest non-container owner, then classify it) would cover them.
 - Only the undecorated-mutated-rendered kind of R1 is measured with a model; nested-write has only a small offline contract benchmark (`bench/docs/plans/r1-nested.md`).
 - Writes inside functions in field initializers (arrow-function properties, listener objects) are not scanned.
 - Comparing with DevEco's built-in `arkts_check` needs DevEco Studio 6.0+ and `DEVECO_HOME`, not installed yet (deferred).
-- The language server in the plugin (`arkui-sem/src/lsp/warm.ts`):
-  - No rule asks it anything: it is started, sent each edited file and stopped. `WarmLsp.ask` is the one way in for the
-    facts planned for it (field writers and readers, V2 owners in other files); R3 releases in helpers and R4 writers
-    across modules are still missing.
-  - With `lsp: auto` it starts on the first edit whether or not anything will ask it; on a large project that is minutes
-    of start-up and several GB (numbers: `bench/docs/RESULTS.md`).
-  - One start per project and plugin lifetime: a server that failed to start or died is not started again.
-  - A file is sent as it is on disk when the edit tool returns; files changed outside the agent's edit tools are not sent.
-  - opencode ends the server through the plugin's `dispose`. A killed opencode process skips it, and whether the
-    server then exits on its closed stdin was not checked.
-- ace-server follows an import by package name through the `oh_modules` link that a DevEco sync or `ohpm install`
-  creates, and we run neither. In a project without the links it stops at the import; with them it reaches the other
-  module, with or without dependency records at `initialize` (both servers; decisions.md). The rules resolve such
-  imports through the project index (`src/project.ts`).
 - Call-site edges (`ProjectIndex.callSites`):
   - The time budget stops the scan between files, but listing the project can't be interrupted: on a cold OS file cache
     the listing alone can exceed the budget.
@@ -140,8 +124,6 @@
   - Sites are ordered by file path, the scan's by directory listing.
   - `declaration()` follows `import { X } from './G'` when `G` only imports `X` and doesn't export it, which ArkTS
     rejects. The scan lists such a site; the search doesn't look for `G`'s local names.
-- On legacy ace-server (DevEco 6.x) `references` and `callers` see usages in open files only (queried and edited ones), so
-  usages in other files are missed; the standard server (DevEco 26+) searches the whole project.
 - R1 "rendered" follows `this.m(…)` calls and getter reads from `build()` within the component only: a helper reached
   through a local alias, passed as a function value, or in another class or file doesn't count.
 - Handler reads (`BuildRead.inHandler`, `ets/callbacks.ts`) are decided by syntax, not by what the callee does: an

@@ -3,7 +3,6 @@ import { cachePath, loadSettings } from './config.js';
 import { checkFiles, type Finding, formatForAgent } from './engine.js';
 import { absolute, editedFiles, etsFiles } from './files.js';
 import { createBackend, type SystemOneBackend } from './judge.js';
-import { WarmLsp } from './lsp/warm.js';
 import { ProjectIndex } from './project.js';
 
 const EDIT_TOOLS = new Set(['edit', 'write', 'multiedit', 'patch', 'apply_patch']);
@@ -11,8 +10,6 @@ const MAX_GATE_FOLLOWUPS = 3;
 /** The wait for call sites after an edit, which holds the agent up, and at the idle gate, which doesn't. */
 const EDIT_CALL_SITE_BUDGET_MS = 1000;
 const GATE_CALL_SITE_BUDGET_MS = 10_000;
-/** ace-server can index a large project for minutes without a message; the start runs in the background. */
-const LSP_INIT_TIMEOUT_MS = 600_000;
 
 interface SessionState {
   touched: Set<string>;
@@ -40,10 +37,6 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
   }
 
   const project = new ProjectIndex();
-  const lsp =
-    settings.lsp === 'off'
-      ? undefined
-      : new WarmLsp((message) => void log('info', message), { initTimeoutMs: LSP_INIT_TIMEOUT_MS });
 
   async function run(files: string[], callSiteBudgetMs?: number): Promise<Finding[]> {
     backend ??= await createBackend(settings.backend, settings.credentials);
@@ -64,7 +57,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
 
   await log(
     'info',
-    `loaded (backend=${settings.backend}, gate=${settings.gate}, lsp=${settings.lsp}, config=${settings.sources.join(', ') || 'none'})`,
+    `loaded (backend=${settings.backend}, gate=${settings.gate}, config=${settings.sources.join(', ') || 'none'})`,
   );
   for (const w of settings.warnings) {
     await log('warn', w);
@@ -83,7 +76,6 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
         const s = session(input.sessionID);
         for (const f of files) {
           s.touched.add(f);
-          lsp?.edited(f);
         }
         const fresh = (await run(files, EDIT_CALL_SITE_BUDGET_MS)).filter((f) => !s.reported.has(f.fingerprint));
         for (const f of fresh) {
@@ -139,14 +131,10 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
       }
     },
 
-    dispose: async () => {
-      await lsp?.stop();
-    },
-
     tool: {
       arkui_check: tool({
         description:
-          "Check ArkTS/ArkUI .ets files for state-management and lifecycle defects: state that won't re-render the UI, nested mutation of unobserved classes, callbacks and @Event a child calls that no parent passes, listeners and timers that are never released. Pass files or directories; defaults to the project.",
+          "Check ArkTS/ArkUI .ets files for state-management and lifecycle defects: state that won't re-render the UI, nested mutation of unobserved classes, ForEach/LazyForEach lists that don't redraw changed items, text inputs and selections wired one way, callbacks and @Event a child calls that no parent passes, listeners and timers that are never released. Pass files or directories; defaults to the project.",
         args: {
           paths: tool.schema
             .array(tool.schema.string())

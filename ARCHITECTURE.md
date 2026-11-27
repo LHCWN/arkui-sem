@@ -38,7 +38,7 @@ sandbox/demo/                            the demo project (opencode): R1 pages i
 sandbox/*                                everything else is local scratch (ignored), e.g. a DevEco Code copy of the demo
 arkui-sem/                               the linter (opencode plugin, package arkui-sem 0.2.0, ESM, TypeScript)
   README.md, AGENTS.md
-  src/opencode.ts      plugin: tool.execute.after feedback, session.idle gate, tool arkui_check, language server lifecycle
+  src/opencode.ts      plugin: tool.execute.after feedback, session.idle gate, tool arkui_check
   src/facts.ts         the fact model: what the extractor records per file, and the cross-file lookup interfaces
   src/queries.ts       queries derived from the facts: paths, rendering reads, declared types, class hierarchies
   src/files.ts         .ets discovery under a path; the files an agent's edit touched
@@ -64,7 +64,7 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/ets/types.ts     type annotations → TypeRef, object literals, per-type records (classes, interfaces, aliases)
   src/ets/syntax.ts, scan.ts, modules.ts, directives.ts, lifecycle.ts   node helpers, file context, imports/exports,
                        disable comments, lifecycle hook names
-  src/sdk.ts           DevEco Studio and HarmonyOS SDK lookup (parser options, ace-server)
+  src/sdk.ts           DevEco Studio and HarmonyOS SDK lookup (parser options)
   src/project.ts       project index for the rules: imported name → declaring file (relative imports, packages from
                        oh-package.json5 local dependencies and build-profile.json5 modules, Index.ets re-exports), caches;
                        call-site edges: a project scan resolving each file's component uses (callSites), or for one
@@ -75,13 +75,10 @@ arkui-sem/                               the linter (opencode plugin, package ar
   src/engine.ts        candidates → slices → judge → finding/question bands (thresholds 0.8 / 0.5); agent formatting;
                        KINDS: one entry per candidate kind (judge or facts-only, evidence and fix, disable-comment hint)
   src/config.ts        defaults < ~/.config/arkui-sem/config.json < .opencode/arkui-sem.json < env < plugin options
-  src/cli.ts           arkui-sem check | config | lsp  (default backend: clef)
-  src/lsp/             utility client for ace-server (ArkTS language server): definition, references, call hierarchy;
-                       warm.ts keeps one server per project running for the plugin (started on the first .ets edit,
-                       sent each edited file, asked within a time budget, stopped on dispose; setting lsp: auto | off)
-  test/                node:test, run from src/ via tsx (npm test, offline): rules/R<n>.test.ts, one file
-                       per module (config, engine, deepseek, openrouter, opencode, lsp, project, callsites, search, loops, inputs), helpers.ts; test/fixtures/:
-                       Counter, Feed, Profile (R1), Ticker (R3), fake-ace-server.mjs (both LSP protocols), project/
+  src/cli.ts           arkui-sem check | config  (default backend: clef)
+  test/                node:test, run from src/ via tsx (npm test, offline): rules/R<n>*.test.ts, one file
+                       per module or feature (test/<name>.test.ts), helpers.ts; test/fixtures/:
+                       Counter, Feed, Profile (R1), Ticker (R3), project/
                        (two-module DevEco project: entry imports common by package name)
   scripts/install.mjs
   scripts/compare-callsites.mjs   searched call sites against the whole-project scan on a project or a generated one, with timings

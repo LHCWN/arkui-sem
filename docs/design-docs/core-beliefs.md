@@ -226,7 +226,7 @@ sequenceDiagram
 | **R1 Under-reactive state** | Value read in `build()` (directly or via `@Builder` / `ForEach`). Written after construction (handler / async / lifecycle). No reactive path. Includes nested write into a non-`@Observed` / non-`@Trace` class. | Is it meant to change what the user sees? Is it intentionally static/debug/cache? Verdict choice. | 1→2 |
 | **R2 Ownership mismatch** | Child field initialised from ancestor state. Child writes it. Sync direction ≠ needed direction. | Intent choice: `child_local_copy` / `shared_with_parent` / `parent_display_only` | 1→2 |
 | **R3 Lifecycle obligation** | Acquire API (from pair table) in `aboutToAppear` / `onPageShow` / handler. No matching release on some path to `aboutToDisappear`. | Is the resource intended to outlive the component (app-scope singleton, EntryAbility)? Is the release elsewhere (owner object)? Severity score. | 1→2 |
-| **R4 State that doesn't do its job** *(new; widened from over-reactive state)* | Wiring gaps: a text input that writes a field no input shows while code sets it, or that nothing reads; a selection nothing sets. Over-reactive: decorated state never written after init, **or** large `@State` object mutated at high frequency (cascading re-render). | Wiring gaps: none, decided by the facts alone. Over-reactive: is reactivity needed (e.g. written by a parent / storage)? Perf severity score. | 1→2 |
+| **R4 State that doesn't do its job** *(widened from over-reactive state)* | Wiring gaps: a text input that writes a field no input shows while code sets it, or that nothing reads; a selection nothing sets. Over-reactive: decorated state never written after init, **or** large `@State` object mutated at high frequency (cascading re-render). | Wiring gaps: none, decided by the facts alone. Over-reactive: is reactivity needed (e.g. written by a parent / storage)? Perf severity score. | 1→2 |
 | **R5 Issue→component mapping** *(new)* | Component/file list + summaries (≤255 options). | `choice`: which component most plausibly owns the reported behaviour? | 3 |
 
 The over-reactive part of R4 matters for evaluation. It creates *hard negatives* for R1 (and vice versa), so a model can't win by flagging everything. It also matches OpenHarmony's own state-management performance best-practice docs.
@@ -321,6 +321,8 @@ The toolchain already has four diagnostic sources. They play **four different ro
 LSP facts are less precise than ArkAnalyzer + APAK: no pointer analysis, and closures are resolved syntactically. But they are incremental and already loaded in the IDE. Two uses follow:
 - For the **IDE path**, LSP facts can drive L2 directly, keeping ArkAnalyzer for CI and full scans.
 - For **cross-checking**, where LSP and ArkAnalyzer disagree on a fact (e.g. resolved type), mark the slice `fact_conflict` and route it to escalation instead of trusting either.
+
+In the prototype, a client for DevEco's ace-server was built for this role and then removed: no rule needed it, it cost minutes of start-up and GBs of memory per project, and the project index gives the cross-file facts the rules use (decisions.md, "LSP client removed").
 
 **Role 3 — Baseline arm A in every experiment.**
 - Arm A = compile + tslinter + codelinter.

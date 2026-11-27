@@ -14,7 +14,7 @@ The linter lives in `arkui-sem/` (package `arkui-sem` 0.2.0); see `ARCHITECTURE.
 - Live opencode runs 1–4 (logs removed 2026-10-08; run 4 called DeepSeek and found the @Observed-only false negative that led to the depth-aware rule).
 
 **Known limits:**
-- **Mostly single-file analysis.** No aliasing. Across files: class lookups for the V1 nested write, and call sites for R2 event-unwired; the parent-side facts the other R2 shapes need are missing.
+- **Mostly single-file analysis.** No aliasing. Across files: class lookups for the V1 nested write, child components and builders for foreach-key-stale, and call sites for R2 event-unwired; the parent-side facts the other R2 shapes need are missing.
 - **The heuristic judge's probabilities are placeholders.**
 - **The gate under `opencode run`.** The non-interactive run may exit at idle before the follow-up is processed [I]. Use the TUI or `opencode serve` + SDK for gate tests.
 ---
@@ -47,7 +47,7 @@ The localizer (P5) becomes an `arkui_locate(issue_text)` tool.
 
 ## Rule coverage
 
-Status as of 2026-11-10. Scope: ArkEval v1 category 1, "UI state desynchronization" (plus R3 for category 3).
+Status as of 2026-11-27. Scope: ArkEval v1 category 1, "UI state desynchronization" (plus R3 for category 3).
 Background: `docs/design-docs/core-beliefs.md` §3–§4 (rungs, rule families, architecture), `docs/design-docs/agentic-plugin.md`.
 
 ### Rules (RN)

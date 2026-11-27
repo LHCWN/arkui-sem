@@ -76,8 +76,8 @@ arkui-sem/                               the linter (opencode plugin, package ar
                        KINDS: one entry per candidate kind (judge or facts-only, evidence and fix, disable-comment hint)
   src/config.ts        defaults < ~/.config/arkui-sem/config.json < .opencode/arkui-sem.json < env < plugin options
   src/cli.ts           arkui-sem check | config  (default backend: clef)
-  test/                node:test, run from src/ via tsx (npm test, offline): rules/R<n>.test.ts, one file
-                       per module (config, engine, deepseek, openrouter, opencode, project, callsites, search, loops, inputs), helpers.ts; test/fixtures/:
+  test/                node:test, run from src/ via tsx (npm test, offline): rules/R<n>*.test.ts, one file
+                       per module or feature (test/<name>.test.ts), helpers.ts; test/fixtures/:
                        Counter, Feed, Profile (R1), Ticker (R3), project/
                        (two-module DevEco project: entry imports common by package name)
   scripts/install.mjs

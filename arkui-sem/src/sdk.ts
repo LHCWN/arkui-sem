@@ -7,7 +7,7 @@ const STUDIO_CANDIDATES: Record<string, string[]> = {
   darwin: ['/Applications/DevEco-Studio.app/Contents', '/Applications/DevEco Studio.app/Contents'],
 };
 
-export function findStudio(env = process.env): string | undefined {
+function findStudio(env = process.env): string | undefined {
   const candidates = [env.DEVECO_STUDIO, ...(STUDIO_CANDIDATES[process.platform] ?? [])].filter(
     (p): p is string => !!p,
   );

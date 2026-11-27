@@ -134,7 +134,7 @@ export const ArkuiSemPlugin: Plugin = async ({ client, directory }, options) => 
     tool: {
       arkui_check: tool({
         description:
-          "Check ArkTS/ArkUI .ets files for state-management and lifecycle defects: state that won't re-render the UI, nested mutation of unobserved classes, callbacks and @Event a child calls that no parent passes, listeners and timers that are never released. Pass files or directories; defaults to the project.",
+          "Check ArkTS/ArkUI .ets files for state-management and lifecycle defects: state that won't re-render the UI, nested mutation of unobserved classes, ForEach/LazyForEach lists that don't redraw changed items, text inputs and selections wired one way, callbacks and @Event a child calls that no parent passes, listeners and timers that are never released. Pass files or directories; defaults to the project.",
         args: {
           paths: tool.schema
             .array(tool.schema.string())

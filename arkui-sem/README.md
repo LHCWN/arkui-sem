@@ -4,12 +4,15 @@ Semantic lint for ArkTS/ArkUI declarative state, built for the coding-agent loop
 [opencode](https://opencode.ai) v1 plugin and a CLI. Prototype.
 
 It targets UI state desynchronization: a field that is written and rendered but not reactive, a nested write
-that V1 `@State` does not observe, a callback or `@Event` a child calls and no parent passes, a resource that
+that V1 `@State` does not observe, a list that doesn't redraw what changed (a `ForEach` that replaces items
+under an unchanged key or keys rows by index over items that change, a `LazyForEach` whose data source is
+created while drawing or reassigned), a callback or `@Event` a child calls and no parent passes, a resource that
 is never released, a text input wired to its field one way (the field is set by code but not shown, or
-typed into but read nowhere). A fact extractor finds candidates; a small "System One" judge model scores each one; scores
-of 0.8 and above become findings, scores from 0.5 to 0.8 become questions back to the agent. The unwired
-callback and the input wiring are decided by the facts alone, with no judge call; an input nothing reads is asked
-as a question.
+typed into but read nowhere), a selection the rows compare against that nothing sets. A fact extractor finds
+candidates; a small "System One" judge model scores each one; scores of 0.8 and above become findings, scores
+from 0.5 to 0.8 become questions back to the agent. The list kinds, the unwired callback and the input and
+selection wiring are decided by the facts alone, with no judge call; some of them are asked as questions (an
+input nothing reads, a selection nothing sets).
 
 ## Build and test
 

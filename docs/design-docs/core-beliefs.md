@@ -322,6 +322,8 @@ LSP facts are less precise than ArkAnalyzer + APAK: no pointer analysis, and clo
 - For the **IDE path**, LSP facts can drive L2 directly, keeping ArkAnalyzer for CI and full scans.
 - For **cross-checking**, where LSP and ArkAnalyzer disagree on a fact (e.g. resolved type), mark the slice `fact_conflict` and route it to escalation instead of trusting either.
 
+In the prototype, a client for DevEco's ace-server was built for this role and then removed: no rule needed it, it cost minutes of start-up and GBs of memory per project, and the project index gives the cross-file facts the rules use (decisions.md, "LSP client removed").
+
 **Role 3 — Baseline arm A in every experiment.**
 - Arm A = compile + tslinter + codelinter.
 - Arm B = A + our deterministic R1–R4 preconditions.

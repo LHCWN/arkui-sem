@@ -19,7 +19,7 @@ The user sets direction; agents plan and execute. Plans live in the repo so ever
 | Plan | About |
 |---|---|
 | [coverage-extensions.md](exec-plans/completed/coverage-extensions.md) | list rendering (ForEach/LazyForEach keys and sources) and R4 wiring kinds: the kinds and the PR per step |
-| [cross-file-facts.md](exec-plans/completed/cross-file-facts.md) | handoff: project index, cross-file R1 nested write, call-site edges (scan and per-struct search), R2 event unwired, the language server's lifecycle in the plugin (roadmap phase 2) |
+| [cross-file-facts.md](exec-plans/completed/cross-file-facts.md) | handoff: project index, cross-file R1 nested write, call-site edges (scan and per-struct search), R2 event unwired, the language server's lifecycle in the plugin, since removed (roadmap phase 2) |
 
 The dataset plans are in the private bench, `bench/docs/plans/`.
 

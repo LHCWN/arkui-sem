@@ -11,8 +11,7 @@ permissions:
 jobs:
   platforms:
     name: test (${{ matrix.os }})
-    # Windows: where DevEco users work, and where the LSP client's drive-letter URIs, node.exe lookup and process
-    # handling differ.
+    # Windows: where DevEco users work, and where file paths (drive letters, backslashes) and the ripgrep lookup differ.
     strategy:
       fail-fast: false
       matrix:

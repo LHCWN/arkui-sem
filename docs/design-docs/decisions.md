@@ -25,8 +25,8 @@
   `ForEach(this.store.items, …)` counts): an untraced property nothing renders is the point of per-property `@Trace`. Interface-typed objects are flagged only when known to be literals, since they may hold
   class instances. Writes into a container nested in another (`grid[i][j]`) are flagged. An object-literal initializer
   counts only for `@Local` (and class fields nothing reassigns), and only while every reassignment also assigns a literal.
-  Owners not declared in the file are skipped; cross-file owners will come from ace-server (`definition` on the written
-  property), not from a resolver of our own.
+  Owners not declared in the file are skipped; cross-file owners are a follow-up through the project index (planned
+  through ace-server `definition` until the LSP client was removed, see "LSP client removed").
 - **Disable comments** (2026-10-13): `// arkui-sem-disable-next-line <rules>` works above the field name, above its decorator
   lines, and above a single write (that write only, for nested-write findings); R1 and R3 share one parser.
 - **Fact extractor on ohos-typescript** (2026-11-06): facts come from the syntax tree of OpenHarmony's TypeScript fork
@@ -72,10 +72,24 @@
   - Results live for one check, keyed by struct. A new caller can only be seen by searching again, so nothing is reused across checks.
   - An import's local name is not an alias: only ArkTS that doesn't compile can import it from another file. This is the one place where the scan lists a site the search doesn't.
   - Asynchronous, unlike `callSites`: a refresh during the search is tolerated, not prevented.
-- **No overlapping fact sources: call sites come from the index only** (2026-11-11). LSP `references` on a struct would only confirm what `searchCallSites` already finds (complete for the struct asked about), and on legacy ace-server it would need the open-files workaround. Cross-file-facts PR 3 keeps the LSP for what the index can't give: server lifecycle, dependency records at `initialize`, and later field writers and readers (phase 4).
-- **The language server in the plugin: lifecycle only, no dependency records, no hvigor map** (2026-11-11, cross-file-facts PR 3; details in its Result).
+- **No overlapping fact sources: call sites come from the index only** (2026-11-11). LSP `references` on a struct would only confirm what `searchCallSites` already finds (complete for the struct asked about), and on legacy ace-server it would need the open-files workaround. Cross-file-facts PR 3 keeps the LSP for what the index can't give: server lifecycle, dependency records at `initialize`, and later field writers and readers (phase 4). The LSP part is superseded by "LSP client removed" (2026-11-27).
+- **The language server in the plugin: lifecycle only, no dependency records, no hvigor map** (2026-11-11, cross-file-facts PR 3; details in its Result). Superseded by "LSP client removed" (2026-11-27); kept as history.
   - One ace-server per project, started in the background on the project's first `.ets` edit, sent each edited file, stopped on dispose. A check never waits for it: an answer is asked for within a budget and a missing, starting, slow or dead server gives none.
   - Setting `lsp`: `auto` (default) or `off`. The server is found as before (`ARKUI_SEM_ACE_SERVER`, else DevEco Studio); no new path settings.
   - No dependency records at `initialize`. Tried on a two-module project with both servers (standard 26, legacy 6.1.1): with the `oh_modules` links of a synced project, `definition` and `references` cross modules with and without the records; without the links the records don't help, as the server resolves a package name through `oh_modules`. A record without `version` also stops the legacy server at `initialize`.
   - hvigor's dependency map is not read. By its own freshness rule it counts only when it lists the same modules and the same `oh-package.json5` content as the project's files, so it can't change an answer the index gives: a second source for the same fact.
   - The server's module list comes from the root `build-profile.json5` (the folder scan stays as the fallback for a folder without one), and the project root is the nearest build profile that lists modules: a module's own `build-profile.json5` was taken for the root before.
+- **LSP client removed** (2026-11-27). The ace-server client (`src/lsp/`), the `arkui-sem lsp` command, the plugin's
+  warm server and the `lsp` setting are gone. The last commit that has them is `7490f1d`; it comes back from git history
+  if it is ever needed. Supersedes the 2026-11-11 entries on the language server above.
+  - Why: no rule asked the server anything, yet under the default `lsp: auto` the plugin started it on the first `.ets`
+    edit: minutes of start-up and several GB of memory on a large project, for nothing (numbers in
+    `bench/docs/RESULTS.md` and `bench/docs/plans/lsp-edit-timing.md`).
+  - The cross-file facts that are built (class lookup, call sites) come from the project index (`src/project.ts`), so
+    the server was never a source the rules relied on ("No overlapping fact sources" above).
+  - Facts the index doesn't give yet (field writers and readers across files, V2 owners in other files) start from the
+    index or the ohos-typescript checker. A local comparison found the checker answers the same questions as ace-server
+    at a fraction of its memory, start-up and query time, and the index costs least.
+  - Consequences: a config that still has `"lsp"` gets the unknown-key warning. The SDK lookup still recognises a
+    DevEco Studio install by its `ace-server` folder (only that the folder exists), since the parser needs the SDK.
+    P-A4 on the roadmap, arkui-sem serving LSP diagnostics to the agent, is a different idea and stays.

@@ -14,7 +14,6 @@ The linter lives in `arkui-sem/` (package `arkui-sem` 0.2.0); see `ARCHITECTURE.
 - Live opencode runs 1–4 (logs removed 2026-10-08; run 4 called DeepSeek and found the @Observed-only false negative that led to the depth-aware rule).
 
 **Known limits:**
-- **The language server is not used by any rule.** The plugin starts ace-server on the first `.ets` edit, keeps it in step with the edits and stops it on dispose (`lsp: auto | off`); the facts it is meant for (field writers and readers, V2 owners in other files) are phases 3–4.
 - **Mostly single-file analysis.** No aliasing. Across files: class lookups for the V1 nested write, and call sites for R2 event-unwired; the parent-side facts the other R2 shapes need are missing.
 - **The heuristic judge's probabilities are placeholders.**
 - **The gate under `opencode run`.** The non-interactive run may exit at idle before the follow-up is processed [I]. Use the TUI or `opencode serve` + SDK for gate tests.
@@ -76,34 +75,34 @@ The compiler already rejects writes to a V2 `@Param` and `@Link` without `$` (ca
 
 ### Coverage table
 
-✅ done · ⚠️ partial · ❌ missing. The LSP column assumes the spike (phase 1) passes.
+✅ done · ⚠️ partial · ❌ missing.
 
-| Item | Today | With an LSP server | Left after LSP |
-|---|---|---|---|
-| R1 undecorated field, mutated and rendered (V1/V2) | ✅ Facts + Q_R1; MDP runs in the bench | – | Intent verdict (judge/agent) |
-| R1 ForEach: elements replaced under an unchanged key (`foreach-key-stale`) | ✅ V1, single file plus child components and builders across files; facts alone | – | Aliases beyond one local, V2 |
-| R1 ForEach keyed by index over changing items (`foreach-index-key`) | ✅ V1, single file; facts alone (a question when only methods move the list) | – | Sources written by a parent (`@Prop`, `@Link`), V2 |
-| R1 LazyForEach source rebuilt or reassigned (`lazyforeach-source-rebuilt`) | ✅ V1, single file; facts alone (a finding when a state change redraws the source) | – | Cached or switched sources, nested holders, parent writes, V2 |
-| R4 wiring: `input-unbound`, `input-never-read` | ✅ V1, single file; facts alone (`input-unbound` a finding, `input-never-read` a question) | – | Path writes (`this.form.name = value`), V2 |
-| R4 wiring: `selection-never-written` | ✅ V1, single file; facts alone (a question) | – | Rows in a `@Builder`, comparisons with a converted index (`index.toString()`) |
-| R1 nested write, V1 (depth ≥ 2) | ✅ Across files (project index) | – | Aliasing (`const it = this.list[i]; it.x = …`): dataflow in the fact extractor |
-| R1 nested write, V2 (class not `@ObservedV2`) | ⚠️ Same file; cross-file through ace-server (follow-up) | ✅ Cross-file class lookup | – |
-| `@Trace` per property | ⚠️ Same file (mutated + rendered property, inherited `@Trace` included); cross-file through ace-server (follow-up) | ✅ Class (LSP) + property decorator (our parse) | Eval |
-| `@Observed` / `@ObjectLink` children | ✅ Across files: imported children the parent calls (project index) | – | – |
-| `@Track` | ❌ | Class lookup only | Rule design |
-| R2 facts: call-site edges | ✅ Project index: a scan of the project, or a text search for one struct | – (index only, no second source) | – |
-| R2-a | ❌ | ✅ Detected (`references` + `documentHighlight` write kinds) | Judge: snapshot intended? |
-| R2-d | ✅ Call sites from the project index, V1 and V2 | – | Positives to measure it on (phase 5 mutations) |
-| R2-f | ❌ | ✅ Facts | Fix choice |
-| R2-b / R2-c | ❌ | Evidence (sibling readers, dialog-ness) | Intent: judge, or agent via `arkui_ownership_intent` |
-| Read/write kind and context | Syntax tree (ohos-typescript) | Read/write kind: `documentHighlight` | Context (handler/`build`/lifecycle/async), reach via `@Builder`/`ForEach`: the fact extractor |
-| String-keyed links: AppStorage/LocalStorage keys, `@Provide`/`@Consume` aliases, `@Watch` names, `@Monitor` paths | ❌ | ❌ | Own key index (grep-level) |
-| Derived state: `@Watch`, `@Monitor`, `@Computed` | ❌ | Locating only | New rule + dataset (MDP doesn't cover them) |
-| R3 unreleased resource | ✅ | Release in another file or owner object | Judge: app-lifetime or released elsewhere |
-| R4 over-reactive state | ❌ | "Never written" via `references` | Rule; perf judgment |
-| Imports by package name across modules | ✅ Project index (`src/project.ts`): `oh-package.json5` local dependencies and `build-profile.json5` modules; `Index.ets` re-exports | Resolved by the server only in a synced project (`oh_modules` links); dependency records at `initialize` change nothing (decisions.md) | `oh_modules` packages, namespace imports (`import * as`) |
+| Item | Today | Left |
+|---|---|---|
+| R1 undecorated field, mutated and rendered (V1/V2) | ✅ Facts + Q_R1; MDP runs in the bench | Intent verdict (judge/agent) |
+| R1 ForEach: elements replaced under an unchanged key (`foreach-key-stale`) | ✅ V1, single file plus child components and builders across files; facts alone | Aliases beyond one local, V2 |
+| R1 ForEach keyed by index over changing items (`foreach-index-key`) | ✅ V1, single file; facts alone (a question when only methods move the list) | Sources written by a parent (`@Prop`, `@Link`), V2 |
+| R1 LazyForEach source rebuilt or reassigned (`lazyforeach-source-rebuilt`) | ✅ V1, single file; facts alone (a finding when a state change redraws the source) | Cached or switched sources, nested holders, parent writes, V2 |
+| R4 wiring: `input-unbound`, `input-never-read` | ✅ V1, single file; facts alone (`input-unbound` a finding, `input-never-read` a question) | Path writes (`this.form.name = value`), V2 |
+| R4 wiring: `selection-never-written` | ✅ V1, single file; facts alone (a question) | Rows in a `@Builder`, comparisons with a converted index (`index.toString()`) |
+| R1 nested write, V1 (depth ≥ 2) | ✅ Across files (project index) | Aliasing (`const it = this.list[i]; it.x = …`): dataflow in the fact extractor |
+| R1 nested write, V2 (class not `@ObservedV2`) | ⚠️ Same file; cross-file through the project index (follow-up) | Cross-file class lookup |
+| `@Trace` per property | ⚠️ Same file (mutated + rendered property, inherited `@Trace` included); cross-file through the project index (follow-up) | Cross-file class lookup; eval |
+| `@Observed` / `@ObjectLink` children | ✅ Across files: imported children the parent calls (project index) | – |
+| `@Track` | ❌ | Class lookup; rule design |
+| R2 facts: call-site edges | ✅ Project index: a scan of the project, or a text search for one struct | – |
+| R2-a | ❌ | Detection (writes to the passed field); judge: snapshot intended? |
+| R2-d | ✅ Call sites from the project index, V1 and V2 | Positives to measure it on (phase 5 mutations) |
+| R2-f | ❌ | Facts; fix choice |
+| R2-b / R2-c | ❌ | Evidence (sibling readers, dialog-ness); intent: judge, or agent via `arkui_ownership_intent` |
+| Read/write kind and context | Syntax tree (ohos-typescript) | Context (handler/`build`/lifecycle/async), reach via `@Builder`/`ForEach`: the fact extractor |
+| String-keyed links: AppStorage/LocalStorage keys, `@Provide`/`@Consume` aliases, `@Watch` names, `@Monitor` paths | ❌ | Own key index (grep-level) |
+| Derived state: `@Watch`, `@Monitor`, `@Computed` | ❌ | New rule + dataset (MDP doesn't cover them) |
+| R3 unreleased resource | ✅ | Release in another file or owner object; judge: app-lifetime or released elsewhere |
+| R4 over-reactive state | ❌ | "Never written" (writers across files); rule; perf judgment |
+| Imports by package name across modules | ✅ Project index (`src/project.ts`): `oh-package.json5` local dependencies and `build-profile.json5` modules; `Index.ets` re-exports | `oh_modules` packages, namespace imports (`import * as`) |
 
-**LSP fit:** good for the per-edit plugin, where the server stays warm and runs a few queries per edit. Poor for bench scale (thousands of items and sequential `references` calls, warm-up nondeterminism), so the bench uses a one-pass index instead.
+**Fact sources:** cross-file facts come from the project index (`src/project.ts`), in the plugin and the bench alike. An ace-server client was built and removed (decisions.md, "LSP client removed"); facts the index doesn't give yet (field writers and readers across files, V2 owners in other files) start from the index or the ohos-typescript checker.
 
 ### Plan
 
@@ -115,17 +114,8 @@ Each phase starts only after an explicit go.
 - [x] MDP datasets and R1 recall/precision runs (bench)
 - [ ] Judge fallback chain Jev → Clef-flash → Clef → DeepSeek flash (`backend` as a list)
 
-#### Phase 1: LSP spike (decides how much LSP can do)
-- [ ] Pick a headless ArkTS language server
-- [ ] Probe on `sandbox/demo`:
-  - [x] `references` on a struct: works, and `definition` works per call site (ace-server 26 and DevEco 6.1.1). Call hierarchy doesn't list struct calls in either direction, so call sites come from our own walk (cross-file-facts PR 2b) and stay there: the LSP doesn't add a second source for them
-  - [ ] `references` on a child field: does it return the call-site property? (**decisive probe**)
-  - [ ] `documentHighlight` Write kinds
-  - [ ] `typeDefinition` across files
-  - [ ] `references` on an `@Event`
-- [ ] Time the probes on one module of a large real project
-- [ ] Score against the E0 fact sample (fact extractor vs LSP; `bench/docs/evaluation-method.md`)
-- [ ] Decide: LSP behind `FactExtractor` for the plugin, or grep for struct names + our parse
+#### Phase 1: LSP spike (dropped)
+Dropped with the LSP client (decisions.md, "LSP client removed"). The probes run showed `references` and `definition` work on struct call sites, but call sites come from the project index and no rule needed the server. The open questions (who writes or reads a child field across files, write kinds, types across files) move to phase 2, against the index or the checker.
 
 #### Phase 2: cross-file facts
 - [x] Cross-file class resolution: a project index (`src/project.ts`) passed to the rules, in the plugin and the bench alike
@@ -158,7 +148,7 @@ Each phase starts only after an explicit go.
 - [x] R3 mutants (release line deleted) + real candidates, a labelled subset reviewed (bench)
 - [ ] End to end: an opencode "edit dialog" run in `sandbox/demo` (does the agent declare intent; is the code correct)
 
-#### Phase 6: left after LSP (later)
+#### Phase 6: later
 - [ ] Aliasing / dataflow in the fact extractor (ours; ArkAnalyzer only if it proves suitable)
 - [ ] Derived-state rule (`@Watch` / `@Monitor` / `@Computed`) + dataset
 - [ ] `@Track` rule

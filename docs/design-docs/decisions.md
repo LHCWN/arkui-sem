@@ -90,6 +90,6 @@
   - Facts the index doesn't give yet (field writers and readers across files, V2 owners in other files) start from the
     index or the ohos-typescript checker. A local comparison found the checker answers the same questions as ace-server
     at a fraction of its memory, start-up and query time, and the index costs least.
-  - Consequences: a config that still has `"lsp"` gets the unknown-key warning. The SDK lookup still recognises a
+  - No migration (no users yet): a config that still has `"lsp"` gets the unknown-key warning. The SDK lookup still recognises a
     DevEco Studio install by its `ace-server` folder (only that the folder exists), since the parser needs the SDK.
     P-A4 on the roadmap, arkui-sem serving LSP diagnostics to the agent, is a different idea and stays.

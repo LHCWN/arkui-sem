@@ -29,7 +29,7 @@ interface Aliases {
 }
 
 /** A module as the root build-profile.json5 lists it. */
-export interface ProjectModule {
+interface ProjectModule {
   name: string;
   dir: string;
 }
@@ -69,15 +69,6 @@ function readProfileModules(path: string): ProjectModule[] | undefined {
     name: m.name,
     dir: resolve(dirname(path), m.srcPath),
   }));
-}
-
-/** The modules a project root's build-profile.json5 lists; undefined without a readable profile. */
-export function profileModules(root: string): ProjectModule[] | undefined {
-  try {
-    return readProfileModules(join(root, BUILD_PROFILE));
-  } catch {
-    return undefined;
-  }
 }
 
 function mtime(path: string): number | undefined {

@@ -11,6 +11,7 @@ function findStudio(env = process.env): string | undefined {
   const candidates = [env.DEVECO_STUDIO, ...(STUDIO_CANDIDATES[process.platform] ?? [])].filter(
     (p): p is string => !!p,
   );
+  // Every DevEco Studio install ships this folder; a stray directory of the same name doesn't.
   return candidates.find((p) => existsSync(join(p, 'plugins', 'openharmony', 'ace-server')));
 }
 

@@ -759,7 +759,7 @@ test('an Array subclass used without type arguments leaves the element type unkn
   assert.deepEqual(nestedHits(src), ['rows']);
 });
 
-// Owners declared in other files are skipped: the extractor sees one file.
+// V2 owners are resolved only within the file; owners declared in other files are skipped.
 test('V2: a class declared in another file is skipped', () => {
   const dir = tempDir();
   put(join(dir, 'model', 'User.ets'), "export class User {\n  name: string = ''\n}");

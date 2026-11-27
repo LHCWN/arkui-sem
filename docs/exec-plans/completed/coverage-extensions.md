@@ -34,7 +34,7 @@ committed tree (private: `bench/docs/plans/coverage-extensions.md`).
 | `foreach-index-key`; compacted in #41 (rare source shapes cut, listed in the tech-debt tracker) | #37 |
 | `lazyforeach-source-rebuilt` | #38 |
 | `selection-never-written` | #39 |
-| Cleanup: `knip` and `tsc --noUnusedLocals --noUnusedParameters` found no dead code, unused file or dependency; the duplicated walks and the cleanup-only tracker items were too small to refactor, so the code is unchanged; stale docs fixed | no PR of its own |
+| Cleanup: `knip` and `tsc --noUnusedLocals --noUnusedParameters` found no dead code, unused file or dependency; the duplicated walks and the cleanup-only tracker items were too small to refactor, so the code is unchanged; stale docs fixed | #43 (with the LSP removal) |
 
 Limits of each kind are in `docs/exec-plans/tech-debt-tracker.md`; coverage by rule is in
 `docs/exec-plans/active/roadmap.md`.
